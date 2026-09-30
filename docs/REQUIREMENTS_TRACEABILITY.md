@@ -23,6 +23,8 @@
 | V3 시스템 계약 | `SystemContractTests`/`CloudBoundaryTests`, System 33개. 실제 임시 SQLite의 frozen 카드·receipt/토큰·Today 순서·재정리, 알림 planner·안전 딥링크·로컬 계측·Cloud 상태 구독. unhosted OS adapter의 typed 실패를 확인하며 실제 Widget/Siri/권한/CloudKit 성공으로 대신하지 않음 |
 | V4 native 빌드·구성 | `b0c2fa419036b9d80f5c3b4140676bf02f9910fd`, [Actions 36769033639](https://github.com/hellosunghyun/mirror/actions/runs/36769033639). Mac 151 / iPhone·iPad 각 150개 실제 unit 통과, 앱·두 확장/세 bundle/privacy/라이선스/URL/App Intents 실제 actions 16개 구성 검사 통과. UI는 각 6개 모두 실패하므로 앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
 
+최신 소스 수정 `542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 GitHub 계정 결제/사용 한도 때문에 모든 job의 실행 단계가 0개다. 새 UI 결과나 IPS는 생성되지 않았으며 해당 수정은 `not_run`으로 유지한다. 계정 복구 후 최신 PR HEAD를 검증하며 위 V4의 통과 근거를 최신 소스나 앱 수용 전체로 확장하지 않는다.
+
 아래 FR 행의 `코드 추가`는 생산 경로가 작성됐다는 뜻이며 새 통합 코드의 빌드·수용 통과를 뜻하지 않는다. 이전 U 근거는 위 순수 함수에 한정한다. 모든 FR의 앱 수용은 아직 미완료이고, 모든 Q 행의 전체 시나리오는 `not_run`이다. 향후 결과는 실제 full SHA/run/OS/기기/고정 시각/expected/actual/증거/남은 범위와 함께 이 파생 추적표에 갱신한다.
 
 ## 2. FR-001~030
