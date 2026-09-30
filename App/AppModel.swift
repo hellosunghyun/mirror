@@ -84,6 +84,7 @@ final class AppModel {
     var problem: String?
     var systemProblem: String?
     var projectionPending = false
+    var lastCaptureCommittedToken: String?
     var confirmation: CommandEnvelope?
     var lastUndo: SafeUndo?
     var review: AppReviewSession?
@@ -93,6 +94,7 @@ final class AppModel {
     var quarantinedCount = 0
     var context: PlanningContext?
     var archiveData: Data?
+    var exportFileName = "Mirror-backup"
     var importData: Data?
     var importPreview: String?
     var archivePreview: ImportPreview?
@@ -219,7 +221,7 @@ final class AppModel {
         guard let store else { return }
         do {
             if configuration?.cloudSync != nil, let cloud {
-                _ = await cloud.verifyActiveAccount()
+                _ = await cloud.validateLocalIdentity()
                 cloudSyncStatus = await cloud.status()
                 if cloudSyncStatus == .accountTransitionRequired {
                     problem = "iCloud 계정이 바뀌었어요. 이전 계정의 자료를 새 계정에 자동으로 업로드하지 않아요. 동기화 설정을 확인해 주세요."
@@ -242,7 +244,7 @@ final class AppModel {
             }
             context = next
             selectedTaskIDs.formIntersection(Set(tasks.filter { $0.status == .open }.map(\.taskID)))
-            projectionPending = false
+            if retryEnvelope == nil { projectionPending = false }
             await reconcileSystemServices()
         } catch { problem = "저장된 화면을 불러오지 못했어요. 원본을 유지한 채 다시 시도해 주세요." }
     }
@@ -254,12 +256,13 @@ final class AppModel {
     func finishOnboarding() { preferences.onboardingComplete = true; savePreferences(); showCapture = true }
 
     @discardableResult
-    func capture(title: String, note: String, sourceURL: String) async -> Bool {
+    func capture(title: String, note: String, sourceURL: String, requestToken: String = UUID().uuidString) async -> Bool {
         do {
             let content = try TaskContent(title: title.isEmpty ? sourceURL : title,
                                           note: note.isEmpty ? nil : note,
                                           sourceURL: sourceURL.isEmpty ? nil : sourceURL)
-            return await submit(.capture(taskID: UUID(), content: content), success: "보관함에 넣었어요.")
+            guard let context, let envelope = makeEnvelope(.capture(taskID: UUID(), content: content), context: context, token: requestToken) else { return false }
+            return await execute(envelope, success: "보관함에 넣었어요.")
         } catch { problem = "제목은 1~500자, 메모는 20,000자 이하여야 해요. 링크는 http 또는 https 주소를 확인해 주세요."; return false }
     }
 
@@ -436,7 +439,7 @@ final class AppModel {
 
     func exportArchive() async {
         guard let store else { return }
-        do { archiveData = try await store.exportArchive(exportedAt: Date()) }
+        do { archiveData = try await store.exportArchive(exportedAt: now); exportFileName = "Mirror-\(context?.planningDay.iso8601 ?? "backup")" }
         catch { problem = "내보내기 파일을 만들지 못했어요. 저장된 원본은 유지했어요." }
     }
     func previewImport(_ bytes: Data) async {
@@ -521,11 +524,11 @@ final class AppModel {
 
     @discardableResult
     private func execute(_ envelope: CommandEnvelope, success: String) async -> Bool {
-        guard let store, !isSaving else { return false }
+        guard let store, !isSaving, !projectionPending || envelope.idempotencyKey == retryEnvelope?.idempotencyKey else { return false }
         isSaving = true; problem = nil
         defer { isSaving = false }
         if configuration?.cloudSync != nil, let cloud, !isUITesting {
-            guard await cloud.verifyActiveAccount() else {
+            guard await cloud.validateLocalIdentity() else {
                 cloudSyncStatus = await cloud.status()
                 problem = "iCloud 계정을 확인하지 못했어요. 이전 계정 공간의 쓰기를 잠시 멈췄어요. 동기화 설정을 확인해 주세요."
                 return false
@@ -538,13 +541,35 @@ final class AppModel {
         return await handleResult(envelope, result: result, success: success)
     }
     private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String) async -> Bool {
+        if envelope.source == .app, result.state != .alreadyApplied, let services {
+            let committed = result.state == .locallyCommitted || result.state == .committedProjectionPending
+            let kind: LocalMetricKind
+            if case .capture = envelope.payload { kind = committed ? .captureSaved : .captureAttempt }
+            else if case .reviewClose = envelope.payload { kind = .reviewClosed }
+            else if case .undo = envelope.payload { kind = .undoResult }
+            else { kind = committed ? .decisionCommitted : .decisionRejected }
+            let outcome: MetricOutcome
+            switch result.state {
+            case .locallyCommitted, .committedProjectionPending: outcome = .success
+            case .requiresConfirmation: outcome = .confirmation
+            case .staleContext, .staleSnapshot, .alreadyDecided: outcome = .stale
+            case .notFound, .unavailable: outcome = .unavailable
+            case .alreadyApplied: outcome = .success
+            case .persistenceFailed: outcome = .failure
+            }
+            let metrics = await services.metrics
+            try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome,
+                                                  countBucket: result.affectedTaskIDs.isEmpty ? 0 : result.affectedTaskIDs.count == 1 ? 1 : result.affectedTaskIDs.count <= 5 ? 5 : 20))
+        }
         switch result.state {
         case .locallyCommitted, .alreadyApplied:
             retryEnvelope = nil
+            projectionPending = false
             await refresh()
             feedback = success
             advanceReview(envelope)
             recordUndo(envelope, result: result)
+            if case .capture = envelope.payload { lastCaptureCommittedToken = envelope.idempotencyKey }
             return true
         case .committedProjectionPending:
             projectionPending = true; feedback = "저장했어요. 화면을 갱신하고 있어요."
@@ -834,6 +859,19 @@ final class AppModel {
         case .requiresDoubleConfirmation: cloudDeletionMessage = "개인 공간 전체 삭제를 두 번 확인해야 해요. 데이터를 삭제하지 않았어요."
         case .blocked: cloudDeletionMessage = "오프라인 기기의 재연결과 권위 있는 개인 공간 세대 전환을 검증해야 해요. 모든 기기에서 완전히 삭제됐다고 안내할 수 없어 삭제를 실행하지 않았어요."
         }
+    }
+    func exportDiagnostics(consentGiven: Bool) async {
+        guard let services, consentGiven else { return }
+        do {
+            let metrics = await services.metrics
+            archiveData = try await metrics.exportSummary(consentGiven: true)
+            exportFileName = "Mirror-local-diagnostics"
+        } catch { problem = "진단 요약을 만들지 못했어요. 할 일 원본은 유지했어요." }
+    }
+    func eraseDiagnostics() async {
+        guard let services else { return }
+        do { let metrics = await services.metrics; try await metrics.erase(); feedback = "이 기기의 진단 기록을 지웠어요." }
+        catch { problem = "이 기기의 진단 기록을 지우지 못했어요." }
     }
 }
 

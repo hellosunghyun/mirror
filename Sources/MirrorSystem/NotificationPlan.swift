@@ -61,7 +61,8 @@ public enum NotificationPlanner {
                 guard let midnight = calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day)),
                       let fire = calendar.nextDate(after: midnight.addingTimeInterval(-1), matching: components,
                                                    matchingPolicy: .nextTime, repeatedTimePolicy: .first, direction: .forward),
-                      try LocalDate.from(fire, timeZone: zone) == day, fire > now else { continue }
+                      try PlanningContext.capture(at: fire, timeZoneID: context.timeZoneID,
+                                                  policyRevision: context.policyRevision).planningDay == day, fire > now else { continue }
                 let weekly = calendar.component(.weekday, from: fire) == review.weeklyWeekday
                 planned.append(.init(identifier: "review:\(workspaceEpoch):\(day)",
                                      kind: weekly ? .weeklyReview : .dailyReview, fireAt: fire))

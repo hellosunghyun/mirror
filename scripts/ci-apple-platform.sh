@@ -54,7 +54,7 @@ esac
 ci_phase='결과 디렉터리 준비'
 result_dir=".build/ci-$platform"
 mkdir -p "$result_dir"
-if test -e "$result_dir/Tests.xcresult"; then
+if test -e "$result_dir/Tests.xcresult" || test -e "$result_dir/UI.xcresult"; then
   echo '이전 xcresult가 있으므로 새 결과 디렉터리에서 실행해야 합니다.' >&2
   exit 2
 fi

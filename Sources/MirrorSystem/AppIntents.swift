@@ -2,6 +2,9 @@ import Foundation
 import AppIntents
 import MirrorDomain
 
+/// 앱과 위젯의 includedPackages가 이 정적 framework의 인텐트 metadata를 포함한다.
+public struct MirrorAppIntentsPackage: AppIntentsPackage {}
+
 public struct MirrorTaskEntity: AppEntity, Sendable {
     public static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "할 일")
     public static let defaultQuery = MirrorTaskQuery()
@@ -112,8 +115,9 @@ public struct ScheduleTaskIntent: AppIntent {
     public func perform() async throws -> some IntentResult & ReturnsValue<MirrorTaskEntity> & ProvidesDialog {
         let services = try await SystemCompositionRoot.open()
         let context = try await services.currentContext()
-        guard let zone = TimeZone(identifier: context.timeZoneID) else { throw SystemServiceError.invalidInput }
-        let original = try await services.task(task.id), target = PlanTarget.day(try LocalDate.from(date, timeZone: zone))
+        let original = try await services.task(task.id)
+        let target = PlanTarget.day(try PlanningContext.capture(at: date, timeZoneID: context.timeZoneID,
+                                                              policyRevision: context.policyRevision).planningDay)
         var result = try await services.execute(.setPlan(item: .init(taskID: task.id, expected: .init(original)), target: target, review: nil), source: .shortcut, displayedContext: context)
         if result.state == .requiresConfirmation {
             try await requestConfirmation(result: .result(dialog: "실제 마감 뒤로 배치해요. 마감은 그대로 유지해요. 계속할까요?"))
@@ -136,8 +140,9 @@ public struct ScheduleTaskForWeekIntent: AppIntent {
     public init() {}
     public func perform() async throws -> some IntentResult & ProvidesDialog {
         let services = try await SystemCompositionRoot.open(), context = try await services.currentContext()
-        guard let zone = TimeZone(identifier: context.timeZoneID) else { throw SystemServiceError.invalidInput }
-        let start = try LocalDate.from(weekStart, timeZone: zone), week = try start.mondayWeek()
+        let start = try PlanningContext.capture(at: weekStart, timeZoneID: context.timeZoneID,
+                                               policyRevision: context.policyRevision).planningDay
+        let week = try start.mondayWeek()
         guard start == week.startDate else { throw SystemServiceError.invalidInput }
         let target = PlanTarget.week(startDate: start, endExclusiveDate: week.endExclusiveDate)
         let original = try await services.task(task.id)

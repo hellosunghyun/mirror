@@ -118,6 +118,7 @@ struct MirrorSettingsView: View {
     @State private var cloudMergeConfirmed = false
     @State private var disableCloudConfirmed = false
     @State private var cloudDeleteSecondConfirmation = false
+    @State private var diagnosticsConsent = false
     private var zones: [String] {
         TimeZone.knownTimeZoneIdentifiers.filter { timezoneSearch.isEmpty || $0.localizedCaseInsensitiveContains(timezoneSearch) }
     }
@@ -167,7 +168,7 @@ struct MirrorSettingsView: View {
                 Section("동기화와 상태") {
                     Text(model.storageLabel).accessibilityIdentifier("settings.syncState")
                     Text(cloudStatusLabel(model.cloudSyncStatus)).accessibilityIdentifier("settings.cloudState")
-                    Button("선택적으로 iCloud 연결 시작") { Task { await model.previewCloudConnection() } }.disabled(model.isSaving)
+                    Button("선택적으로 iCloud 연결 시작") { Task { await model.previewCloudConnection() } }.disabled(model.isSaving || model.cloudConnected)
                     if let preview = model.cloudPreview {
                         Text("이 기기의 원본 \(preview.localOperationCount)개 · 현재 수신된 계정 원본 \(preview.cloudOperationCount)개 · 중복 \(preview.duplicateCount)개")
                         ForEach(preview.warnings, id: \.self) { Text($0).font(.caption) }
@@ -186,6 +187,10 @@ struct MirrorSettingsView: View {
                     Toggle("Spotlight 검색에 작업 제목 표시", isOn: $model.preferences.spotlightEnabled)
                         .onChange(of: model.preferences.spotlightEnabled) { _, _ in model.savePreferences() }
                     Text("제목 숨김과 잠금 인증은 별도예요. 민감한 제목·메모·캘린더 원문을 진단 로그에 넣지 않아요. Spotlight 노출을 끄면 앱 인덱스를 제거해요.").font(.caption)
+                    Toggle("익명 동작 횟수 요약 파일을 직접 공유하는 데 동의", isOn: $diagnosticsConsent)
+                    Button("동의한 진단 요약 내보내기") { Task { await model.exportDiagnostics(consentGiven: diagnosticsConsent); exporting = model.archiveData != nil } }.disabled(!diagnosticsConsent)
+                    Button("이 기기의 진단 기록 지우기") { Task { await model.eraseDiagnostics() } }
+                    Text("기본 진단 기록은 이 기기에 남아요. 요약에는 제목·메모·작업 ID·계정 문자열을 넣지 않아요. 파일 위치와 공유 대상은 직접 고르세요.").font(.caption)
                 }
                 Section("내보내기와 복원") {
                     Text("작업 제목과 변경 이력이 포함된 평문 UTF-8 JSON이에요. 암호화된 백업이 아니며 파일의 공유 위치를 직접 고르세요.").font(.caption)
@@ -217,7 +222,7 @@ struct MirrorSettingsView: View {
             }
             .navigationTitle("설정")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
-            .fileExporter(isPresented: $exporting, document: MirrorArchiveDocument(data: model.archiveData ?? Data()), contentType: .json, defaultFilename: "Mirror-\(model.context?.planningDay.iso8601 ?? "backup")") { result in
+            .fileExporter(isPresented: $exporting, document: MirrorArchiveDocument(data: model.archiveData ?? Data()), contentType: .json, defaultFilename: model.exportFileName) { result in
                 if case .failure = result { model.problem = "내보내기 파일을 저장하지 못했어요. 원본은 유지했어요." }
                 model.archiveData = nil
             }

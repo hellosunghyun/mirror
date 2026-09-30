@@ -3,7 +3,12 @@ import SwiftUI
 import WidgetKit
 import AppIntents
 import MirrorDomain
+import MirrorData
 import MirrorSystem
+
+struct MirrorWidgetIntentsRegistration: AppIntentsPackage {
+    static var includedPackages: [any AppIntentsPackage.Type] { [MirrorAppIntentsPackage.self] }
+}
 
 @main
 struct MirrorWidgets: WidgetBundle {
@@ -49,9 +54,11 @@ struct MirrorWidgetProvider: AppIntentTimelineProvider {
             switch error {
             case SystemServiceError.configurationRequired: mode = .configurationRequired
             case SystemServiceError.privacyLocked: mode = .privacyLocked
-            default: mode = .unavailable
+            default: mode = StoreError.classify(error) == .protectedDataUnavailable ? .privacyLocked : .unavailable
             }
-            return Entry(date: Date(), state: .init(mode: mode))
+            var state = WidgetReviewState(mode: mode)
+            state.message = (error as? SystemServiceError)?.errorDescription
+            return Entry(date: Date(), state: state)
         }
     }
 }
@@ -98,7 +105,7 @@ struct MirrorWidgetView: View {
                 Button(intent: FinishReviewIntent(state: state)) { Text("이번 정리 마치기") }.frame(minHeight: 44)
             case .configurationRequired: unavailable("앱과 위젯의 공유 저장소 설정이 필요해요.")
             case .privacyLocked: unavailable("잠금을 해제하고 미러를 여세요.")
-            case .unavailable: unavailable("지금 데이터를 읽을 수 없어요.")
+            case .unavailable: unavailable(state.message ?? "지금 데이터를 읽을 수 없어요.")
             case .loading: Text("불러오는 중…").font(.headline)
             }
             if family != .systemSmall, let message = state.message {

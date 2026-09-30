@@ -1,12 +1,18 @@
 import MirrorDomain
+import MirrorSystem
+import AppIntents
 import SwiftUI
+
+struct MirrorAppIntentsRegistration: AppIntentsPackage {
+    static var includedPackages: [any AppIntentsPackage.Type] { [MirrorAppIntentsPackage.self] }
+}
 
 @main
 @MainActor
 struct MirrorApp: App {
     @State private var model = AppModel()
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             MirrorRootView()
                 .environment(model)
         }
@@ -14,15 +20,40 @@ struct MirrorApp: App {
         .defaultSize(width: 1_100, height: 740)
         #if os(macOS)
         MenuBarExtra("미러", systemImage: "sun.max") {
-            Button("일단 넣기") { model.showCapture = true }
-            Button("오늘 목록") { model.destination = .today }
-            Button("이어서 정리") { model.beginReview(mode: .manualResume) }
-            Divider()
-            Text(model.storageLabel)
-        }
+            MirrorMenuBarContent().environment(model)
+        }.menuBarExtraStyle(.window)
         #endif
     }
 }
+
+#if os(macOS)
+@MainActor
+struct MirrorMenuBarContent: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+    @State private var title = ""
+    @FocusState private var focused: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("일단 넣고, 나중에 정하세요").font(.headline)
+            TextField("할 일 제목", text: $title, axis: .vertical).focused($focused)
+                .accessibilityIdentifier("menuBar.title")
+            Button("보관함에 넣기") {
+                Task { if await model.capture(title: title, note: "", sourceURL: "") { title = ""; focused = true } }
+            }.disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("menuBar.save")
+            if let problem = model.problem { Text(problem).foregroundStyle(.red) }
+            if let feedback = model.feedback { Text(feedback).font(.caption) }
+            Divider()
+            Button("오늘 목록 열기") { openWindow(id: "main"); model.destination = .today }
+            Button("이어서 정리") { openWindow(id: "main"); model.beginReview(mode: .manualResume) }
+            Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
+        }.padding().frame(width: 320)
+            .task { await model.start() }
+            .onChange(of: focused) { _, value in model.isTextEditing = value }
+            .onDisappear { model.isTextEditing = false }
+    }
+}
+#endif
 
 @MainActor
 struct MirrorCommands: Commands {

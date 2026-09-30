@@ -11,6 +11,14 @@ struct CloudBoundaryTests {
         #expect(!CloudSyncPolicy.mayInspectAccount(explicitOptIn: consented, configurationComplete: false))
     }
 
+    @Test("같은 로컬 계정 바인딩은 오프라인 저장을 허용하되 전환 latch가 있으면 중단한다")
+    func localIdentityAndTransitionBoundary() {
+        #expect(CloudSyncPolicy.mayUseVerifiedLocalAccount(optedIn: true, identityMatches: true, transitionRequired: false))
+        #expect(!CloudSyncPolicy.mayUseVerifiedLocalAccount(optedIn: false, identityMatches: true, transitionRequired: false))
+        #expect(!CloudSyncPolicy.mayUseVerifiedLocalAccount(optedIn: true, identityMatches: false, transitionRequired: false))
+        #expect(!CloudSyncPolicy.mayUseVerifiedLocalAccount(optedIn: true, identityMatches: true, transitionRequired: true))
+    }
+
     @Test("Apple 계정 상태를 별개의 제품 상태로 보존한다")
     func accountStatusesRemainDistinct() {
         #expect(CloudAccountAvailability(.available) == .available)

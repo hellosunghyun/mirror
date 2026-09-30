@@ -86,6 +86,9 @@ public enum CloudSyncPolicy {
         if event.succeeded { return .idle(lastSuccessfulEvent: ended) }
         return .failed(event.failure ?? .unknown)
     }
+    public static func mayUseVerifiedLocalAccount(optedIn: Bool, identityMatches: Bool, transitionRequired: Bool) -> Bool {
+        optedIn && identityMatches && !transitionRequired
+    }
     public static func accountMatches(expected: String, observed: String) -> Bool {
         !expected.isEmpty && expected == observed
     }
@@ -103,6 +106,7 @@ private struct ActiveCloudPointer: Codable, Sendable {
     let transitionRequired: Bool
     let containerIdentifier: String
     let accountFingerprint: String
+    let identityTokenArchive: Data
     let workspaceKey: String
     let workspaceEpoch: String
     let initialTimeZoneID: String
@@ -133,6 +137,7 @@ public actor CloudSyncService {
     private var candidateStore: MirrorStore?
     private var activeStore: MirrorStore?
     private var fingerprint: String?
+    private var identityTokenArchive: Data?
     private var rootDirectory: URL?
     private var observedStoreIDs: Set<String> = []
     private var runningEvents: [UUID: CloudMirrorPhase] = [:]
@@ -147,18 +152,21 @@ public actor CloudSyncService {
     }
     /// 프로세스 재시작 후 공유 opt-in pointer와 현재 계정을 재확인하여 관찰을 복원한다.
     public func resumeActiveStore(active: MirrorStore) async throws {
+        let activeConfiguration = await active.configuration
         guard let groupID = setup.appGroupIdentifier, let identifier = setup.containerIdentifier,
               let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID),
               let verified = try await Self.resolveActiveConfiguration(appGroupIdentifier: groupID,
                 deviceID: localConfiguration.deviceID, expectedContainerIdentifier: identifier),
-              let cloud = active.configuration.cloudSync,
-              verified.directory.standardizedFileURL == active.configuration.directory.standardizedFileURL,
+              let cloud = activeConfiguration.cloudSync,
+              verified.directory.standardizedFileURL == activeConfiguration.directory.standardizedFileURL,
               cloud.accountScope == verified.cloudSync?.accountScope else {
             try? await active.suspend()
             currentStatus = .accountTransitionRequired
             throw CloudSyncServiceError.accountTransitionRequired
         }
+        let pointer = try JSONDecoder().decode(ActiveCloudPointer.self, from: Data(contentsOf: Self.pointerURL(root: root)))
         generation += 1; optedIn = true; rootDirectory = root; fingerprint = cloud.accountScope
+        identityTokenArchive = pointer.identityTokenArchive
         activeStore = active; observedStoreIDs = await active.cloudStoreIdentifiers()
         installObservers()
         currentStatus = .awaitingSynchronization(accountFingerprint: cloud.accountScope)
@@ -180,9 +188,14 @@ public actor CloudSyncService {
         optedIn = true; rootDirectory = shared; currentStatus = .checkingAccount
         installObservers()
         do {
+            let identityBeforeLookup = try? Self.currentIdentityArchive()
             let account = try await Self.inspectAccount(containerIdentifier: containerID)
             guard optedIn, generation == ticket else { return nil }
             guard let account else { currentStatus = .accountUnavailable(.noAccount); return nil }
+            guard let identity = identityBeforeLookup else {
+                currentStatus = .accountUnavailable(.couldNotDetermine); return nil
+            }
+            guard Self.identityMatches(identity) else { await handleAccountChanged(); return nil }
             let local = try await localStore.snapshot()
             let archive = try await localStore.exportArchive(exportedAt: instant)
             guard optedIn, generation == ticket else { return nil }
@@ -194,6 +207,7 @@ public actor CloudSyncService {
                                                    base: localConfiguration, policy: local.policy)
             let cloud = try await MirrorStore(configuration: configuration)
             guard optedIn, generation == ticket else { try? await cloud.suspend(); return nil }
+            candidateStore = cloud
             let remote = try await cloud.snapshot()
             let preview: ImportPreview?
             if local.records.isEmpty && local.quarantinedCount == 0 { preview = nil }
@@ -207,14 +221,18 @@ public actor CloudSyncService {
                     "캘린더 원문·세션·영수증·기기 알림 설정은 이 기기에 남습니다.",
                     "다른 기기의 자료는 비동기로 내려오므로 이 미리 보기는 이후 달라질 수 있습니다."])
             candidateStore = cloud; pendingLocalStore = localStore; pendingToken = consent.token
-            pendingArchive = preview == nil ? nil : archive; fingerprint = account
+            pendingArchive = preview == nil ? nil : archive; fingerprint = account; identityTokenArchive = identity
             observedStoreIDs = await cloud.cloudStoreIdentifiers()
             currentStatus = .awaitingMergeConsent(consent)
             return consent
         } catch let unavailable as AccountUnavailable {
+            guard optedIn, generation == ticket else { return nil }
             currentStatus = .accountUnavailable(unavailable.availability)
             return nil
         } catch {
+            guard optedIn, generation == ticket else { return nil }
+            if let candidateStore { try? await candidateStore.suspend() }
+            candidateStore = nil
             currentStatus = .failed(Self.failure(error)); return nil
         }
     }
@@ -222,6 +240,7 @@ public actor CloudSyncService {
     public func confirmEnable(token: String, consentToMerge: Bool, at instant: Date = Date()) async -> MirrorStore? {
         guard consentToMerge else { await cancelPreview(); return nil }
         guard optedIn, token == pendingToken, let cloud = candidateStore, let expected = fingerprint,
+              let identity = identityTokenArchive, Self.identityMatches(identity),
               let containerID = setup.containerIdentifier, let root = rootDirectory else {
             currentStatus = .failed(.unknown); return nil
         }
@@ -232,16 +251,17 @@ public actor CloudSyncService {
                 await handleAccountChanged(); return nil
             }
             guard generation == ticket, optedIn else { return nil }
-            let config = cloud.configuration
+            let config = await cloud.configuration
             // 새 확장 프로세스가 이전 로컬 writer를 열지 않게 전환 상태를 먼저 공유한다.
             try Self.write(ActiveCloudPointer(version: 1, optedIn: true, transitionRequired: true,
-                containerIdentifier: containerID, accountFingerprint: expected,
+                containerIdentifier: containerID, accountFingerprint: expected, identityTokenArchive: identity,
                 workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch,
                 initialTimeZoneID: config.initialTimeZoneID, initialPolicyRevision: config.initialPolicyRevision), root: root)
             if let local = pendingLocalStore {
                 // 마지막 원본 export와 writer 중지는 하나의 저장 게이트 경계에서 수행한다.
                 let latest = try await local.exportAndSuspend(exportedAt: instant)
-                if local.configuration.workspaceEpoch == config.workspaceEpoch {
+                let sourceConfiguration = await local.configuration
+                if sourceConfiguration.workspaceEpoch == config.workspaceEpoch {
                     // 미리 보기가 비어 있었어도 그 이후 입력을 모두 병합한다.
                     _ = try await cloud.importArchive(latest, consent: ArchiveImportConsent(accountChangeConfirmed: true))
                 } else {
@@ -252,7 +272,7 @@ public actor CloudSyncService {
             }
             guard generation == ticket, optedIn else { return nil }
             let pointer = ActiveCloudPointer(version: 1, optedIn: true, transitionRequired: false,
-                containerIdentifier: containerID, accountFingerprint: expected,
+                containerIdentifier: containerID, accountFingerprint: expected, identityTokenArchive: identity,
                 workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch,
                 initialTimeZoneID: config.initialTimeZoneID, initialPolicyRevision: config.initialPolicyRevision)
             try Self.write(pointer, root: root)
@@ -260,15 +280,17 @@ public actor CloudSyncService {
             currentStatus = .awaitingSynchronization(accountFingerprint: expected)
             return cloud
         } catch {
+            guard optedIn, generation == ticket else { return nil }
             currentStatus = .failed(Self.failure(error)); return nil
         }
     }
 
     public func cancelPreview() async {
         generation += 1
-        if let candidateStore { try? await candidateStore.suspend() }
+        let candidate = candidateStore
         candidateStore = nil; pendingLocalStore = nil; pendingArchive = nil; pendingToken = nil
         if activeStore == nil { optedIn = false; observations = []; currentStatus = .localOnly }
+        if let candidate { try? await candidate.suspend() }
     }
     /// 클라우드 원본을 다른 로컬 공간으로 자동 복사하지 않는다. 이전 로컬 공간으로 돌아간다.
     public func disable() async throws -> MirrorStore {
@@ -277,9 +299,21 @@ public actor CloudSyncService {
         if let activeStore { try await activeStore.suspend() }
         if let candidateStore { try await candidateStore.suspend() }
         activeStore = nil; candidateStore = nil; pendingArchive = nil; pendingToken = nil; pendingLocalStore = nil
-        fingerprint = nil; observations = []; runningEvents = [:]; observedStoreIDs = []
+        fingerprint = nil; identityTokenArchive = nil; observations = []; runningEvents = [:]; observedStoreIDs = []
         currentStatus = .localOnly
         return try await MirrorStore(configuration: localConfiguration)
+    }
+    /// 저장의 핵심 경로는 로컬 계정 경계만 검사한다. 네트워크 실패로 원본 쓰기를 롤백하지 않는다.
+    public func validateLocalIdentity() async -> Bool {
+        guard optedIn, activeStore != nil, let identityTokenArchive, let rootDirectory else { return false }
+        guard let pointer = try? JSONDecoder().decode(ActiveCloudPointer.self,
+                from: Data(contentsOf: Self.pointerURL(root: rootDirectory))),
+              pointer.accountFingerprint == fingerprint,
+              CloudSyncPolicy.mayUseVerifiedLocalAccount(optedIn: pointer.optedIn,
+                identityMatches: Self.identityMatches(identityTokenArchive), transitionRequired: pointer.transitionRequired) else {
+            await handleAccountChanged(); return false
+        }
+        return true
     }
     public func verifyActiveAccount() async -> Bool {
         guard optedIn, let expected = fingerprint, let identifier = setup.containerIdentifier else { return false }
@@ -299,7 +333,7 @@ public actor CloudSyncService {
         return CloudSyncPolicy.deletion(confirmedTwice: true, activeAccountVerified: verified)
     }
 
-    /// opt-in pointer가 없으면 계정 API를 부르지 않는다. 확장도 같은 계정별 저장소를 연다.
+    /// opt-in pointer가 없으면 계정 API를 부르지 않는다. 확장도 같은 계정별 저장소를 오프라인에서 연다.
     public static func resolveActiveConfiguration(appGroupIdentifier: String, deviceID: String,
                                                    expectedContainerIdentifier: String? = nil) async throws -> StoreConfiguration? {
         guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
@@ -317,10 +351,9 @@ public actor CloudSyncService {
         if let expectedContainerIdentifier, pointer.containerIdentifier != expectedContainerIdentifier {
             throw CloudSyncServiceError.configurationRequired
         }
-        guard let observed = try await inspectAccount(containerIdentifier: pointer.containerIdentifier),
-              CloudSyncPolicy.accountMatches(expected: pointer.accountFingerprint, observed: observed) else {
-            throw CloudSyncServiceError.accountTransitionRequired
-        }
+        // 이미 CKContainer로 확인한 opaque 계정 token을 로컬에서 비교하여 오프라인 쓰기에 네트워크를 요구하지 않는다.
+        guard identityMatches(pointer.identityTokenArchive) else { throw CloudSyncServiceError.accountTransitionRequired }
+        let observed = pointer.accountFingerprint
         let configuration = StoreConfiguration(directory: accountDirectory(root: root, fingerprint: observed),
             workspaceKey: pointer.workspaceKey, workspaceEpoch: pointer.workspaceEpoch, deviceID: deviceID,
             cloudSync: .init(containerIdentifier: pointer.containerIdentifier, accountScope: observed),
@@ -328,6 +361,7 @@ public actor CloudSyncService {
         // 계정 조회 중 host가 전환 pointer를 썼으면 이전 계정으로 열지 않는다.
         let current = try JSONDecoder().decode(ActiveCloudPointer.self, from: Data(contentsOf: url))
         guard current.optedIn, !current.transitionRequired, current.accountFingerprint == observed,
+              current.containerIdentifier == pointer.containerIdentifier, current.workspaceKey == pointer.workspaceKey,
               current.workspaceEpoch == pointer.workspaceEpoch else { throw CloudSyncServiceError.accountTransitionRequired }
         return configuration
     }
@@ -343,18 +377,22 @@ public actor CloudSyncService {
         guard optedIn else { return }
         generation += 1
         currentStatus = .accountTransitionRequired
-        if let root = rootDirectory, let identifier = setup.containerIdentifier, let fingerprint {
-            let config = activeStore?.configuration ?? candidateStore?.configuration ?? localConfiguration
+        if let root = rootDirectory, let identifier = setup.containerIdentifier, let fingerprint, let identityTokenArchive {
+            let config: StoreConfiguration
+            if let activeStore { config = await activeStore.configuration }
+            else if let candidateStore { config = await candidateStore.configuration }
+            else { config = localConfiguration }
             let pointer = ActiveCloudPointer(version: 1, optedIn: true, transitionRequired: true,
-                containerIdentifier: identifier, accountFingerprint: fingerprint,
+                containerIdentifier: identifier, accountFingerprint: fingerprint, identityTokenArchive: identityTokenArchive,
                 workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch,
                 initialTimeZoneID: config.initialTimeZoneID, initialPolicyRevision: config.initialPolicyRevision)
             try? Self.write(pointer, root: root)
         }
-        if let activeStore { try? await activeStore.suspend() }
-        if let candidateStore { try? await candidateStore.suspend() }
+        let active = activeStore; let candidate = candidateStore
         activeStore = nil; candidateStore = nil; pendingArchive = nil; pendingToken = nil; pendingLocalStore = nil
         observedStoreIDs = []; runningEvents = [:]
+        if let active { try? await active.suspend() }
+        if let candidate { try? await candidate.suspend() }
     }
     private func installObservers() {
         guard observations.isEmpty else { return }
@@ -383,6 +421,22 @@ public actor CloudSyncService {
         if notice.event.succeeded, let remaining = runningEvents.values.sorted(by: { $0.rawValue < $1.rawValue }).first {
             currentStatus = .synchronizing(remaining)
         }
+    }
+    private static func currentIdentityArchive() throws -> Data {
+        guard let token = FileManager.default.ubiquityIdentityToken as? NSObject,
+              token is any NSSecureCoding else { throw AccountUnavailable(availability: .couldNotDetermine) }
+        // opaque OS token의 기기 로컬 바인딩이다. CloudKit payload와 export, 로그에 포함하지 않는다.
+        return try NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
+    }
+    private static func identityMatches(_ archive: Data) -> Bool {
+        guard let current = FileManager.default.ubiquityIdentityToken as? NSObject,
+              current is any NSSecureCoding else { return false }
+        do {
+            let classes: [AnyClass] = [type(of: current), NSData.self, NSString.self, NSNumber.self,
+                                       NSArray.self, NSDictionary.self, NSUUID.self]
+            guard let saved = try NSKeyedUnarchiver.unarchivedObject(ofClasses: classes, from: archive) as? NSObject else { return false }
+            return current.isEqual(saved)
+        } catch { return false }
     }
     private struct AccountUnavailable: Error { let availability: CloudAccountAvailability }
     private static func inspectAccount(containerIdentifier: String) async throws -> String? {

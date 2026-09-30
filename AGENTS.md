@@ -9,7 +9,7 @@
 - 개발 및 최소 배포 대상: **iOS 27.0 / iPadOS 27.0 / macOS 27.0**.
 - UI는 SwiftUI와 사용자 지정 **[SwiftPieces](https://github.com/Saivion/SwiftPieces)**를 사용한다. 채택을 다시 확인할 필요 없이 아래 적용 원칙을 따른다.
 - 저장소: `hellosunghyun/mirror`, **private**. 공개 범위를 임의로 변경하지 않는다.
-- 현재는 SwiftUI 앱 타깃의 시작 골격과 날짜 도메인·Swift 테스트가 있다. 공유 scheme은 `MirrorIOS`와 `MirrorMac`이며 저장·명령·동기화·전체 UI는 다음 단계다. 구성과 검증 범위는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
+- SwiftUI 앱·원본 저장·명령/reducer·전체 화면·Widget/Share·App Intents·선택 CloudKit의 첫 구현을 통합했다. 공유 scheme은 `MirrorIOS`/`MirrorMac`, UI scheme은 `MirrorIOSUI`/`MirrorMacUI`다. 새 구현의 원격 검증과 실제 서명·두 기기 검증 상태를 구별한다. 구성과 검증 범위는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
 - 원본의 `Postpone` 작업명과 이전 최소 OS 권고보다 [README](README.md)와 [개발 기준](development-baseline.json)의 확정값이 우선한다.
 - 식별자 접두사는 사용자 지정 `com.baserize`다. 전체 Bundle ID·App Group은 [README의 후보](README.md#식별자-후보)이며 Apple 등록이나 실제 설정 완료를 뜻하지 않는다. 플랫폼별 ID 구성, iCloud container, 서명 Team은 아직 미정이다. 원본 가칭을 확정값으로 복사하지 않는다.
 

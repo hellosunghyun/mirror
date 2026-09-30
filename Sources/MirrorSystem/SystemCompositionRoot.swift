@@ -10,10 +10,11 @@ public enum SystemCompositionRoot {
         let configured = (Bundle.main.object(forInfoDictionaryKey: "MirrorAppGroupIdentifier") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let groupID = configured.flatMap { $0.isEmpty ? nil : $0 }
+        let bundleIsExtension = Bundle.main.bundleURL.pathExtension == "appex"
         let isExtension: Bool
         switch role {
-        case .automatic: isExtension = Bundle.main.bundleURL.pathExtension == "appex"
-        case .application: isExtension = false
+        case .automatic: isExtension = bundleIsExtension
+        case .application: isExtension = bundleIsExtension
         case .sharedExtension: isExtension = true
         }
         let defaults: UserDefaults
@@ -27,8 +28,18 @@ public enum SystemCompositionRoot {
         else { deviceID = UUID().uuidString; defaults.set(deviceID, forKey: key) }
         let configuration: StoreConfiguration
         if let groupID {
-            do { configuration = try .appGroup(identifier: groupID, deviceID: deviceID) }
-            catch { throw SystemServiceError.configurationRequired }
+            do {
+                let identifier = (Bundle.main.object(forInfoDictionaryKey: "MirrorCloudContainerIdentifier") as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                configuration = try await CloudSyncService.resolveActiveConfiguration(appGroupIdentifier: groupID, deviceID: deviceID,
+                    expectedContainerIdentifier: identifier.flatMap { $0.isEmpty ? nil : $0 }) ?? .appGroup(identifier: groupID, deviceID: deviceID)
+            }
+            catch CloudSyncServiceError.accountTransitionRequired { throw SystemServiceError.accountTransitionRequired }
+            catch CloudSyncServiceError.accountUnavailable { throw SystemServiceError.accountTransitionRequired }
+            catch {
+                if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+                throw SystemServiceError.configurationRequired
+            }
         } else {
             guard !isExtension else { throw SystemServiceError.configurationRequired }
             // 공유 설정이 없는 본 앱만 사용하는 명시적 로컬 전용 경로다.
@@ -64,7 +75,11 @@ private actor ProcessServicesRegistry {
         }
         roots[key] = task
         do { return try await task.value }
-        catch { roots[key] = nil; throw error }
+        catch {
+            roots[key] = nil
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw error
+        }
     }
 }
 
@@ -102,12 +117,20 @@ public actor SystemServices {
     }
 
     public func currentContext(at date: Date = Date()) async throws -> PlanningContext {
-        let snapshot = try await store.snapshot()
-        return try .capture(at: date, timeZoneID: snapshot.policy.timeZoneID,
-                            policyRevision: snapshot.policy.revision)
+        do { return try await store.currentContext(at: date) }
+        catch {
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw error
+        }
     }
 
-    public func tasks() async throws -> [TaskProjection] { try await store.snapshot().tasks }
+    public func tasks() async throws -> [TaskProjection] {
+        do { return try await store.snapshot().tasks }
+        catch {
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw error
+        }
+    }
 
     public func task(_ id: UUID) async throws -> TaskProjection {
         guard let task = try await tasks().first(where: { $0.taskID == id }), task.status != .deleted,

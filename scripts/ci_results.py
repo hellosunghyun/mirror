@@ -15,8 +15,10 @@ def annotation(message):
 
 def diagnostics(path):
     lines = Path(path).read_text(errors='replace').splitlines()
-    relevant = [line for line in lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)]
-    for line in relevant[:20] or lines[-8:]:
+    relevant = [line for line in lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)
+                and not re.match(r'^\s*[|`~-]', line)]
+    unique = list(dict.fromkeys(relevant))
+    for line in unique[:40] or lines[-8:]:
         annotation(line[:1800])
 
 

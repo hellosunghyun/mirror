@@ -139,7 +139,7 @@ NFR 성능 데이터는 열린 작업 10,000개·기록 100,000개·조회 일�
 
 | 결정 | 현재 상태·추천 검토안 | 필요한 시점과 영향 |
 |---|---|---|
-| D-STORE | 원본 ADR-004는 Core Data + 불변 OperationRecord + 로컬 projection 제안. 현재 확정되지 않았음. SwiftData/직접 CloudKit 대안과 위험 비교 후 선택 기록 | D-04 전. persistence 모듈·migration·process gate·실제 통합 테스트가 달라짐 |
+| D-STORE | 원본 ADR-004는 Core Data + 불변 OperationRecord + 로컬 projection 제안. 첫 구현은 원본 권고인 Core Data를 기본으로 진행. SwiftData/직접 CloudKit 대안과 영향은 [결정 기록](ARCHITECTURE_DECISIONS.md)에 남김. 별도 사용자 기술 확정으로 주장하지 않음 | D-04 전. persistence 모듈·migration·process gate·실제 통합 테스트가 달라짐 |
 | D-CAPABILITY | prefix만 확정. iOS/Mac 최종 Bundle ID 공유 여부, Widget/Share ID, App Group, iCloud container, Team/배포 경로 미정 | D-01 확장·D-07/08 실제 실행·D-10 cloud 전. 실제 계정 등록/서명과 unsigned 설정을 구별 |
 | D-SYNC | 선택 iCloud·계정별 물리 store·로컬 우선은 제품 계약. 초기 merge/재구성·권위 있는 epoch 제어 경로는 설계 필요 | D-10 전. 계정 혼합 금지, writer/importer 중지와 실제 계정 전환 실험 |
 | D-DELETE | 기기 삭제와 공간 전체 삭제를 구별. 삭제 이후에도 필요한 제어 메타데이터/epoch 권위·offline writer 차단 미결정 | D-13 전. 실제 삭제는 테스트용 데이터와 명시 실행 범위 확인; G-DELETE 없이 완전 삭제 주장 불가 |
