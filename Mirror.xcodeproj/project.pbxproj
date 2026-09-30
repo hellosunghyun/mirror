@@ -529,6 +529,13 @@
 			path = Resources/PrivacyInfo.xcprivacy;
 			sourceTree = SOURCE_ROOT;
 		};
+		9C475BB67FD8C24BD570A186 = {
+			isa = PBXFileReference;
+			lastKnownFileType = folder.assetcatalog;
+			name = AppAssets.xcassets;
+			path = Resources/AppAssets.xcassets;
+			sourceTree = SOURCE_ROOT;
+		};
 		8D22B8C83E2ADF51220418AE = {
 			isa = PBXFileReference;
 			lastKnownFileType = text;
@@ -554,6 +561,7 @@
 			isa = PBXGroup;
 			children = (
 				6327A1005FF0B783151E530B,
+				9C475BB67FD8C24BD570A186,
 				8D22B8C83E2ADF51220418AE,
 				3DE0B9653A7F3E08AC5AE5F5,
 				D87208ACB10CA24F284B8E7D,
@@ -1855,6 +1863,10 @@
 			isa = PBXBuildFile;
 			fileRef = 6327A1005FF0B783151E530B;
 		};
+		23C7E3B1E5DF2412602849E6 = {
+			isa = PBXBuildFile;
+			fileRef = 9C475BB67FD8C24BD570A186;
+		};
 		5E8A3FEA9D688B96EB712FCD = {
 			isa = PBXBuildFile;
 			fileRef = 8D22B8C83E2ADF51220418AE;
@@ -1868,6 +1880,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				79E2C66BA65A445778505086,
+				23C7E3B1E5DF2412602849E6,
 				5E8A3FEA9D688B96EB712FCD,
 				8E1F2A7BA90AF0F1B0992935,
 			);
@@ -1995,6 +2008,7 @@
 				INFOPLIST_FILE = "Configuration/MirrorIOS-Info.plist";
 				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorIOS.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 			};
 			name = Debug;
 		};
@@ -2018,6 +2032,7 @@
 				INFOPLIST_FILE = "Configuration/MirrorIOS-Info.plist";
 				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorIOS.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 			};
 			name = Release;
 		};
@@ -2118,6 +2133,10 @@
 			isa = PBXBuildFile;
 			fileRef = 6327A1005FF0B783151E530B;
 		};
+		FFAA55906B44561D8E7DF7D6 = {
+			isa = PBXBuildFile;
+			fileRef = 9C475BB67FD8C24BD570A186;
+		};
 		AF1D0711390AC7BD70EF52D2 = {
 			isa = PBXBuildFile;
 			fileRef = 8D22B8C83E2ADF51220418AE;
@@ -2131,6 +2150,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BEC15E3554D13270C13B6261,
+				FFAA55906B44561D8E7DF7D6,
 				AF1D0711390AC7BD70EF52D2,
 				B6CE772C8D49F42E65D3ABB3,
 			);
@@ -2256,6 +2276,7 @@
 				INFOPLIST_FILE = "Configuration/MirrorMac-Info.plist";
 				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorMac.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 			};
 			name = Debug;
 		};
@@ -2277,6 +2298,7 @@
 				INFOPLIST_FILE = "Configuration/MirrorMac-Info.plist";
 				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorMac.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 			};
 			name = Release;
 		};

@@ -68,12 +68,14 @@ def main():
     if mode == 'swift':
         log = Path(path).read_text(errors='replace')
         report_runs(log)
-        matches = re.findall(r'Test run with (\d+) tests? (?:in \d+ suites? )?passed', log)
-        if not matches:
-            raise ValueError('Swift Testing의 실제 완료 결과를 찾지 못했습니다.')
+        reports = reported_runs(log)
+        # Xcode 27 SwiftPM은 세 test target을 독립 worker에서 실행한다.
+        # 실제 관측: 3ac7f99 run 36760077361의 25/94/21 완료 보고. 마지막 worker만 세지 않는다.
+        if len(reports) != 3 or any(r['result'] != 'passed' or r['tests'] <= 0 for r in reports):
+            raise ValueError('필수 세 SwiftPM 테스트 target의 양수 통과 완료 보고가 있어야 합니다.')
         if re.search(r'\btest(?:s)?\b.*\bskipped\b', log, re.I):
             raise ValueError('Swift 테스트에 skipped 결과가 있습니다.')
-        record(int(matches[-1]))
+        record(sum(report['tests'] for report in reports))
     elif mode == 'xcode':
         unit = xcode_count(path)
         if additional_paths:

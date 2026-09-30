@@ -47,7 +47,7 @@ TARGETS = {
 }
 TYPES = {'swift': 'sourcecode.swift', 'metal': 'sourcecode.metal', 'plist': 'text.plist.xml',
          'entitlements': 'text.plist.entitlements', 'xcprivacy': 'text.xml', 'json': 'text.json',
-         'md': 'net.daringfireball.markdown', 'swiftpieces': 'text'}
+         'md': 'net.daringfireball.markdown', 'swiftpieces': 'text', 'xcassets': 'folder.assetcatalog'}
 PRODUCT_TYPES = {
     'framework': ('framework', 'wrapper.framework'), 'application': ('app', 'wrapper.application'),
     'app-extension': ('appex', 'wrapper.app-extension'),
@@ -111,7 +111,7 @@ for path in source_directories:
 configuration_files = sorted(str(path.relative_to(ROOT)) for path in (ROOT / 'Configuration').iterdir() if path.is_file())
 add('group:configuration', isa='PBXGroup', children=[file_reference(path) for path in configuration_files],
     name='Configuration', sourceTree='<group>')
-resource_files = ['Resources/PrivacyInfo.xcprivacy', 'Sources/MirrorDesign/SwiftPieces/LICENSE.swiftpieces',
+resource_files = ['Resources/PrivacyInfo.xcprivacy', 'Resources/AppAssets.xcassets', 'Sources/MirrorDesign/SwiftPieces/LICENSE.swiftpieces',
                   'Sources/MirrorDesign/SwiftPieces/PROVENANCE.md', 'postpone-app-docs/fixtures/domain-cases.json']
 add('group:resources', isa='PBXGroup', children=[file_reference(path) for path in resource_files],
     name='Resources / Fixture', sourceTree='<group>')
@@ -165,7 +165,7 @@ for target, spec in TARGETS.items():
     if kind in ('application', 'app-extension'):
         resources.append('Resources/PrivacyInfo.xcprivacy')
     if kind == 'application':
-        resources.extend(['Sources/MirrorDesign/SwiftPieces/LICENSE.swiftpieces', 'Sources/MirrorDesign/SwiftPieces/PROVENANCE.md'])
+        resources.extend(['Resources/AppAssets.xcassets', 'Sources/MirrorDesign/SwiftPieces/LICENSE.swiftpieces', 'Sources/MirrorDesign/SwiftPieces/PROVENANCE.md'])
     if target == 'MirrorDomainTests':
         resources.append('postpone-app-docs/fixtures/domain-cases.json')
     resource_builds = [add(f'{target}:resource:{path}', isa='PBXBuildFile', fileRef=file_reference(path)) for path in resources]
@@ -198,7 +198,8 @@ for target, spec in TARGETS.items():
         settings.update(SDKROOT='auto', SUPPORTED_PLATFORMS='iphoneos iphonesimulator macosx', TARGETED_DEVICE_FAMILY='1,2')
     if kind == 'application':
         settings.update(GENERATE_INFOPLIST_FILE='NO', INFOPLIST_FILE=f'Configuration/{target}-Info.plist',
-                        CODE_SIGN_ENTITLEMENTS=f'Configuration/{target}.entitlements', PRODUCT_BUNDLE_IDENTIFIER=spec['bundle'])
+                        CODE_SIGN_ENTITLEMENTS=f'Configuration/{target}.entitlements', PRODUCT_BUNDLE_IDENTIFIER=spec['bundle'],
+                        ASSETCATALOG_COMPILER_APPICON_NAME='AppIcon')
     elif kind == 'app-extension':
         settings.update(GENERATE_INFOPLIST_FILE='NO', INFOPLIST_FILE=f'Configuration/{spec["info"]}-Info.plist',
                         CODE_SIGN_ENTITLEMENTS=f'Configuration/Extension{"IOS" if platform == "ios" else "Mac"}.entitlements',

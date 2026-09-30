@@ -159,6 +159,26 @@ struct SystemContractTests {
         #expect(after.card?.decisionToken != visible.card?.decisionToken)
     }
 
+    @Test("오늘 목록은 operation ID의 사전 순서 대신 배치한 결정 순서를 유지한다")
+    func todayUsesDecisionOrder() async throws {
+        let h = try await harness()
+        let keys = try ["today-first", "today-second"].map { key in
+            (key, try OperationRecord.logicalID(workspaceKey: "personal-v1", workspaceEpoch: "local-v1", idempotencyKey: key))
+        }.sorted { $0.1 > $1.1 }
+        for (id, key) in zip([h.first, h.second], keys.map(\.0)) {
+            let task = try #require(try await h.store.snapshot().tasks.first { $0.taskID == id })
+            let result = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: key,
+                source: .app, context: h.context, workspaceEpoch: "local-v1",
+                payload: .setPlan(item: .init(taskID: id, expected: .init(task)), target: .day(h.context.planningDay), review: nil)), at: fixedInstant)
+            #expect(result.state == .locallyCommitted)
+        }
+        let first = try await h.widget.snapshot(at: fixedInstant)
+        let reopened = WidgetReviewService(store: h.store, directory: h.directory, workspaceEpoch: "local-v1")
+        let second = try await reopened.snapshot(at: fixedInstant)
+        #expect(first.today.map(\.taskID) == [h.first, h.second])
+        #expect(second.today == first.today)
+    }
+
     @Test("위젯 Undo는 원본 결정 버전에 고정하고 후속 제목 수정은 보존한다")
     func undoKeepsNewContent() async throws {
         let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)

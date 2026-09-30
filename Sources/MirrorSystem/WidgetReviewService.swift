@@ -236,8 +236,14 @@ public actor WidgetReviewService {
             })
             if report.isCycleClosed(cycle), !manuallyStarted { state.mode = .today }
         }
+        let decisionOrder = Dictionary(snapshot.records.filter { report.appliedOperationIDs.contains($0.operationID) }
+            .map { ($0.operationID, $0.lamport) }, uniquingKeysWith: { first, _ in first })
         state.today = snapshot.tasks.filter { PlanningRules.isToday($0.planningState, on: context.planningDay) && $0.isProjectionComplete }
-            .sorted { ($0.versions[.plan]?.winningOperationID ?? "", $0.taskID.uuidString) < ($1.versions[.plan]?.winningOperationID ?? "", $1.taskID.uuidString) }
+            .sorted {
+                let left = $0.versions[.plan].flatMap { decisionOrder[$0.winningOperationID] } ?? 0
+                let right = $1.versions[.plan].flatMap { decisionOrder[$0.winningOperationID] } ?? 0
+                return left == right ? $0.taskID.uuidString < $1.taskID.uuidString : left < right
+            }
             .prefix(5).compactMap { task in
                 task.versions[.status].map { .init(taskID: task.taskID, title: preferences.hideExternalTitles ? "할 일" : task.title, expectedStatus: $0.headsDigest) }
             }

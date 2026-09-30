@@ -115,6 +115,7 @@ final class AppModel {
     @ObservationIgnored private var configuration: StoreConfiguration?
     @ObservationIgnored private var services: SystemServices?
     @ObservationIgnored private var cloud: CloudSyncService?
+    @ObservationIgnored private var lamportByOperationID: [String: Int64] = [:]
     @ObservationIgnored private var retryEnvelope: CommandEnvelope?
     @ObservationIgnored private var widgetDecision: (request: PlanPickerRequest, target: PlanTarget)?
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -240,6 +241,8 @@ final class AppModel {
             let snapshot = try await store.snapshot()
             tasks = snapshot.tasks.sorted { $0.createdAt < $1.createdAt }
             records = snapshot.records
+            lamportByOperationID = Dictionary(snapshot.records.map { ($0.operationID, $0.lamport) },
+                                             uniquingKeysWith: { first, _ in first })
             syncState = snapshot.syncState
             quarantinedCount = snapshot.quarantinedCount
             preferences.timeZoneID = snapshot.policy.timeZoneID
@@ -477,40 +480,39 @@ final class AppModel {
         if archivePreview?.requiresWorkspaceConfirmation == true, !confirmWorkspace {
             problem = "현재 기기의 작업을 교체하고 원래 자료의 공간을 복원할지 확인해 주세요."; return
         }
+        var sourceRestored = false
         do {
             let oldServices = services
             let report: ImportReport
-            var replacedWorkspace = false
             if store == nil, let configuration, configuration.cloudSync == nil {
                 let restoration = try await MirrorStore.recoverInterruptedLocalRestoration(from: bytes, directory: configuration.directory,
                                                                                             deviceID: configuration.deviceID, confirmed: confirmWorkspace)
-                let next = try await MirrorStore(configuration: restoration.newConfiguration)
-                self.store = next; self.configuration = restoration.newConfiguration
-                services = SystemServices(store: next, directory: restoration.newConfiguration.directory,
-                                          workspaceEpoch: restoration.newConfiguration.workspaceEpoch)
+                sourceRestored = true
+                try await openRestoredWorkspace(restoration.newConfiguration, replacing: oldServices)
                 report = restoration.importReport
-                replacedWorkspace = true
             } else if let store, archivePreview?.requiresWorkspaceConfirmation == true {
                 let restoration = try await store.restoreArchiveAsLocalWorkspace(bytes, confirmed: confirmWorkspace)
-                let next = try await MirrorStore(configuration: restoration.newConfiguration)
-                self.store = next; configuration = restoration.newConfiguration
-                services = SystemServices(store: next, directory: restoration.newConfiguration.directory,
-                                          workspaceEpoch: restoration.newConfiguration.workspaceEpoch)
-                review = nil; lastUndo = nil; records = []; tasks = []
-                defaults.removeObject(forKey: sessionKey)
+                sourceRestored = true
+                try await openRestoredWorkspace(restoration.newConfiguration, replacing: oldServices)
                 report = restoration.importReport
-                replacedWorkspace = true
             } else if let store { report = try await store.importArchive(bytes, consent: ArchiveImportConsent(accountChangeConfirmed: confirmAccount)) }
             else { problem = "저장소 설정을 먼저 확인해 주세요. 원본은 지우지 않았어요."; return }
-            if replacedWorkspace {
-                if let oldServices { await reportCleanup(await oldServices.eraseLocalSurfaceData()) }
-                clearTransientData()
-                preferences.deadlineAlarmDates = [:]
-            }
             if let configuration, configuration.cloudSync == nil { resetCloudService(localConfiguration: configuration) }
             feedback = "복원했어요. 새 기록 \(report.inserted)개, 중복 \(report.duplicates)개, 격리 \(report.quarantined)개."
             importData = nil; importPreview = nil; archivePreview = nil; await refresh()
-        } catch { problem = "복원하지 못했어요. 파일과 저장된 원본을 확인해 주세요." }
+        } catch {
+            problem = sourceRestored ? "원본 자료는 복원했어요. 새 저장소를 열지 못해 다시 확인해야 해요. 다시 확인을 선택해 주세요." : "복원하지 못했어요. 파일과 저장된 원본을 확인해 주세요."
+        }
+    }
+    private func openRestoredWorkspace(_ config: StoreConfiguration, replacing oldServices: SystemServices?) async throws {
+        // 교체된 원본에 예전 actor나 화면의 작업을 다시 연결하지 않는다.
+        store = nil; services = nil; configuration = config
+        clearTransientData()
+        preferences.deadlineAlarmDates = [:]
+        if let oldServices { await reportCleanup(await oldServices.eraseLocalSurfaceData()) }
+        let next = try await MirrorStore(configuration: config)
+        store = next
+        services = SystemServices(store: next, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
     }
     func deleteLocalData() async {
         guard let store else { return }
@@ -650,10 +652,12 @@ final class AppModel {
     private func refreshUpcomingCards() {
         guard var session = review else { return }
         let latest = Dictionary(uniqueKeysWithValues: tasks.map { ($0.taskID, $0) })
+        let planningDay = session.context.planningDay
+        let reviewMode: ReviewMode = session.todayOverride ? .manualTodayOverride : .manualResume
         session.cards.removeAll { card in
             guard let task = latest[card.taskID] else { return true }
-            return !PlanningRules.isReviewCandidate(task.planningState, on: session.context.planningDay,
-                                                    acknowledgedCurrentPlan: false, mode: session.todayOverride ? .manualTodayOverride : .manualResume)
+            return !PlanningRules.isReviewCandidate(task.planningState, on: planningDay,
+                                                    acknowledgedCurrentPlan: false, mode: reviewMode)
         }
         if let next = session.cards.first, let task = latest[next.taskID] {
             session.cards[0] = ReviewCard(id: UUID().uuidString, taskID: task.taskID,
@@ -691,8 +695,8 @@ final class AppModel {
     private func todayOrder(_ lhs: TaskProjection, _ rhs: TaskProjection) -> Bool {
         let leftID = lhs.versions[.plan]?.winningOperationID
         let rightID = rhs.versions[.plan]?.winningOperationID
-        let left = records.first { $0.operationID == leftID }?.lamport ?? 0
-        let right = records.first { $0.operationID == rightID }?.lamport ?? 0
+        let left = leftID.flatMap { lamportByOperationID[$0] } ?? 0
+        let right = rightID.flatMap { lamportByOperationID[$0] } ?? 0
         return left == right ? lhs.taskID.uuidString < rhs.taskID.uuidString : left < right
     }
     private func reviewOrder(_ task: TaskProjection, context: PlanningContext) -> (Int, Date, String) {
@@ -955,6 +959,7 @@ final class AppModel {
         endReviewExposureSegment()
         activeReviewMilliseconds = 0; reviewExposures = []
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
+        lamportByOperationID = [:]
         retryEnvelope = nil; widgetDecision = nil; archiveData = nil; importData = nil
         importPreview = nil; archivePreview = nil; selectedTaskID = nil; selectedTaskIDs = []
         calendarEvents = []; calendars = []; showReview = false; projectionPending = false
