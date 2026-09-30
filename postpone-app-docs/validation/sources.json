@@ -1,0 +1,116 @@
+[
+  {
+    "id": "A01",
+    "title": "Adding interactivity to widgets and Live Activities",
+    "url": "https://developer.apple.com/documentation/widgetkit/adding-interactivity-to-widgets-and-live-activities",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A02",
+    "title": "Keeping a widget up to date",
+    "url": "https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date/",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A03",
+    "title": "AppIntent",
+    "url": "https://developer.apple.com/documentation/appintents/appintent",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A04",
+    "title": "App Shortcuts / Human Interface Guidelines",
+    "url": "https://developer.apple.com/design/human-interface-guidelines/app-shortcuts",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A05",
+    "title": "Core Data",
+    "url": "https://developer.apple.com/documentation/coredata/",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A06",
+    "title": "Syncing a Core Data Store with CloudKit",
+    "url": "https://developer.apple.com/documentation/coredata/syncing-a-core-data-store-with-cloudkit",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A07",
+    "title": "Creating a Core Data Model for CloudKit",
+    "url": "https://developer.apple.com/documentation/CoreData/creating-a-core-data-model-for-cloudkit",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A08",
+    "title": "Persistent history",
+    "url": "https://developer.apple.com/documentation/coredata/persistent-history",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A09",
+    "title": "App Extension Programming Guide / Handling Common Scenarios",
+    "url": "https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/ExtensionScenarios.html",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A10",
+    "title": "Accessing the event store",
+    "url": "https://developer.apple.com/documentation/eventkit/accessing-the-event-store",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A11",
+    "title": "Developing a WidgetKit strategy",
+    "url": "https://developer.apple.com/documentation/widgetkit/developing-a-widgetkit-strategy",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A12",
+    "title": "Develop for Shortcuts and Spotlight with App Intents / WWDC25",
+    "url": "https://developer.apple.com/videos/play/wwdc2025/260/",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A13",
+    "title": "AppIntent.supportedModes",
+    "url": "https://developer.apple.com/documentation/appintents/appintent/supportedmodes",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A14",
+    "title": "IntentAuthenticationPolicy.requiresAuthentication",
+    "url": "https://developer.apple.com/de/documentation/appintents/intentauthenticationpolicy/requiresauthentication",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A15",
+    "title": "Displaying live data with Live Activities",
+    "url": "https://developer.apple.com/de/documentation/activitykit/displaying-live-data-with-live-activities",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A16",
+    "title": "Scheduling a notification locally from your app",
+    "url": "https://developer.apple.com/documentation/usernotifications/scheduling-a-notification-locally-from-your-app",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A17",
+    "title": "TN3164 / Debugging NSPersistentCloudKitContainer synchronization",
+    "url": "https://developer.apple.com/documentation/technotes/tn3164-debugging-the-synchronization-of-nspersistentcloudkitcontainer",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A18",
+    "title": "User Privacy and Data Use / App Privacy Details",
+    "url": "https://developer.apple.com/app-store/app-privacy-details/",
+    "checkedAt": "2026-09-30"
+  },
+  {
+    "id": "A19",
+    "title": "NSPersistentCloudKitContainer / purgeObjectsAndRecordsInZone",
+    "url": "https://developer.apple.com/documentation/coredata/nspersistentcloudkitcontainer/purgeobjectsandrecordsinzonewithid%3Ainpersistentstore%3Acompletion%3A",
+    "checkedAt": "2026-09-30"
+  }
+]

@@ -1,0 +1,31 @@
+{
+  "reportDate": "2026-09-30",
+  "scope": "documentation_and_contract_examples_only",
+  "result": "pass",
+  "checks": {
+    "nonempty_markdown": 14,
+    "utf8_text": 14,
+    "balanced_code_fences": 14,
+    "internal_links": 34,
+    "json_parse": 6,
+    "json_schema_definition": 2,
+    "command_examples": 2,
+    "fixture_ids": 1,
+    "fixture_expectations": 36,
+    "plan_examples": 26,
+    "qa_ids": 1,
+    "requirements_coverage": 91,
+    "app_test_status": 117,
+    "qa_documentation": 87,
+    "qa_requirements": 87,
+    "source_registry": 32
+  },
+  "checkCount": 564,
+  "coreDocumentCount": 12,
+  "functionalRequirementCount": 30,
+  "qaSpecificationCount": 87,
+  "fixtureCount": 36,
+  "officialSourceCount": 19,
+  "actualAppTestsExecuted": 0,
+  "errors": []
+}

@@ -1,0 +1,406 @@
+{
+  "version": 1,
+  "requirements": [
+    {
+      "requirementID": "FR-001",
+      "specFiles": [
+        "01_PRODUCT_REQUIREMENTS.md",
+        "02_UX_AND_SCREEN_SPEC.md"
+      ],
+      "testIDs": [
+        "Q-001",
+        "Q-002",
+        "Q-003",
+        "Q-004",
+        "Q-007"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-002",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md",
+        "07_CALENDAR_NOTIFICATIONS_PRIVACY.md"
+      ],
+      "testIDs": [
+        "Q-005"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-003",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md"
+      ],
+      "testIDs": [
+        "Q-008"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-004",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-021",
+        "Q-022",
+        "Q-023"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-005",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-020"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-006",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md",
+        "06_APP_INTENTS_AND_WIDGETS.md"
+      ],
+      "testIDs": [
+        "Q-009",
+        "Q-010"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-007",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md",
+        "06_APP_INTENTS_AND_WIDGETS.md"
+      ],
+      "testIDs": [
+        "Q-011",
+        "Q-012",
+        "Q-016"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-008",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-013",
+        "Q-014"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-009",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md",
+        "06_APP_INTENTS_AND_WIDGETS.md"
+      ],
+      "testIDs": [
+        "Q-015",
+        "Q-043"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-010",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-017"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-011",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md",
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-019"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-012",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-018"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-013",
+      "specFiles": [
+        "04_DATA_AND_COMMAND_CONTRACTS.md"
+      ],
+      "testIDs": [
+        "Q-032",
+        "Q-033"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-014",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md",
+        "04_DATA_AND_COMMAND_CONTRACTS.md"
+      ],
+      "testIDs": [
+        "Q-025",
+        "Q-026",
+        "Q-027",
+        "Q-028"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-015",
+      "specFiles": [
+        "04_DATA_AND_COMMAND_CONTRACTS.md"
+      ],
+      "testIDs": [
+        "Q-029",
+        "Q-030",
+        "Q-031",
+        "Q-087"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-016",
+      "specFiles": [
+        "06_APP_INTENTS_AND_WIDGETS.md"
+      ],
+      "testIDs": [
+        "Q-035",
+        "Q-036",
+        "Q-037",
+        "Q-041",
+        "Q-047"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-017",
+      "specFiles": [
+        "06_APP_INTENTS_AND_WIDGETS.md"
+      ],
+      "testIDs": [
+        "Q-006",
+        "Q-044"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-018",
+      "specFiles": [
+        "05_ARCHITECTURE_AND_SYNC.md",
+        "02_UX_AND_SCREEN_SPEC.md"
+      ],
+      "testIDs": [
+        "Q-046",
+        "Q-079",
+        "Q-086"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-019",
+      "specFiles": [
+        "05_ARCHITECTURE_AND_SYNC.md"
+      ],
+      "testIDs": [
+        "Q-049",
+        "Q-050"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-020",
+      "specFiles": [
+        "05_ARCHITECTURE_AND_SYNC.md"
+      ],
+      "testIDs": [
+        "Q-053",
+        "Q-055",
+        "Q-056",
+        "Q-057",
+        "Q-058",
+        "Q-059",
+        "Q-060",
+        "Q-061",
+        "Q-062",
+        "Q-087"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-021",
+      "specFiles": [
+        "07_CALENDAR_NOTIFICATIONS_PRIVACY.md"
+      ],
+      "testIDs": [
+        "Q-065",
+        "Q-066",
+        "Q-067",
+        "Q-068"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-022",
+      "specFiles": [
+        "07_CALENDAR_NOTIFICATIONS_PRIVACY.md"
+      ],
+      "testIDs": [
+        "Q-069",
+        "Q-070",
+        "Q-071",
+        "Q-072",
+        "Q-073"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-023",
+      "specFiles": [
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-039",
+        "Q-074"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-024",
+      "specFiles": [
+        "07_CALENDAR_NOTIFICATIONS_PRIVACY.md",
+        "03_DOMAIN_AND_REVIEW_RULES.md"
+      ],
+      "testIDs": [
+        "Q-024",
+        "Q-034",
+        "Q-084"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-025",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md",
+        "07_CALENDAR_NOTIFICATIONS_PRIVACY.md"
+      ],
+      "testIDs": [
+        "Q-045",
+        "Q-075",
+        "Q-076",
+        "Q-077",
+        "Q-082"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-026",
+      "specFiles": [
+        "04_DATA_AND_COMMAND_CONTRACTS.md",
+        "07_CALENDAR_NOTIFICATIONS_PRIVACY.md"
+      ],
+      "testIDs": [
+        "Q-054",
+        "Q-081"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-027",
+      "specFiles": [
+        "04_DATA_AND_COMMAND_CONTRACTS.md"
+      ],
+      "testIDs": [
+        "Q-080"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-028",
+      "specFiles": [
+        "02_UX_AND_SCREEN_SPEC.md"
+      ],
+      "testIDs": [
+        "Q-078"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-029",
+      "specFiles": [
+        "06_APP_INTENTS_AND_WIDGETS.md",
+        "10_SOURCES_AND_COMPATIBILITY.md"
+      ],
+      "testIDs": [
+        "Q-048"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    },
+    {
+      "requirementID": "FR-030",
+      "specFiles": [
+        "04_DATA_AND_COMMAND_CONTRACTS.md",
+        "05_ARCHITECTURE_AND_SYNC.md"
+      ],
+      "testIDs": [
+        "Q-038",
+        "Q-040",
+        "Q-042",
+        "Q-051",
+        "Q-052",
+        "Q-063",
+        "Q-064",
+        "Q-083",
+        "Q-085"
+      ],
+      "implementationStatus": "not_implemented",
+      "appTestStatus": "not_run"
+    }
+  ]
+}

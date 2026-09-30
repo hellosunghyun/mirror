@@ -1,0 +1,630 @@
+{
+  "fixtureVersion": 1,
+  "description": "기대 결과 벡터. 실제 Swift 구현 테스트가 아니라 문서의 계약 사례다.",
+  "cases": [
+    {
+      "id": "F-001",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2026-09-30",
+        "timeZoneID": "Asia/Seoul"
+      },
+      "expected": {
+        "today": "2026-09-30",
+        "tomorrow": "2026-10-01",
+        "thisWeek": {
+          "startDate": "2026-09-28",
+          "endExclusiveDate": "2026-10-05"
+        },
+        "nextWeek": {
+          "startDate": "2026-10-05",
+          "endExclusiveDate": "2026-10-12"
+        }
+      }
+    },
+    {
+      "id": "F-002",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2026-10-04",
+        "timeZoneID": "Asia/Seoul"
+      },
+      "expected": {
+        "today": "2026-10-04",
+        "tomorrow": "2026-10-05",
+        "thisWeek": {
+          "startDate": "2026-09-28",
+          "endExclusiveDate": "2026-10-05"
+        },
+        "nextWeek": {
+          "startDate": "2026-10-05",
+          "endExclusiveDate": "2026-10-12"
+        }
+      }
+    },
+    {
+      "id": "F-003",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2026-12-31",
+        "timeZoneID": "Asia/Seoul"
+      },
+      "expected": {
+        "today": "2026-12-31",
+        "tomorrow": "2027-01-01",
+        "thisWeek": {
+          "startDate": "2026-12-28",
+          "endExclusiveDate": "2027-01-04"
+        },
+        "nextWeek": {
+          "startDate": "2027-01-04",
+          "endExclusiveDate": "2027-01-11"
+        }
+      }
+    },
+    {
+      "id": "F-004",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2028-02-28",
+        "timeZoneID": "Asia/Seoul"
+      },
+      "expected": {
+        "today": "2028-02-28",
+        "tomorrow": "2028-02-29",
+        "thisWeek": {
+          "startDate": "2028-02-28",
+          "endExclusiveDate": "2028-03-06"
+        },
+        "nextWeek": {
+          "startDate": "2028-03-06",
+          "endExclusiveDate": "2028-03-13"
+        }
+      }
+    },
+    {
+      "id": "F-005",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2028-02-29",
+        "timeZoneID": "Asia/Seoul"
+      },
+      "expected": {
+        "today": "2028-02-29",
+        "tomorrow": "2028-03-01",
+        "thisWeek": {
+          "startDate": "2028-02-28",
+          "endExclusiveDate": "2028-03-06"
+        },
+        "nextWeek": {
+          "startDate": "2028-03-06",
+          "endExclusiveDate": "2028-03-13"
+        }
+      }
+    },
+    {
+      "id": "F-006",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2026-03-08",
+        "timeZoneID": "America/Los_Angeles"
+      },
+      "expected": {
+        "today": "2026-03-08",
+        "tomorrow": "2026-03-09",
+        "thisWeek": {
+          "startDate": "2026-03-02",
+          "endExclusiveDate": "2026-03-09"
+        },
+        "nextWeek": {
+          "startDate": "2026-03-09",
+          "endExclusiveDate": "2026-03-16"
+        }
+      }
+    },
+    {
+      "id": "F-007",
+      "kind": "dateDestinations",
+      "input": {
+        "planningDay": "2026-11-01",
+        "timeZoneID": "America/Los_Angeles"
+      },
+      "expected": {
+        "today": "2026-11-01",
+        "tomorrow": "2026-11-02",
+        "thisWeek": {
+          "startDate": "2026-10-26",
+          "endExclusiveDate": "2026-11-02"
+        },
+        "nextWeek": {
+          "startDate": "2026-11-02",
+          "endExclusiveDate": "2026-11-09"
+        }
+      }
+    },
+    {
+      "id": "F-008",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "unassigned"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": true
+      }
+    },
+    {
+      "id": "F-009",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "day",
+            "date": "2026-09-30"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": true,
+        "reviewCandidate": true
+      }
+    },
+    {
+      "id": "F-010",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "day",
+            "date": "2026-09-30"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": true
+      },
+      "expected": {
+        "isToday": true,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-011",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "day",
+            "date": "2026-09-29"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": true
+      }
+    },
+    {
+      "id": "F-012",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "day",
+            "date": "2026-10-02"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-013",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "week",
+            "startDate": "2026-09-28",
+            "endExclusiveDate": "2026-10-05"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": true
+      }
+    },
+    {
+      "id": "F-014",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "week",
+            "startDate": "2026-09-28",
+            "endExclusiveDate": "2026-10-05"
+          },
+          "reviewNotBefore": "2026-10-01"
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-015",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "week",
+            "startDate": "2026-10-05",
+            "endExclusiveDate": "2026-10-12"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-016",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "parked"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-017",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "completed",
+          "plan": {
+            "kind": "day",
+            "date": "2026-09-30"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-018",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "deleted",
+          "plan": {
+            "kind": "unassigned"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": false
+      }
+    },
+    {
+      "id": "F-019",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-09-30",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "week",
+            "startDate": "2026-09-21",
+            "endExclusiveDate": "2026-09-28"
+          },
+          "reviewNotBefore": null
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": true
+      }
+    },
+    {
+      "id": "F-020",
+      "kind": "visibility",
+      "input": {
+        "planningDay": "2026-10-05",
+        "task": {
+          "status": "open",
+          "plan": {
+            "kind": "week",
+            "startDate": "2026-10-05",
+            "endExclusiveDate": "2026-10-12"
+          },
+          "reviewNotBefore": "2026-10-05"
+        },
+        "acknowledgedCurrentPlan": false
+      },
+      "expected": {
+        "isToday": false,
+        "reviewCandidate": true
+      }
+    },
+    {
+      "id": "F-021",
+      "kind": "deadlineWarning",
+      "input": {
+        "target": {
+          "kind": "day",
+          "date": "2026-10-01"
+        },
+        "deadlineLocalDate": "2026-10-02"
+      },
+      "expected": {
+        "requiresAfterDeadlineConfirmation": false
+      }
+    },
+    {
+      "id": "F-022",
+      "kind": "deadlineWarning",
+      "input": {
+        "target": {
+          "kind": "day",
+          "date": "2026-10-02"
+        },
+        "deadlineLocalDate": "2026-10-02"
+      },
+      "expected": {
+        "requiresAfterDeadlineConfirmation": false
+      }
+    },
+    {
+      "id": "F-023",
+      "kind": "deadlineWarning",
+      "input": {
+        "target": {
+          "kind": "day",
+          "date": "2026-10-03"
+        },
+        "deadlineLocalDate": "2026-10-02"
+      },
+      "expected": {
+        "requiresAfterDeadlineConfirmation": true
+      }
+    },
+    {
+      "id": "F-024",
+      "kind": "deadlineWarning",
+      "input": {
+        "target": {
+          "kind": "week",
+          "startDate": "2026-10-05",
+          "endExclusiveDate": "2026-10-12"
+        },
+        "deadlineLocalDate": "2026-10-06"
+      },
+      "expected": {
+        "requiresAfterDeadlineConfirmation": false
+      }
+    },
+    {
+      "id": "F-025",
+      "kind": "deadlineWarning",
+      "input": {
+        "target": {
+          "kind": "week",
+          "startDate": "2026-10-05",
+          "endExclusiveDate": "2026-10-12"
+        },
+        "deadlineLocalDate": "2026-10-02"
+      },
+      "expected": {
+        "requiresAfterDeadlineConfirmation": true
+      }
+    },
+    {
+      "id": "F-026",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "day",
+          "date": "2026-09-29"
+        }
+      },
+      "expected": {
+        "valid": false
+      }
+    },
+    {
+      "id": "F-027",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "day",
+          "date": "2026-10-01"
+        }
+      },
+      "expected": {
+        "valid": true
+      }
+    },
+    {
+      "id": "F-028",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "week",
+          "startDate": "2026-09-28",
+          "endExclusiveDate": "2026-10-05"
+        }
+      },
+      "expected": {
+        "valid": true
+      }
+    },
+    {
+      "id": "F-029",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "week",
+          "startDate": "2026-09-29",
+          "endExclusiveDate": "2026-10-06"
+        }
+      },
+      "expected": {
+        "valid": false
+      }
+    },
+    {
+      "id": "F-030",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "week",
+          "startDate": "2026-09-28",
+          "endExclusiveDate": "2026-10-06"
+        }
+      },
+      "expected": {
+        "valid": false
+      }
+    },
+    {
+      "id": "F-031",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "week",
+          "startDate": "2026-09-21",
+          "endExclusiveDate": "2026-09-28"
+        }
+      },
+      "expected": {
+        "valid": false
+      }
+    },
+    {
+      "id": "F-032",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "parked"
+        }
+      },
+      "expected": {
+        "valid": true
+      }
+    },
+    {
+      "id": "F-033",
+      "kind": "validatePlan",
+      "input": {
+        "planningDay": "2026-09-30",
+        "target": {
+          "kind": "unassigned"
+        }
+      },
+      "expected": {
+        "valid": true
+      }
+    },
+    {
+      "id": "F-034",
+      "kind": "contextCheck",
+      "input": {
+        "displayDay": "2026-09-30",
+        "currentDay": "2026-09-30",
+        "matchingReceiptExists": false
+      },
+      "expected": {
+        "result": "continueValidation"
+      }
+    },
+    {
+      "id": "F-035",
+      "kind": "contextCheck",
+      "input": {
+        "displayDay": "2026-09-30",
+        "currentDay": "2026-10-01",
+        "matchingReceiptExists": false
+      },
+      "expected": {
+        "result": "staleContext"
+      }
+    },
+    {
+      "id": "F-036",
+      "kind": "contextCheck",
+      "input": {
+        "displayDay": "2026-09-30",
+        "currentDay": "2026-10-01",
+        "matchingReceiptExists": true
+      },
+      "expected": {
+        "result": "alreadyApplied"
+      }
+    }
+  ]
+}

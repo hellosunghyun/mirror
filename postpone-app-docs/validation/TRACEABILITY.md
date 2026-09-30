@@ -1,0 +1,36 @@
+# 요구사항 추적표
+
+기능 요구사항과 QA 명세의 연결이다. 구현 상태와 앱 테스트 상태는 모두 미완료 / 미실행이다.
+
+| 요구사항 | 근거 문서 | QA 시나리오 | 구현 | 앱 테스트 |
+|---|---|---|---|---|
+| FR-001 | `01_PRODUCT_REQUIREMENTS.md`, `02_UX_AND_SCREEN_SPEC.md` | Q-001, Q-002, Q-003, Q-004, Q-007 | 미구현 | 미실행 |
+| FR-002 | `02_UX_AND_SCREEN_SPEC.md`, `07_CALENDAR_NOTIFICATIONS_PRIVACY.md` | Q-005 | 미구현 | 미실행 |
+| FR-003 | `02_UX_AND_SCREEN_SPEC.md` | Q-008 | 미구현 | 미실행 |
+| FR-004 | `03_DOMAIN_AND_REVIEW_RULES.md` | Q-021, Q-022, Q-023 | 미구현 | 미실행 |
+| FR-005 | `03_DOMAIN_AND_REVIEW_RULES.md` | Q-020 | 미구현 | 미실행 |
+| FR-006 | `03_DOMAIN_AND_REVIEW_RULES.md`, `06_APP_INTENTS_AND_WIDGETS.md` | Q-009, Q-010 | 미구현 | 미실행 |
+| FR-007 | `02_UX_AND_SCREEN_SPEC.md`, `06_APP_INTENTS_AND_WIDGETS.md` | Q-011, Q-012, Q-016 | 미구현 | 미실행 |
+| FR-008 | `03_DOMAIN_AND_REVIEW_RULES.md` | Q-013, Q-014 | 미구현 | 미실행 |
+| FR-009 | `02_UX_AND_SCREEN_SPEC.md`, `06_APP_INTENTS_AND_WIDGETS.md` | Q-015, Q-043 | 미구현 | 미실행 |
+| FR-010 | `03_DOMAIN_AND_REVIEW_RULES.md` | Q-017 | 미구현 | 미실행 |
+| FR-011 | `02_UX_AND_SCREEN_SPEC.md`, `03_DOMAIN_AND_REVIEW_RULES.md` | Q-019 | 미구현 | 미실행 |
+| FR-012 | `03_DOMAIN_AND_REVIEW_RULES.md` | Q-018 | 미구현 | 미실행 |
+| FR-013 | `04_DATA_AND_COMMAND_CONTRACTS.md` | Q-032, Q-033 | 미구현 | 미실행 |
+| FR-014 | `03_DOMAIN_AND_REVIEW_RULES.md`, `04_DATA_AND_COMMAND_CONTRACTS.md` | Q-025, Q-026, Q-027, Q-028 | 미구현 | 미실행 |
+| FR-015 | `04_DATA_AND_COMMAND_CONTRACTS.md` | Q-029, Q-030, Q-031, Q-087 | 미구현 | 미실행 |
+| FR-016 | `06_APP_INTENTS_AND_WIDGETS.md` | Q-035, Q-036, Q-037, Q-041, Q-047 | 미구현 | 미실행 |
+| FR-017 | `06_APP_INTENTS_AND_WIDGETS.md` | Q-006, Q-044 | 미구현 | 미실행 |
+| FR-018 | `05_ARCHITECTURE_AND_SYNC.md`, `02_UX_AND_SCREEN_SPEC.md` | Q-046, Q-079, Q-086 | 미구현 | 미실행 |
+| FR-019 | `05_ARCHITECTURE_AND_SYNC.md` | Q-049, Q-050 | 미구현 | 미실행 |
+| FR-020 | `05_ARCHITECTURE_AND_SYNC.md` | Q-053, Q-055, Q-056, Q-057, Q-058, Q-059, Q-060, Q-061, Q-062, Q-087 | 미구현 | 미실행 |
+| FR-021 | `07_CALENDAR_NOTIFICATIONS_PRIVACY.md` | Q-065, Q-066, Q-067, Q-068 | 미구현 | 미실행 |
+| FR-022 | `07_CALENDAR_NOTIFICATIONS_PRIVACY.md` | Q-069, Q-070, Q-071, Q-072, Q-073 | 미구현 | 미실행 |
+| FR-023 | `03_DOMAIN_AND_REVIEW_RULES.md` | Q-039, Q-074 | 미구현 | 미실행 |
+| FR-024 | `07_CALENDAR_NOTIFICATIONS_PRIVACY.md`, `03_DOMAIN_AND_REVIEW_RULES.md` | Q-024, Q-034, Q-084 | 미구현 | 미실행 |
+| FR-025 | `02_UX_AND_SCREEN_SPEC.md`, `07_CALENDAR_NOTIFICATIONS_PRIVACY.md` | Q-045, Q-075, Q-076, Q-077, Q-082 | 미구현 | 미실행 |
+| FR-026 | `04_DATA_AND_COMMAND_CONTRACTS.md`, `07_CALENDAR_NOTIFICATIONS_PRIVACY.md` | Q-054, Q-081 | 미구현 | 미실행 |
+| FR-027 | `04_DATA_AND_COMMAND_CONTRACTS.md` | Q-080 | 미구현 | 미실행 |
+| FR-028 | `02_UX_AND_SCREEN_SPEC.md` | Q-078 | 미구현 | 미실행 |
+| FR-029 | `06_APP_INTENTS_AND_WIDGETS.md`, `10_SOURCES_AND_COMPATIBILITY.md` | Q-048 | 미구현 | 미실행 |
+| FR-030 | `04_DATA_AND_COMMAND_CONTRACTS.md`, `05_ARCHITECTURE_AND_SYNC.md` | Q-038, Q-040, Q-042, Q-051, Q-052, Q-063, Q-064, Q-083, Q-085 | 미구현 | 미실행 |

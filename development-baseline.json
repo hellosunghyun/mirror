@@ -1,0 +1,41 @@
+{
+  "recordedAt": "2026-09-30",
+  "product": {
+    "displayName": "미뤄",
+    "englishName": "Mirror"
+  },
+  "repository": {
+    "nameWithOwner": "hellosunghyun/mirror",
+    "visibility": "private"
+  },
+  "deploymentTargets": {
+    "iOS": "27.0",
+    "iPadOS": "27.0",
+    "macOS": "27.0"
+  },
+  "observedToolchain": {
+    "xcode": "27.0",
+    "xcodeBuild": "27A266a",
+    "swift": "6.4",
+    "iPhoneOSSDK": "27.0",
+    "macOSSDK": "27.0",
+    "iOSSimulatorRuntime": "27.0",
+    "appBuildExecuted": false
+  },
+  "source": {
+    "archive": "Postpone_Development_Docs_v0.1.zip",
+    "archiveSHA256": "1a1c04c47e408b28bd0120babd4befa31841df9b6238c6211f6ebda79b9f5058",
+    "extractedFileCount": 24,
+    "bundleDirectory": "postpone-app-docs",
+    "manifestSHA256": "9c47347a49047148e7dd585fd691e5a1c1787e836364f0327bb20965570e1e6a",
+    "specification": "Postpone_Development_Spec_v0.1.md",
+    "specificationSHA256": "7a3db3b7f061287818ead0ca9751666cb3e7a0c48c26b3cd2a13e6052e563ad1"
+  },
+  "testPolicy": {
+    "testFirst": true,
+    "fixtureCount": 36,
+    "functionalRequirementCount": 30,
+    "appQASpecificationCount": 87,
+    "actualAppTestsExecuted": 0
+  }
+}

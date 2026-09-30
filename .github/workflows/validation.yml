@@ -1,0 +1,26 @@
+name: 문서와 제작 준비 검증
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 가져오기 (checkout v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Python 준비 (setup-python v7.0.0)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: 기존 문서 검증 의존성 설치
+        run: python -m pip install -r requirements-dev.txt
+      - name: 원본 무결성과 문서 계약 검사
+        run: python scripts/check.py
+      - name: 준비용 회귀 테스트
+        run: python -m unittest discover -s tests -v

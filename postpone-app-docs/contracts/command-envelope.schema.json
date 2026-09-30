@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:postpone:command-envelope:v1",
+  "title": "CommandEnvelope v1",
+  "description": "공통 봉투 형식. 각 command payload와 날짜 / 마감 / 인증 / 버전 불변식은 도메인 검증이 추가로 필요하다.",
+  "type": "object",
+  "properties": {
+    "contractVersion": {
+      "const": 1
+    },
+    "requestID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "kind": {
+      "enum": [
+        "capture",
+        "setPlan",
+        "setStatus",
+        "setDeadline",
+        "editContent",
+        "park",
+        "trash",
+        "restore",
+        "undo",
+        "reviewClose",
+        "batchSetPlan",
+        "settings"
+      ]
+    },
+    "source": {
+      "enum": [
+        "app",
+        "widget",
+        "shortcut",
+        "siri",
+        "spotlight",
+        "share",
+        "import"
+      ]
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "planningDay": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timeZoneID": {
+          "type": "string",
+          "minLength": 1
+        },
+        "policyRevision": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "planningDay",
+        "timeZoneID",
+        "policyRevision"
+      ],
+      "additionalProperties": false
+    },
+    "taskID": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "expectedVersions": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "plan": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "deadline": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "payload": {
+      "type": "object"
+    },
+    "workspaceEpoch": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "contractVersion",
+    "requestID",
+    "idempotencyKey",
+    "kind",
+    "source",
+    "context",
+    "payload"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "setPlan",
+              "setStatus",
+              "setDeadline",
+              "editContent",
+              "park",
+              "trash",
+              "restore"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "taskID",
+          "expectedVersions"
+        ]
+      }
+    }
+  ]
+}
