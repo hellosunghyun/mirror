@@ -4,22 +4,30 @@ on:
   push:
     paths:
       - 'App/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
       - 'Sources/**'
       - 'Tests/**'
       - 'Mirror.xcodeproj/**'
       - 'Package.swift'
       - 'scripts/ci*'
+      - 'scripts/generate-xcode-project.py'
       - '.github/workflows/swift.yml'
       - 'development-baseline.json'
       - 'postpone-app-docs/fixtures/domain-cases.json'
   pull_request:
     paths:
       - 'App/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
       - 'Sources/**'
       - 'Tests/**'
       - 'Mirror.xcodeproj/**'
       - 'Package.swift'
       - 'scripts/ci*'
+      - 'scripts/generate-xcode-project.py'
       - '.github/workflows/swift.yml'
       - 'development-baseline.json'
       - 'postpone-app-docs/fixtures/domain-cases.json'
@@ -29,7 +37,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: swift-${{ github.event_name }}-${{ github.ref }}
+  group: swift-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -39,7 +47,7 @@ jobs:
   domain:
     name: SwiftPM 도메인
     runs-on: xcode-27
-    timeout-minutes: 15
+    timeout-minutes: 30
     outputs:
       tests: ${{ steps.test.outputs.tests }}
     steps:
@@ -59,9 +67,11 @@ jobs:
   macos:
     name: macOS 앱 빌드와 테스트
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 45
     outputs:
       tests: ${{ steps.test.outputs.tests }}
+      unit_tests: ${{ steps.test.outputs.unit_tests }}
+      ui_tests: ${{ steps.test.outputs.ui_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Mac 앱 빌드 및 Swift 테스트
@@ -75,16 +85,22 @@ jobs:
           path: |
             .build/ci-macos/test.log
             .build/ci-macos/summary.json
+            .build/ci-macos/tests.json
+            .build/ci-macos/ui-summary.json
+            .build/ci-macos/ui.log
             .build/ci-macos/Tests.xcresult
+            .build/ci-macos/UI.xcresult
           include-hidden-files: true
           retention-days: 7
 
   iphone:
     name: iPhone 앱 빌드와 테스트
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 45
     outputs:
       tests: ${{ steps.test.outputs.tests }}
+      unit_tests: ${{ steps.test.outputs.unit_tests }}
+      ui_tests: ${{ steps.test.outputs.ui_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: iPhone 앱 빌드 및 Swift 테스트
@@ -98,16 +114,22 @@ jobs:
           path: |
             .build/ci-iphone/test.log
             .build/ci-iphone/summary.json
+            .build/ci-iphone/tests.json
+            .build/ci-iphone/ui-summary.json
+            .build/ci-iphone/ui.log
             .build/ci-iphone/Tests.xcresult
+            .build/ci-iphone/UI.xcresult
           include-hidden-files: true
           retention-days: 7
 
   ipad:
     name: iPad 앱 빌드와 테스트
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 45
     outputs:
       tests: ${{ steps.test.outputs.tests }}
+      unit_tests: ${{ steps.test.outputs.unit_tests }}
+      ui_tests: ${{ steps.test.outputs.ui_tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: iPad 앱 빌드 및 Swift 테스트
@@ -121,12 +143,16 @@ jobs:
           path: |
             .build/ci-ipad/test.log
             .build/ci-ipad/summary.json
+            .build/ci-ipad/tests.json
+            .build/ci-ipad/ui-summary.json
+            .build/ci-ipad/ui.log
             .build/ci-ipad/Tests.xcresult
+            .build/ci-ipad/UI.xcresult
           include-hidden-files: true
           retention-days: 7
 
   results:
-    name: '실행 결과 · SwiftPM ${{ needs.domain.outputs.tests }} / Mac ${{ needs.macos.outputs.tests }} / iPhone ${{ needs.iphone.outputs.tests }} / iPad ${{ needs.ipad.outputs.tests }}'
+    name: '실행 결과 · SwiftPM ${{ needs.domain.outputs.tests }} / Mac ${{ needs.macos.outputs.unit_tests }}+UI${{ needs.macos.outputs.ui_tests }} / iPhone ${{ needs.iphone.outputs.unit_tests }}+UI${{ needs.iphone.outputs.ui_tests }} / iPad ${{ needs.ipad.outputs.unit_tests }}+UI${{ needs.ipad.outputs.ui_tests }}'
     needs: [domain, macos, iphone, ipad]
     if: always()
     runs-on: ubuntu-latest
@@ -143,5 +169,7 @@ jobs:
           for name, result in values.items():
               if result['result'] != 'success' or int(result['outputs'].get('tests', 0)) <= 0:
                   raise SystemExit(f"{name}: 테스트 실행 또는 결과 확인 실패")
+              if name != 'domain' and any(int(result['outputs'].get(key, 0)) <= 0 for key in ['unit_tests', 'ui_tests']):
+                  raise SystemExit(f"{name}: 필수 단위·통합 또는 UI 테스트 실행 수가 없습니다.")
           print('모든 플랫폼의 실제 테스트 실행과 완료를 확인했습니다.')
           PY

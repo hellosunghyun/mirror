@@ -6,26 +6,14 @@
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="583C3B36359F849E61F1240E" BuildableName="Mirror.app" BlueprintName="MirrorMac" ReferencedContainer="container:Mirror.xcodeproj" />
          </BuildActionEntry>
          <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
-            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="88FE862294A7C45D0C8D7CA3" BuildableName="MirrorDomainTests.xctest" BlueprintName="MirrorDomainTests" ReferencedContainer="container:Mirror.xcodeproj" />
-         </BuildActionEntry>
-         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
-            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="8CA207AA2EA936D8B1AD1230" BuildableName="MirrorDataTests.xctest" BlueprintName="MirrorDataTests" ReferencedContainer="container:Mirror.xcodeproj" />
-         </BuildActionEntry>
-         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
-            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="7AF8BAB8CF2BAB92BEBAA18C" BuildableName="MirrorSystemTests.xctest" BlueprintName="MirrorSystemTests" ReferencedContainer="container:Mirror.xcodeproj" />
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="5211D665102AB37A1A8DFCEB" BuildableName="MirrorMacUITests.xctest" BlueprintName="MirrorMacUITests" ReferencedContainer="container:Mirror.xcodeproj" />
          </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES" codeCoverageEnabled="YES">
       <Testables>
          <TestableReference skipped="NO" parallelizable="NO">
-            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="88FE862294A7C45D0C8D7CA3" BuildableName="MirrorDomainTests.xctest" BlueprintName="MirrorDomainTests" ReferencedContainer="container:Mirror.xcodeproj" />
-         </TestableReference>
-         <TestableReference skipped="NO" parallelizable="NO">
-            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="8CA207AA2EA936D8B1AD1230" BuildableName="MirrorDataTests.xctest" BlueprintName="MirrorDataTests" ReferencedContainer="container:Mirror.xcodeproj" />
-         </TestableReference>
-         <TestableReference skipped="NO" parallelizable="NO">
-            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="7AF8BAB8CF2BAB92BEBAA18C" BuildableName="MirrorSystemTests.xctest" BlueprintName="MirrorSystemTests" ReferencedContainer="container:Mirror.xcodeproj" />
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="5211D665102AB37A1A8DFCEB" BuildableName="MirrorMacUITests.xctest" BlueprintName="MirrorMacUITests" ReferencedContainer="container:Mirror.xcodeproj" />
          </TestableReference>
       </Testables>
       <MacroExpansion>

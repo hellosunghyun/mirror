@@ -1,0 +1,30 @@
+import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
+/// 앱과 채택한 SwiftPieces에서 사용하는 플랫폼별 동적 색상.
+func mirrorAdaptiveColor(light: UInt32, dark: UInt32) -> Color {
+    #if os(macOS)
+    return Color(nsColor: NSColor(name: nil) { appearance in
+        let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        return NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255,
+                       green: CGFloat((hex >> 8) & 255) / 255,
+                       blue: CGFloat(hex & 255) / 255, alpha: 1)
+    })
+    #else
+    return Color(uiColor: UIColor { traits in
+        let hex = traits.userInterfaceStyle == .dark ? dark : light
+        return UIColor(red: CGFloat((hex >> 16) & 255) / 255,
+                       green: CGFloat((hex >> 8) & 255) / 255,
+                       blue: CGFloat(hex & 255) / 255, alpha: 1)
+    })
+    #endif
+}
+
+public enum MirrorPalette {
+    public static var surface: Color { mirrorAdaptiveColor(light: 0xF3F2EE, dark: 0x121212) }
+    public static var accent: Color { mirrorAdaptiveColor(light: 0x28663C, dark: 0xA9DCB7) }
+}

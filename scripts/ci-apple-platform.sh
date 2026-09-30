@@ -65,10 +65,29 @@ if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
   -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO build test 2>&1 | tee "$result_dir/test.log"; then
   ci_phase='Xcode 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/Tests.xcresult" > "$result_dir/summary.json"
-  ci_phase='Xcode 테스트 결과 검증'
-  python3 scripts/ci_results.py xcode "$result_dir/summary.json"
+  xcrun xcresulttool get test-results tests --path "$result_dir/Tests.xcresult" > "$result_dir/tests.json"
+  ci_phase='필수 unit/integration bundle 실행 확인'
+  python3 scripts/ci_results.py bundles "$result_dir/tests.json" MirrorDomainTests MirrorDataTests MirrorSystemTests
 else
   test_status=$?
   python3 scripts/ci_results.py diagnostics "$result_dir/test.log" || true
+  exit "$test_status"
+fi
+
+ci_phase='앱과 확장 packaging 확인'
+python3 scripts/ci-package.py "$platform" "$result_dir/DerivedData"
+
+ci_phase='실제 UI 테스트'
+if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
+  -sdk "$sdk" -destination "$destination" -jobs 2 \
+  -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
+  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
+  ci_phase='UI 테스트 결과 요약'
+  xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
+  ci_phase='단위·통합·UI 실제 결과 검증'
+  python3 scripts/ci_results.py xcode "$result_dir/summary.json" "$result_dir/ui-summary.json"
+else
+  test_status=$?
+  python3 scripts/ci_results.py diagnostics "$result_dir/ui.log" || true
   exit "$test_status"
 fi

@@ -6,71 +6,609 @@
 	};
 	objectVersion = 56;
 	objects = {
-		65928CBE80C51B9F469E424B = {
+		E1A07A4D0B2269E85FB068F2 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = LocalDate.swift;
-			sourceTree = "<group>";
+			name = CommandValidation.swift;
+			path = Sources/MirrorDomain/CommandValidation.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		10593EB7F18CB3DEA3EECD97 = {
+		6D69AFB80FF62D6F3DA8082F = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = PlanningContext.swift;
-			sourceTree = "<group>";
+			name = Commands.swift;
+			path = Sources/MirrorDomain/Commands.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		F3984ED27B02DEEB3D084E49 = {
+		F033091747FB172D6DBE796F = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = PlanTarget.swift;
-			sourceTree = "<group>";
+			name = LocalDate.swift;
+			path = Sources/MirrorDomain/LocalDate.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		D130FD8D4D919FEB53D78583 = {
+		02646DCF431BCF3224EF691B = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = PlanningRules.swift;
-			sourceTree = "<group>";
+			name = Operations.swift;
+			path = Sources/MirrorDomain/Operations.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		C9D7FD488AC28EA097176D97 = {
+		66AF9AEA3AC31BC2C215744D = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = FixtureSupport.swift;
-			sourceTree = "<group>";
+			name = PlanTarget.swift;
+			path = Sources/MirrorDomain/PlanTarget.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		4A8661743B6221247DB3D88C = {
+		618E817396E5C04DFFFFDA1C = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = DomainFixtureTests.swift;
-			sourceTree = "<group>";
+			name = PlanningContext.swift;
+			path = Sources/MirrorDomain/PlanningContext.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		E4010785E63C54D98FA4931C = {
+		6E75D00A956CDE6C84B7CAD6 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = LocalDateTests.swift;
-			sourceTree = "<group>";
+			name = PlanningRules.swift;
+			path = Sources/MirrorDomain/PlanningRules.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		85A8A4F30C5949FA36393B25 = {
+		8A99D886ED04A8D0092769AF = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = PlanningRulesTests.swift;
-			sourceTree = "<group>";
+			name = TaskModels.swift;
+			path = Sources/MirrorDomain/TaskModels.swift;
+			sourceTree = SOURCE_ROOT;
 		};
-		51A3137DD9612232CD397E63 = {
+		D787018F65A09777941D5034 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = MirrorApp.swift;
+			name = TaskReducer.swift;
+			path = Sources/MirrorDomain/TaskReducer.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		50AEAA8E56F1F12AD83CE1F2 = {
+			isa = PBXGroup;
+			children = (
+				E1A07A4D0B2269E85FB068F2,
+				6D69AFB80FF62D6F3DA8082F,
+				F033091747FB172D6DBE796F,
+				02646DCF431BCF3224EF691B,
+				66AF9AEA3AC31BC2C215744D,
+				618E817396E5C04DFFFFDA1C,
+				6E75D00A956CDE6C84B7CAD6,
+				8A99D886ED04A8D0092769AF,
+				D787018F65A09777941D5034,
+			);
+			name = Sources/MirrorDomain;
 			sourceTree = "<group>";
 		};
-		C257B80A2C12D51F1ADA5D6B = {
+		E4D5C2BEEAD654428779B23F = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
-			path = MirrorRootView.swift;
+			name = CoreDataPersistence.swift;
+			path = Sources/MirrorData/CoreDataPersistence.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		0E09B6D5DC72BB3713FC2D8C = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorStore.swift;
+			path = Sources/MirrorData/MirrorStore.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		0D2EFB1E2C4189F0AB3B3D34 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = ProcessWriteGate.swift;
+			path = Sources/MirrorData/ProcessWriteGate.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		4157F9F147E62EB87402D305 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = StoreConfiguration.swift;
+			path = Sources/MirrorData/StoreConfiguration.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		8E7C031082D149344F5E17B6 = {
+			isa = PBXGroup;
+			children = (
+				E4D5C2BEEAD654428779B23F,
+				0E09B6D5DC72BB3713FC2D8C,
+				0D2EFB1E2C4189F0AB3B3D34,
+				4157F9F147E62EB87402D305,
+			);
+			name = Sources/MirrorData;
 			sourceTree = "<group>";
 		};
-		619EE1AE59CC3CF43A25A7AA = {
+		07C373B3D66539C1F2C556F9 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = AppIntents.swift;
+			path = Sources/MirrorSystem/AppIntents.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		3BBC08E843079162855B114C = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = CalendarService.swift;
+			path = Sources/MirrorSystem/CalendarService.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		AAE431A16B80565CD3F31089 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = CloudSyncService.swift;
+			path = Sources/MirrorSystem/CloudSyncService.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		8047219D6B75687D97D3CB23 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = DeepLink.swift;
+			path = Sources/MirrorSystem/DeepLink.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		C49E3477562D327AE77316B4 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = LocalMetrics.swift;
+			path = Sources/MirrorSystem/LocalMetrics.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		C052529C25EEE32D8B9084A0 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = NotificationPlan.swift;
+			path = Sources/MirrorSystem/NotificationPlan.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		C2CC6D5B2BB01AA9CE60D787 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = NotificationService.swift;
+			path = Sources/MirrorSystem/NotificationService.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		8ADABAAC55C636B6E9FD8CED = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = SpotlightService.swift;
+			path = Sources/MirrorSystem/SpotlightService.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		33865684071E41FB203F3A58 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = SystemCompositionRoot.swift;
+			path = Sources/MirrorSystem/SystemCompositionRoot.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		D8DB27C49C209688823A7572 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = SystemPreferences.swift;
+			path = Sources/MirrorSystem/SystemPreferences.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		52ACC2A0B4CA010E9046B88C = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = WidgetReload.swift;
+			path = Sources/MirrorSystem/WidgetReload.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		3C182BBF23228B2FC5AA4283 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = WidgetReviewService.swift;
+			path = Sources/MirrorSystem/WidgetReviewService.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		9E4F99A9B68D005BF735E2C4 = {
+			isa = PBXGroup;
+			children = (
+				07C373B3D66539C1F2C556F9,
+				3BBC08E843079162855B114C,
+				AAE431A16B80565CD3F31089,
+				8047219D6B75687D97D3CB23,
+				C49E3477562D327AE77316B4,
+				C052529C25EEE32D8B9084A0,
+				C2CC6D5B2BB01AA9CE60D787,
+				8ADABAAC55C636B6E9FD8CED,
+				33865684071E41FB203F3A58,
+				D8DB27C49C209688823A7572,
+				52ACC2A0B4CA010E9046B88C,
+				3C182BBF23228B2FC5AA4283,
+			);
+			name = Sources/MirrorSystem;
+			sourceTree = "<group>";
+		};
+		527FA06593A039ECABC27761 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorPalette.swift;
+			path = Sources/MirrorDesign/MirrorPalette.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		08C6A5D8EB60A684B89AE7E7 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = ExpandableText.swift;
+			path = Sources/MirrorDesign/SwiftPieces/ExpandableText.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		242682081AE7D79B997C656D = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = StatusMorph.swift;
+			path = Sources/MirrorDesign/SwiftPieces/StatusMorph.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		2B04B14679A80F4C7577D0E7 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = TaskRow.swift;
+			path = Sources/MirrorDesign/SwiftPieces/TaskRow.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		94A7A66A918B2EE6F72CB45F = {
+			isa = PBXGroup;
+			children = (
+				527FA06593A039ECABC27761,
+				08C6A5D8EB60A684B89AE7E7,
+				242682081AE7D79B997C656D,
+				2B04B14679A80F4C7577D0E7,
+			);
+			name = Sources/MirrorDesign;
+			sourceTree = "<group>";
+		};
+		6965BC1ED9B97DFE6802ED60 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = CommandValidationTests.swift;
+			path = Tests/MirrorDomainTests/CommandValidationTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		EFD2DE7B9105FCC04700EA2A = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = DomainFixtureTests.swift;
+			path = Tests/MirrorDomainTests/DomainFixtureTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		7EACF16C1F63B3A1AD265FB9 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = FixtureSupport.swift;
+			path = Tests/MirrorDomainTests/FixtureSupport.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		896A3C89CF6199057D355371 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = LocalDateTests.swift;
+			path = Tests/MirrorDomainTests/LocalDateTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		206CBDDA5F530D484045A7C3 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = PlanningRulesTests.swift;
+			path = Tests/MirrorDomainTests/PlanningRulesTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		07B4C7A2CC9D1BAF71F6CC9E = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = TaskReducerTests.swift;
+			path = Tests/MirrorDomainTests/TaskReducerTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		8E0101CAC0FEEAD2E922CC46 = {
+			isa = PBXGroup;
+			children = (
+				6965BC1ED9B97DFE6802ED60,
+				EFD2DE7B9105FCC04700EA2A,
+				7EACF16C1F63B3A1AD265FB9,
+				896A3C89CF6199057D355371,
+				206CBDDA5F530D484045A7C3,
+				07B4C7A2CC9D1BAF71F6CC9E,
+			);
+			name = Tests/MirrorDomainTests;
+			sourceTree = "<group>";
+		};
+		EC5CFCAE32833A040E42F095 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = StoreIntegrationTests.swift;
+			path = Tests/MirrorDataTests/StoreIntegrationTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		06E89160D6DF398D40794C31 = {
+			isa = PBXGroup;
+			children = (
+				EC5CFCAE32833A040E42F095,
+			);
+			name = Tests/MirrorDataTests;
+			sourceTree = "<group>";
+		};
+		7949DF5EBDB1F1AFE6D0FE93 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = CloudBoundaryTests.swift;
+			path = Tests/MirrorSystemTests/CloudBoundaryTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		695F764792ED2FD9F449E2B5 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = SystemContractTests.swift;
+			path = Tests/MirrorSystemTests/SystemContractTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		948D8BBF505C676307568F7E = {
+			isa = PBXGroup;
+			children = (
+				7949DF5EBDB1F1AFE6D0FE93,
+				695F764792ED2FD9F449E2B5,
+			);
+			name = Tests/MirrorSystemTests;
+			sourceTree = "<group>";
+		};
+		54628DF94BA9B9CD246EDB2A = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = AppModel.swift;
+			path = App/AppModel.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		704219C1D82048C4F924D488 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorApp.swift;
+			path = App/MirrorApp.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		DDBC6A2B6DFCD4B0815241FA = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorCalendarSettings.swift;
+			path = App/MirrorCalendarSettings.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		09A61F564C7CD39BBF560A82 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorRootView.swift;
+			path = App/MirrorRootView.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		125D3800DD3B4A007ADDB445 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorScreens.swift;
+			path = App/MirrorScreens.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		1C48CE29E4E135EE62951B22 = {
+			isa = PBXGroup;
+			children = (
+				54628DF94BA9B9CD246EDB2A,
+				704219C1D82048C4F924D488,
+				DDBC6A2B6DFCD4B0815241FA,
+				09A61F564C7CD39BBF560A82,
+				125D3800DD3B4A007ADDB445,
+			);
+			name = App;
+			sourceTree = "<group>";
+		};
+		278097A27B55D0ECB34CBBFD = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorWidgets.swift;
+			path = Extensions/Widgets/MirrorWidgets.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		2025592CD32DA24AD6D117D3 = {
+			isa = PBXGroup;
+			children = (
+				278097A27B55D0ECB34CBBFD,
+			);
+			name = Extensions/Widgets;
+			sourceTree = "<group>";
+		};
+		09CD9763A61D330B70ED6484 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorShareViewController.swift;
+			path = Extensions/Share/MirrorShareViewController.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		0E76ACFD3A99B2E37B5109BB = {
+			isa = PBXGroup;
+			children = (
+				09CD9763A61D330B70ED6484,
+			);
+			name = Extensions/Share;
+			sourceTree = "<group>";
+		};
+		52B345E5CB1CC1AB6172D7CD = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorUITests.swift;
+			path = Tests/MirrorUITests/MirrorUITests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		8E25E1F96F6C72C0D46C4F17 = {
+			isa = PBXGroup;
+			children = (
+				52B345E5CB1CC1AB6172D7CD,
+			);
+			name = Tests/MirrorUITests;
+			sourceTree = "<group>";
+		};
+		3E1D3D5DF271B14B3ACC76D2 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.entitlements;
+			name = ExtensionIOS.entitlements;
+			path = Configuration/ExtensionIOS.entitlements;
+			sourceTree = SOURCE_ROOT;
+		};
+		37028FAEE86D9EED380AE94E = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.entitlements;
+			name = ExtensionMac.entitlements;
+			path = Configuration/ExtensionMac.entitlements;
+			sourceTree = SOURCE_ROOT;
+		};
+		FB05BD821CE53C62F9D1C184 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			name = "MirrorIOS-Info.plist";
+			path = "Configuration/MirrorIOS-Info.plist";
+			sourceTree = SOURCE_ROOT;
+		};
+		E8526F60E777471D710EAE18 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.entitlements;
+			name = MirrorIOS.entitlements;
+			path = Configuration/MirrorIOS.entitlements;
+			sourceTree = SOURCE_ROOT;
+		};
+		F974C6FA202A1C3A647589B7 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			name = "MirrorMac-Info.plist";
+			path = "Configuration/MirrorMac-Info.plist";
+			sourceTree = SOURCE_ROOT;
+		};
+		3B2CC160BEEFCACCF0805A1F = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.entitlements;
+			name = MirrorMac.entitlements;
+			path = Configuration/MirrorMac.entitlements;
+			sourceTree = SOURCE_ROOT;
+		};
+		6791D647F2696338FD2B36BB = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			name = "Share-Info.plist";
+			path = "Configuration/Share-Info.plist";
+			sourceTree = SOURCE_ROOT;
+		};
+		5031DA758C41BC588650EE5A = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			name = "Widgets-Info.plist";
+			path = "Configuration/Widgets-Info.plist";
+			sourceTree = SOURCE_ROOT;
+		};
+		18FD7FD8A86AE7DB07FFE101 = {
+			isa = PBXGroup;
+			children = (
+				3E1D3D5DF271B14B3ACC76D2,
+				37028FAEE86D9EED380AE94E,
+				FB05BD821CE53C62F9D1C184,
+				E8526F60E777471D710EAE18,
+				F974C6FA202A1C3A647589B7,
+				3B2CC160BEEFCACCF0805A1F,
+				6791D647F2696338FD2B36BB,
+				5031DA758C41BC588650EE5A,
+			);
+			name = Configuration;
+			sourceTree = "<group>";
+		};
+		6327A1005FF0B783151E530B = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.xml;
+			name = PrivacyInfo.xcprivacy;
+			path = Resources/PrivacyInfo.xcprivacy;
+			sourceTree = SOURCE_ROOT;
+		};
+		8D22B8C83E2ADF51220418AE = {
+			isa = PBXFileReference;
+			lastKnownFileType = text;
+			name = LICENSE.swiftpieces;
+			path = Sources/MirrorDesign/SwiftPieces/LICENSE.swiftpieces;
+			sourceTree = SOURCE_ROOT;
+		};
+		3DE0B9653A7F3E08AC5AE5F5 = {
+			isa = PBXFileReference;
+			lastKnownFileType = net.daringfireball.markdown;
+			name = PROVENANCE.md;
+			path = Sources/MirrorDesign/SwiftPieces/PROVENANCE.md;
+			sourceTree = SOURCE_ROOT;
+		};
+		D87208ACB10CA24F284B8E7D = {
 			isa = PBXFileReference;
 			lastKnownFileType = text.json;
+			name = "domain-cases.json";
 			path = "postpone-app-docs/fixtures/domain-cases.json";
 			sourceTree = SOURCE_ROOT;
+		};
+		22D02A9EFAC9B3FBBAEBE062 = {
+			isa = PBXGroup;
+			children = (
+				6327A1005FF0B783151E530B,
+				8D22B8C83E2ADF51220418AE,
+				3DE0B9653A7F3E08AC5AE5F5,
+				D87208ACB10CA24F284B8E7D,
+			);
+			name = "Resources / Fixture";
+			sourceTree = "<group>";
+		};
+		1C7CD20E6F843A4FAB2D975C = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.framework;
+			includeInIndex = 0;
+			path = MirrorDomain.framework;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		7F21F29F7FD5A3A2BF8CB633 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.framework;
+			includeInIndex = 0;
+			path = MirrorData.framework;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		03F81A4211E254419D9BBFF8 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.framework;
+			includeInIndex = 0;
+			path = MirrorSystem.framework;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		F4082844BAAD88534D64BD66 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.framework;
+			includeInIndex = 0;
+			path = MirrorDesign.framework;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		317AE10D594FB10C3C9C1F7C = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorDomainTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		96DF8A0BD6444B3BB8FC0069 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorDataTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		E5C8F9549D228A94E122FBD8 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorSystemTests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 		296816B4D4CB1497DEE2FE76 = {
 			isa = PBXFileReference;
@@ -86,61 +624,66 @@
 			path = Mirror.app;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		1C7CD20E6F843A4FAB2D975C = {
+		CAF33B0FD1A18C183795A6F9 = {
 			isa = PBXFileReference;
-			explicitFileType = wrapper.framework;
+			explicitFileType = "wrapper.app-extension";
 			includeInIndex = 0;
-			path = MirrorDomain.framework;
+			path = MirrorWidgetsIOS.appex;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		317AE10D594FB10C3C9C1F7C = {
+		E490BF0524E29A1A828B32CF = {
+			isa = PBXFileReference;
+			explicitFileType = "wrapper.app-extension";
+			includeInIndex = 0;
+			path = MirrorWidgetsMac.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		48D518475E8F88F1D4FCBC9E = {
+			isa = PBXFileReference;
+			explicitFileType = "wrapper.app-extension";
+			includeInIndex = 0;
+			path = MirrorShareIOS.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		030EA7ECC771258E04F23397 = {
+			isa = PBXFileReference;
+			explicitFileType = "wrapper.app-extension";
+			includeInIndex = 0;
+			path = MirrorShareMac.appex;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		4392A457B8033F15BB254CBE = {
 			isa = PBXFileReference;
 			explicitFileType = wrapper.cfbundle;
 			includeInIndex = 0;
-			path = MirrorDomainTests.xctest;
+			path = MirrorIOSUITests.xctest;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
-		EBBDDCC90C21178D1CF9F129 = {
-			isa = PBXGroup;
-			children = (
-				65928CBE80C51B9F469E424B,
-				10593EB7F18CB3DEA3EECD97,
-				F3984ED27B02DEEB3D084E49,
-				D130FD8D4D919FEB53D78583,
-			);
-			name = MirrorDomain;
-			path = Sources/MirrorDomain;
-			sourceTree = "<group>";
-		};
-		4352443A37E80B3384E90F5D = {
-			isa = PBXGroup;
-			children = (
-				C9D7FD488AC28EA097176D97,
-				4A8661743B6221247DB3D88C,
-				E4010785E63C54D98FA4931C,
-				85A8A4F30C5949FA36393B25,
-				619EE1AE59CC3CF43A25A7AA,
-			);
-			name = MirrorDomainTests;
-			path = Tests/MirrorDomainTests;
-			sourceTree = "<group>";
-		};
-		48A8104B9A3AE9B3C1E275D8 = {
-			isa = PBXGroup;
-			children = (
-				51A3137DD9612232CD397E63,
-				C257B80A2C12D51F1ADA5D6B,
-			);
-			path = App;
-			sourceTree = "<group>";
+		A5FB5F6A0A5D9578D1E6119A = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorMacUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 		77BB0A0DD12CE614CF80E316 = {
 			isa = PBXGroup;
 			children = (
+				1C7CD20E6F843A4FAB2D975C,
+				7F21F29F7FD5A3A2BF8CB633,
+				03F81A4211E254419D9BBFF8,
+				F4082844BAAD88534D64BD66,
+				317AE10D594FB10C3C9C1F7C,
+				96DF8A0BD6444B3BB8FC0069,
+				E5C8F9549D228A94E122FBD8,
 				296816B4D4CB1497DEE2FE76,
 				1EBCEF81CA5D400E33A2409C,
-				1C7CD20E6F843A4FAB2D975C,
-				317AE10D594FB10C3C9C1F7C,
+				CAF33B0FD1A18C183795A6F9,
+				E490BF0524E29A1A828B32CF,
+				48D518475E8F88F1D4FCBC9E,
+				030EA7ECC771258E04F23397,
+				4392A457B8033F15BB254CBE,
+				A5FB5F6A0A5D9578D1E6119A,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -148,9 +691,19 @@
 		40BD83DD60224F86610A17CD = {
 			isa = PBXGroup;
 			children = (
-				48A8104B9A3AE9B3C1E275D8,
-				EBBDDCC90C21178D1CF9F129,
-				4352443A37E80B3384E90F5D,
+				50AEAA8E56F1F12AD83CE1F2,
+				8E7C031082D149344F5E17B6,
+				9E4F99A9B68D005BF735E2C4,
+				94A7A66A918B2EE6F72CB45F,
+				8E0101CAC0FEEAD2E922CC46,
+				06E89160D6DF398D40794C31,
+				948D8BBF505C676307568F7E,
+				1C48CE29E4E135EE62951B22,
+				2025592CD32DA24AD6D117D3,
+				0E76ACFD3A99B2E37B5109BB,
+				8E25E1F96F6C72C0D46C4F17,
+				18FD7FD8A86AE7DB07FFE101,
+				22D02A9EFAC9B3FBBAEBE062,
 				77BB0A0DD12CE614CF80E316,
 			);
 			sourceTree = "<group>";
@@ -167,6 +720,7 @@
 				GCC_NO_COMMON_BLOCKS = YES;
 				SWIFT_VERSION = 6.0;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -190,6 +744,7 @@
 				GCC_NO_COMMON_BLOCKS = YES;
 				SWIFT_VERSION = 6.0;
 				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
@@ -210,262 +765,55 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		9EA3FD15510B430947515CA0 = {
+		F8238B780DAA0906F97034D1 = {
 			isa = PBXBuildFile;
-			fileRef = 51A3137DD9612232CD397E63;
+			fileRef = E1A07A4D0B2269E85FB068F2;
 		};
-		0FA1D6F30E55EBD8BFCB6D53 = {
+		4586B20C91201C055AE3ABF9 = {
 			isa = PBXBuildFile;
-			fileRef = C257B80A2C12D51F1ADA5D6B;
+			fileRef = 6D69AFB80FF62D6F3DA8082F;
 		};
-		9609869A5F4DB5CF9CFC9875 = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				9EA3FD15510B430947515CA0,
-				0FA1D6F30E55EBD8BFCB6D53,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		22006E625EBB7E203B047213 = {
+		E9FCD555B3B7A4AA28A9FEC8 = {
 			isa = PBXBuildFile;
-			fileRef = 1C7CD20E6F843A4FAB2D975C;
+			fileRef = F033091747FB172D6DBE796F;
 		};
-		B5084E727FF9584A3A80A6AA = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 98F54143AB4E86B28C3AFEE0;
-			proxyType = 1;
-			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
-			remoteInfo = MirrorDomain;
-		};
-		D6D59EC012E45A38128377CC = {
-			isa = PBXTargetDependency;
-			target = C9B69E813E4E48D4D90A387E;
-			targetProxy = B5084E727FF9584A3A80A6AA;
-		};
-		894FAB1BD9A0899DB11AF410 = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				22006E625EBB7E203B047213,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		6AB5731CF270F81C98D8E9D3 = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		CB7D9D03E3F766FD11B28D59 = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_NAME = Mirror;
-				CURRENT_PROJECT_VERSION = 1;
-				MARKETING_VERSION = 0.1.0;
-				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				TARGETED_DEVICE_FAMILY = "1,2";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror;
-				INFOPLIST_KEY_CFBundleDisplayName = "미러";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-			};
-			name = Debug;
-		};
-		6D92285BCD48D302C0CBA097 = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_NAME = Mirror;
-				CURRENT_PROJECT_VERSION = 1;
-				MARKETING_VERSION = 0.1.0;
-				SDKROOT = iphoneos;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				TARGETED_DEVICE_FAMILY = "1,2";
-				SUPPORTS_MACCATALYST = NO;
-				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror;
-				INFOPLIST_KEY_CFBundleDisplayName = "미러";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-			};
-			name = Release;
-		};
-		A323B39864D766885CD03CC9 = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				CB7D9D03E3F766FD11B28D59,
-				6D92285BCD48D302C0CBA097,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		6D966BF1135AC5B72C078FD9 = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = A323B39864D766885CD03CC9;
-			buildPhases = (
-				9609869A5F4DB5CF9CFC9875,
-				894FAB1BD9A0899DB11AF410,
-				6AB5731CF270F81C98D8E9D3,
-			);
-			buildRules = (
-
-			);
-			dependencies = (
-				D6D59EC012E45A38128377CC,
-			);
-			name = MirrorIOS;
-			productName = Mirror;
-			productReference = 296816B4D4CB1497DEE2FE76;
-			productType = "com.apple.product-type.application";
-		};
-		EDB7CAB9F78B7D5952E782CF = {
+		CC404C9847BA9465A9352653 = {
 			isa = PBXBuildFile;
-			fileRef = 51A3137DD9612232CD397E63;
+			fileRef = 02646DCF431BCF3224EF691B;
 		};
-		166E4E2746375B9736D19AC3 = {
+		365B69CD7DA8477FD068911E = {
 			isa = PBXBuildFile;
-			fileRef = C257B80A2C12D51F1ADA5D6B;
+			fileRef = 66AF9AEA3AC31BC2C215744D;
 		};
-		9B937A9E07740F485F51C346 = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				EDB7CAB9F78B7D5952E782CF,
-				166E4E2746375B9736D19AC3,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		F19B79873CA9C6B1068829E0 = {
+		18D3F45C2ED14E976CA57D83 = {
 			isa = PBXBuildFile;
-			fileRef = 1C7CD20E6F843A4FAB2D975C;
+			fileRef = 618E817396E5C04DFFFFDA1C;
 		};
-		BAD4CFFAAD4AAF6B0065B1EE = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 98F54143AB4E86B28C3AFEE0;
-			proxyType = 1;
-			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
-			remoteInfo = MirrorDomain;
-		};
-		13248578FD842CAD814C9956 = {
-			isa = PBXTargetDependency;
-			target = C9B69E813E4E48D4D90A387E;
-			targetProxy = BAD4CFFAAD4AAF6B0065B1EE;
-		};
-		EE0D4319487F5724999E693C = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				F19B79873CA9C6B1068829E0,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		71C21506AB4DBCD35BCF6562 = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		59A979AF2B3395DF14C9880F = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_NAME = Mirror;
-				CURRENT_PROJECT_VERSION = 1;
-				MARKETING_VERSION = 0.1.0;
-				SDKROOT = macosx;
-				SUPPORTED_PLATFORMS = macosx;
-				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac;
-				INFOPLIST_KEY_CFBundleDisplayName = "미러";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				ENABLE_HARDENED_RUNTIME = YES;
-			};
-			name = Debug;
-		};
-		11E6C2F549E8B7A3564F528B = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				GENERATE_INFOPLIST_FILE = YES;
-				PRODUCT_NAME = Mirror;
-				CURRENT_PROJECT_VERSION = 1;
-				MARKETING_VERSION = 0.1.0;
-				SDKROOT = macosx;
-				SUPPORTED_PLATFORMS = macosx;
-				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac;
-				INFOPLIST_KEY_CFBundleDisplayName = "미러";
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
-				ENABLE_HARDENED_RUNTIME = YES;
-			};
-			name = Release;
-		};
-		FB54603C2B6EAB0EA2578158 = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				59A979AF2B3395DF14C9880F,
-				11E6C2F549E8B7A3564F528B,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		583C3B36359F849E61F1240E = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = FB54603C2B6EAB0EA2578158;
-			buildPhases = (
-				9B937A9E07740F485F51C346,
-				EE0D4319487F5724999E693C,
-				71C21506AB4DBCD35BCF6562,
-			);
-			buildRules = (
-
-			);
-			dependencies = (
-				13248578FD842CAD814C9956,
-			);
-			name = MirrorMac;
-			productName = Mirror;
-			productReference = 1EBCEF81CA5D400E33A2409C;
-			productType = "com.apple.product-type.application";
-		};
-		12C8E9BEF14A41A5E41CE91F = {
+		82E1B5E3FA6A6265299EE0B8 = {
 			isa = PBXBuildFile;
-			fileRef = 65928CBE80C51B9F469E424B;
+			fileRef = 6E75D00A956CDE6C84B7CAD6;
 		};
-		9F4905569CEB48EFFBF529F9 = {
+		2F05F4D9300BBC85D67F8FB6 = {
 			isa = PBXBuildFile;
-			fileRef = 10593EB7F18CB3DEA3EECD97;
+			fileRef = 8A99D886ED04A8D0092769AF;
 		};
-		BF239E4757F11582B8C0EECF = {
+		97ADEB0A57BF322CDF0C05E0 = {
 			isa = PBXBuildFile;
-			fileRef = F3984ED27B02DEEB3D084E49;
-		};
-		50AB909B5E6A948247150C81 = {
-			isa = PBXBuildFile;
-			fileRef = D130FD8D4D919FEB53D78583;
+			fileRef = D787018F65A09777941D5034;
 		};
 		2902F7C700C6770525FCA361 = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				12C8E9BEF14A41A5E41CE91F,
-				9F4905569CEB48EFFBF529F9,
-				BF239E4757F11582B8C0EECF,
-				50AB909B5E6A948247150C81,
+				F8238B780DAA0906F97034D1,
+				4586B20C91201C055AE3ABF9,
+				E9FCD555B3B7A4AA28A9FEC8,
+				CC404C9847BA9465A9352653,
+				365B69CD7DA8477FD068911E,
+				18D3F45C2ED14E976CA57D83,
+				82E1B5E3FA6A6265299EE0B8,
+				2F05F4D9300BBC85D67F8FB6,
+				97ADEB0A57BF322CDF0C05E0,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -492,6 +840,11 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -511,6 +864,11 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -551,68 +909,525 @@
 			productReference = 1C7CD20E6F843A4FAB2D975C;
 			productType = "com.apple.product-type.framework";
 		};
-		3CFBD58D90E8C3BAA8F54B00 = {
+		A6A592ECB4476AD21BCB3CAA = {
 			isa = PBXBuildFile;
-			fileRef = C9D7FD488AC28EA097176D97;
+			fileRef = E4D5C2BEEAD654428779B23F;
 		};
-		0AA6367040B8490586059D35 = {
+		A0B048F16CF3A3C99550A782 = {
 			isa = PBXBuildFile;
-			fileRef = 4A8661743B6221247DB3D88C;
+			fileRef = 0E09B6D5DC72BB3713FC2D8C;
 		};
-		C06987B5A4459E2916F98A7A = {
+		1B656BC91E8956F71650A494 = {
 			isa = PBXBuildFile;
-			fileRef = E4010785E63C54D98FA4931C;
+			fileRef = 0D2EFB1E2C4189F0AB3B3D34;
 		};
-		EBA1CF3A6AA088146057A91C = {
+		5E75895569A31DDF85D36025 = {
 			isa = PBXBuildFile;
-			fileRef = 85A8A4F30C5949FA36393B25;
+			fileRef = 4157F9F147E62EB87402D305;
 		};
-		E6799811ADA595F74BDA2736 = {
+		26C87497C022CC4A9E85D3A5 = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3CFBD58D90E8C3BAA8F54B00,
-				0AA6367040B8490586059D35,
-				C06987B5A4459E2916F98A7A,
-				EBA1CF3A6AA088146057A91C,
+				A6A592ECB4476AD21BCB3CAA,
+				A0B048F16CF3A3C99550A782,
+				1B656BC91E8956F71650A494,
+				5E75895569A31DDF85D36025,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		833F6801E50BE5FB2FD05001 = {
+		F85180210E0DE0919664D284 = {
 			isa = PBXBuildFile;
 			fileRef = 1C7CD20E6F843A4FAB2D975C;
 		};
-		FE85CF9478E29CE20CCD4D35 = {
+		E8D5721A38EF1A5966AC0FE1 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F85180210E0DE0919664D284,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8F3E4E74073D03BBB72A5018 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		203435C2B292CC029C8C2FD9 = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 98F54143AB4E86B28C3AFEE0;
 			proxyType = 1;
 			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
 			remoteInfo = MirrorDomain;
 		};
-		BD534B28DECB66E9AC5B5CC3 = {
+		FA3B4A2AFF95BFB8D767E088 = {
 			isa = PBXTargetDependency;
 			target = C9B69E813E4E48D4D90A387E;
-			targetProxy = FE85CF9478E29CE20CCD4D35;
+			targetProxy = 203435C2B292CC029C8C2FD9;
+		};
+		A53E422B11B503182559D372 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.data;
+				SKIP_INSTALL = YES;
+				MACH_O_TYPE = staticlib;
+				DEFINES_MODULE = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		D311E4CE652CEBF21C2FDA0D = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.data;
+				SKIP_INSTALL = YES;
+				MACH_O_TYPE = staticlib;
+				DEFINES_MODULE = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		EFD2A7FFED024039FB663281 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A53E422B11B503182559D372,
+				D311E4CE652CEBF21C2FDA0D,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3DD9A8D910410B690AE628F4 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EFD2A7FFED024039FB663281;
+			buildPhases = (
+				26C87497C022CC4A9E85D3A5,
+				E8D5721A38EF1A5966AC0FE1,
+				8F3E4E74073D03BBB72A5018,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				FA3B4A2AFF95BFB8D767E088,
+			);
+			name = MirrorData;
+			productName = MirrorData;
+			productReference = 7F21F29F7FD5A3A2BF8CB633;
+			productType = "com.apple.product-type.framework";
+		};
+		D6EA1BC71D285A58A392FCCD = {
+			isa = PBXBuildFile;
+			fileRef = 07C373B3D66539C1F2C556F9;
+		};
+		B9D433A01DB70CE632FDA7A2 = {
+			isa = PBXBuildFile;
+			fileRef = 3BBC08E843079162855B114C;
+		};
+		B2B0FA2E0BC57024F19411D7 = {
+			isa = PBXBuildFile;
+			fileRef = AAE431A16B80565CD3F31089;
+		};
+		E6B02B572393C0635B3C3B87 = {
+			isa = PBXBuildFile;
+			fileRef = 8047219D6B75687D97D3CB23;
+		};
+		B6EC4DBBFF57CE4AD80772CE = {
+			isa = PBXBuildFile;
+			fileRef = C49E3477562D327AE77316B4;
+		};
+		FC4F4EB0FEDA3FB08B3C614E = {
+			isa = PBXBuildFile;
+			fileRef = C052529C25EEE32D8B9084A0;
+		};
+		69C007CAD78E9A438A1A94D3 = {
+			isa = PBXBuildFile;
+			fileRef = C2CC6D5B2BB01AA9CE60D787;
+		};
+		D8C410B892200C2ABE5B17C4 = {
+			isa = PBXBuildFile;
+			fileRef = 8ADABAAC55C636B6E9FD8CED;
+		};
+		88DE80CE5CFB5094FAD6A545 = {
+			isa = PBXBuildFile;
+			fileRef = 33865684071E41FB203F3A58;
+		};
+		BB8B84FE9D335BF407EE9A5E = {
+			isa = PBXBuildFile;
+			fileRef = D8DB27C49C209688823A7572;
+		};
+		B505D6AB0621409D475D323F = {
+			isa = PBXBuildFile;
+			fileRef = 52ACC2A0B4CA010E9046B88C;
+		};
+		9695493DEA3F4D1CF4DA481D = {
+			isa = PBXBuildFile;
+			fileRef = 3C182BBF23228B2FC5AA4283;
+		};
+		A2C78D60E7D430329BBC4A66 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D6EA1BC71D285A58A392FCCD,
+				B9D433A01DB70CE632FDA7A2,
+				B2B0FA2E0BC57024F19411D7,
+				E6B02B572393C0635B3C3B87,
+				B6EC4DBBFF57CE4AD80772CE,
+				FC4F4EB0FEDA3FB08B3C614E,
+				69C007CAD78E9A438A1A94D3,
+				D8C410B892200C2ABE5B17C4,
+				88DE80CE5CFB5094FAD6A545,
+				BB8B84FE9D335BF407EE9A5E,
+				B505D6AB0621409D475D323F,
+				9695493DEA3F4D1CF4DA481D,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4A233582D3D7DD936703DECF = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		E8259E5C3C00F369BB68CF20 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		0318F29599D0DA7FFA565068 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4A233582D3D7DD936703DECF,
+				E8259E5C3C00F369BB68CF20,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1D0645D4F64C667C5C6809F8 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5DDC62D3A3082D77142E3CEE = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		B21DE57204B9B02C4E6E1440 = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = 5DDC62D3A3082D77142E3CEE;
+		};
+		A3F6527AEF4EA72C52DAB30E = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		B9EA94BB7FC33E1D87151A3C = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = A3F6527AEF4EA72C52DAB30E;
+		};
+		0E9009BF508F899E6CD4BA7A = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.system;
+				SKIP_INSTALL = YES;
+				MACH_O_TYPE = staticlib;
+				DEFINES_MODULE = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		384D7C10B399DEDB94837FA9 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.system;
+				SKIP_INSTALL = YES;
+				MACH_O_TYPE = staticlib;
+				DEFINES_MODULE = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		B852332A67D6319F69F88D0A = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0E9009BF508F899E6CD4BA7A,
+				384D7C10B399DEDB94837FA9,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		31D84426EFD0B0253322BD3C = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B852332A67D6319F69F88D0A;
+			buildPhases = (
+				A2C78D60E7D430329BBC4A66,
+				0318F29599D0DA7FFA565068,
+				1D0645D4F64C667C5C6809F8,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				B21DE57204B9B02C4E6E1440,
+				B9EA94BB7FC33E1D87151A3C,
+			);
+			name = MirrorSystem;
+			productName = MirrorSystem;
+			productReference = 03F81A4211E254419D9BBFF8;
+			productType = "com.apple.product-type.framework";
+		};
+		FE2FB2ECB59BEEAFA3C21D7B = {
+			isa = PBXBuildFile;
+			fileRef = 527FA06593A039ECABC27761;
+		};
+		6577118477898E39A6B72C42 = {
+			isa = PBXBuildFile;
+			fileRef = 08C6A5D8EB60A684B89AE7E7;
+		};
+		3B937501E2574E25498999C0 = {
+			isa = PBXBuildFile;
+			fileRef = 242682081AE7D79B997C656D;
+		};
+		7D8C48B78AC2DE71B4AA8057 = {
+			isa = PBXBuildFile;
+			fileRef = 2B04B14679A80F4C7577D0E7;
+		};
+		83DEB8DD9473665F74A1C965 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FE2FB2ECB59BEEAFA3C21D7B,
+				6577118477898E39A6B72C42,
+				3B937501E2574E25498999C0,
+				7D8C48B78AC2DE71B4AA8057,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D03954FCB4C74C68F059AF9A = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		50F4A8B35E0DED17C68E6BCE = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1C221339F23BFA4BFC4B2347 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.design;
+				SKIP_INSTALL = YES;
+				MACH_O_TYPE = staticlib;
+				DEFINES_MODULE = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		C39C8403B07CB925012EF4A9 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.design;
+				SKIP_INSTALL = YES;
+				MACH_O_TYPE = staticlib;
+				DEFINES_MODULE = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		97E6B52369D41AAC91C730A0 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C221339F23BFA4BFC4B2347,
+				C39C8403B07CB925012EF4A9,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5D721B2CD0DEA1E6FA096EC6 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 97E6B52369D41AAC91C730A0;
+			buildPhases = (
+				83DEB8DD9473665F74A1C965,
+				D03954FCB4C74C68F059AF9A,
+				50F4A8B35E0DED17C68E6BCE,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+
+			);
+			name = MirrorDesign;
+			productName = MirrorDesign;
+			productReference = F4082844BAAD88534D64BD66;
+			productType = "com.apple.product-type.framework";
+		};
+		3B69BE0A86906BD33C04BE4E = {
+			isa = PBXBuildFile;
+			fileRef = 6965BC1ED9B97DFE6802ED60;
+		};
+		B75E7B4C48FF15D5376B10B5 = {
+			isa = PBXBuildFile;
+			fileRef = EFD2DE7B9105FCC04700EA2A;
+		};
+		24766FDC002E70806D40ABA6 = {
+			isa = PBXBuildFile;
+			fileRef = 7EACF16C1F63B3A1AD265FB9;
+		};
+		5CEB0832E9CB3F897BE4FC93 = {
+			isa = PBXBuildFile;
+			fileRef = 896A3C89CF6199057D355371;
+		};
+		B7B1953B34B6D90B8CA63D6A = {
+			isa = PBXBuildFile;
+			fileRef = 206CBDDA5F530D484045A7C3;
+		};
+		CCBBEA107CEF66792AAAADD2 = {
+			isa = PBXBuildFile;
+			fileRef = 07B4C7A2CC9D1BAF71F6CC9E;
+		};
+		E6799811ADA595F74BDA2736 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3B69BE0A86906BD33C04BE4E,
+				B75E7B4C48FF15D5376B10B5,
+				24766FDC002E70806D40ABA6,
+				5CEB0832E9CB3F897BE4FC93,
+				B7B1953B34B6D90B8CA63D6A,
+				CCBBEA107CEF66792AAAADD2,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4A47062BEF0B20FE4B9565A4 = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
 		};
 		43AAF402F80717D9CE1684B8 = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				833F6801E50BE5FB2FD05001,
+				4A47062BEF0B20FE4B9565A4,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		C772324A676B542FFA87F7DD = {
+		B9161016B7A72050A5739719 = {
 			isa = PBXBuildFile;
-			fileRef = 619EE1AE59CC3CF43A25A7AA;
+			fileRef = D87208ACB10CA24F284B8E7D;
 		};
 		AE23B4B28DEDCC51ECD986BA = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C772324A676B542FFA87F7DD,
+				B9161016B7A72050A5739719,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B8C52580DA67DEA234FD5905 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		4999C15ABE90C6658352F092 = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = B8C52580DA67DEA234FD5905;
 		};
 		FA0F7FD7029338E5453133F2 = {
 			isa = XCBuildConfiguration;
@@ -621,16 +1436,16 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				TARGETED_DEVICE_FAMILY = "1,2";
-				PRODUCT_BUNDLE_IDENTIFIER = "com.baserize.mirror.domain-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrordomaintests;
 				SKIP_INSTALL = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@loader_path/Frameworks",
-					"@executable_path/Frameworks",
-				);
 				TEST_HOST = "";
 				BUNDLE_LOADER = "";
 			};
@@ -643,16 +1458,16 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				CURRENT_PROJECT_VERSION = 1;
 				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				TARGETED_DEVICE_FAMILY = "1,2";
-				PRODUCT_BUNDLE_IDENTIFIER = "com.baserize.mirror.domain-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrordomaintests;
 				SKIP_INSTALL = YES;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@loader_path/Frameworks",
-					"@executable_path/Frameworks",
-				);
 				TEST_HOST = "";
 				BUNDLE_LOADER = "";
 			};
@@ -679,12 +1494,1689 @@
 
 			);
 			dependencies = (
-				BD534B28DECB66E9AC5B5CC3,
+				4999C15ABE90C6658352F092,
 			);
 			name = MirrorDomainTests;
 			productName = MirrorDomainTests;
 			productReference = 317AE10D594FB10C3C9C1F7C;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		EF9BCD351B4F60F2F3D4BB79 = {
+			isa = PBXBuildFile;
+			fileRef = EC5CFCAE32833A040E42F095;
+		};
+		94874E476B2DB359C002C3AD = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EF9BCD351B4F60F2F3D4BB79,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F5317DC4211D2261618CD0EE = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		377C51A0F2CBEA865B661EA0 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		BC9FA01509B61198913993D7 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F5317DC4211D2261618CD0EE,
+				377C51A0F2CBEA865B661EA0,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		327377C18073353335331677 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2042B704FF7C7434800FC5A3 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		DCA9B1C6FD41DEF0EC9D092A = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = 2042B704FF7C7434800FC5A3;
+		};
+		9A0A70F5CD7B2B80E2A6F34C = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		4522DBD8BB7E8B702C4F0447 = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 9A0A70F5CD7B2B80E2A6F34C;
+		};
+		C4382EBB46F7A40D4ECE7E7F = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrordatatests;
+				SKIP_INSTALL = YES;
+				TEST_HOST = "";
+				BUNDLE_LOADER = "";
+			};
+			name = Debug;
+		};
+		65E723CD9A8BC6EAF5962189 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrordatatests;
+				SKIP_INSTALL = YES;
+				TEST_HOST = "";
+				BUNDLE_LOADER = "";
+			};
+			name = Release;
+		};
+		D315490DFC0633B5F7D8A2F4 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C4382EBB46F7A40D4ECE7E7F,
+				65E723CD9A8BC6EAF5962189,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8CA207AA2EA936D8B1AD1230 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D315490DFC0633B5F7D8A2F4;
+			buildPhases = (
+				94874E476B2DB359C002C3AD,
+				BC9FA01509B61198913993D7,
+				327377C18073353335331677,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				DCA9B1C6FD41DEF0EC9D092A,
+				4522DBD8BB7E8B702C4F0447,
+			);
+			name = MirrorDataTests;
+			productName = MirrorDataTests;
+			productReference = 96DF8A0BD6444B3BB8FC0069;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		597406B8D1252A2A99EBF22F = {
+			isa = PBXBuildFile;
+			fileRef = 7949DF5EBDB1F1AFE6D0FE93;
+		};
+		3B3F82DD5C226A30A7E24223 = {
+			isa = PBXBuildFile;
+			fileRef = 695F764792ED2FD9F449E2B5;
+		};
+		FB4E1A69DC0190513141C5DB = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				597406B8D1252A2A99EBF22F,
+				3B3F82DD5C226A30A7E24223,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		60D2E5B808880D0CC7C6457F = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		4B93C4942EC5CE3280690BF1 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		95AFA7D4CB4571135CD98332 = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		D6C80686276AD18ABA84E0F7 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				60D2E5B808880D0CC7C6457F,
+				4B93C4942EC5CE3280690BF1,
+				95AFA7D4CB4571135CD98332,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8E77F0A9CC3E21CD514122B0 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1B6493D39248C2D54DF8EEDE = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		3AF1BA23A1791C5DF6EE65FD = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = 1B6493D39248C2D54DF8EEDE;
+		};
+		BD099338B92A9C2D5552A6A6 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		546446AA86BF7EDAA4F9394B = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = BD099338B92A9C2D5552A6A6;
+		};
+		F5C41EB23733EDC8EFA05D66 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		D4B906693DCC16D3BDB240A4 = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = F5C41EB23733EDC8EFA05D66;
+		};
+		1F3951F171D47502027D84B5 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrorsystemtests;
+				SKIP_INSTALL = YES;
+				TEST_HOST = "";
+				BUNDLE_LOADER = "";
+			};
+			name = Debug;
+		};
+		EB302D8A75F071710FE93E2B = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrorsystemtests;
+				SKIP_INSTALL = YES;
+				TEST_HOST = "";
+				BUNDLE_LOADER = "";
+			};
+			name = Release;
+		};
+		75EE4ED05EB9A9E4BDB9A6AC = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1F3951F171D47502027D84B5,
+				EB302D8A75F071710FE93E2B,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7AF8BAB8CF2BAB92BEBAA18C = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 75EE4ED05EB9A9E4BDB9A6AC;
+			buildPhases = (
+				FB4E1A69DC0190513141C5DB,
+				D6C80686276AD18ABA84E0F7,
+				8E77F0A9CC3E21CD514122B0,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				3AF1BA23A1791C5DF6EE65FD,
+				546446AA86BF7EDAA4F9394B,
+				D4B906693DCC16D3BDB240A4,
+			);
+			name = MirrorSystemTests;
+			productName = MirrorSystemTests;
+			productReference = E5C8F9549D228A94E122FBD8;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		2D7C13DC7D3903BE78291FC2 = {
+			isa = PBXBuildFile;
+			fileRef = 54628DF94BA9B9CD246EDB2A;
+		};
+		19A58F503FA05C8514052AB5 = {
+			isa = PBXBuildFile;
+			fileRef = 704219C1D82048C4F924D488;
+		};
+		BA0C964FAB83BC67EF8FE21F = {
+			isa = PBXBuildFile;
+			fileRef = DDBC6A2B6DFCD4B0815241FA;
+		};
+		7B81A2D35BE2EAB82AB4B079 = {
+			isa = PBXBuildFile;
+			fileRef = 09A61F564C7CD39BBF560A82;
+		};
+		D40DA92D6734E6FF701B8C84 = {
+			isa = PBXBuildFile;
+			fileRef = 125D3800DD3B4A007ADDB445;
+		};
+		9609869A5F4DB5CF9CFC9875 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2D7C13DC7D3903BE78291FC2,
+				19A58F503FA05C8514052AB5,
+				BA0C964FAB83BC67EF8FE21F,
+				7B81A2D35BE2EAB82AB4B079,
+				D40DA92D6734E6FF701B8C84,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DDE23CFAC3A529CA9D74E844 = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		EE82F27ED3554BEC8D3E79DD = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		07F58FBDF7D65BA4EB1C0DA8 = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		4C67B65E3138948137BCBAF4 = {
+			isa = PBXBuildFile;
+			fileRef = F4082844BAAD88534D64BD66;
+		};
+		894FAB1BD9A0899DB11AF410 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DDE23CFAC3A529CA9D74E844,
+				EE82F27ED3554BEC8D3E79DD,
+				07F58FBDF7D65BA4EB1C0DA8,
+				4C67B65E3138948137BCBAF4,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		79E2C66BA65A445778505086 = {
+			isa = PBXBuildFile;
+			fileRef = 6327A1005FF0B783151E530B;
+		};
+		5E8A3FEA9D688B96EB712FCD = {
+			isa = PBXBuildFile;
+			fileRef = 8D22B8C83E2ADF51220418AE;
+		};
+		8E1F2A7BA90AF0F1B0992935 = {
+			isa = PBXBuildFile;
+			fileRef = 3DE0B9653A7F3E08AC5AE5F5;
+		};
+		6AB5731CF270F81C98D8E9D3 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				79E2C66BA65A445778505086,
+				5E8A3FEA9D688B96EB712FCD,
+				8E1F2A7BA90AF0F1B0992935,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6EDEDAA5153E837C04589D89 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		A3AACA28420C2A4751CE54DA = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = 6EDEDAA5153E837C04589D89;
+		};
+		212F4902D7E12AE611DEC0F8 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		B8076F95CE799D5F0A3EF1AF = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 212F4902D7E12AE611DEC0F8;
+		};
+		356EA85CB177DD78E4E6AB2E = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		B2A2AC0872B3D1619F3BD9FD = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = 356EA85CB177DD78E4E6AB2E;
+		};
+		A7D3DEC5C6A1832B30F52058 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 5D721B2CD0DEA1E6FA096EC6;
+			remoteInfo = MirrorDesign;
+		};
+		B09B5AE9E174F18D3FCA461B = {
+			isa = PBXTargetDependency;
+			target = 5D721B2CD0DEA1E6FA096EC6;
+			targetProxy = A7D3DEC5C6A1832B30F52058;
+		};
+		D02AFFA73D3213710155FD71 = {
+			isa = PBXBuildFile;
+			fileRef = CAF33B0FD1A18C183795A6F9;
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
+		526979FDF677055E3FB4A88B = {
+			isa = PBXBuildFile;
+			fileRef = 48D518475E8F88F1D4FCBC9E;
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
+		6001D83AF0FE4EBAF7FCC884 = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D02AFFA73D3213710155FD71,
+				526979FDF677055E3FB4A88B,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D6BC9AD9FD3D9802B1E6181 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 1EA3C4E2307C40D74F2DE63A;
+			remoteInfo = MirrorWidgetsIOS;
+		};
+		19BB4F4292EA9FC1E647D495 = {
+			isa = PBXTargetDependency;
+			target = 1EA3C4E2307C40D74F2DE63A;
+			targetProxy = 6D6BC9AD9FD3D9802B1E6181;
+		};
+		241E5BECC6C45A37756F06E8 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 717A45D080A25DE458E08974;
+			remoteInfo = MirrorShareIOS;
+		};
+		625C683D540E89F06D45F279 = {
+			isa = PBXTargetDependency;
+			target = 717A45D080A25DE458E08974;
+			targetProxy = 241E5BECC6C45A37756F06E8;
+		};
+		CB7D9D03E3F766FD11B28D59 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = Mirror;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				INFOPLIST_FILE = "Configuration/MirrorIOS-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorIOS.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror;
+			};
+			name = Debug;
+		};
+		6D92285BCD48D302C0CBA097 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = Mirror;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				INFOPLIST_FILE = "Configuration/MirrorIOS-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorIOS.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror;
+			};
+			name = Release;
+		};
+		A323B39864D766885CD03CC9 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB7D9D03E3F766FD11B28D59,
+				6D92285BCD48D302C0CBA097,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6D966BF1135AC5B72C078FD9 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A323B39864D766885CD03CC9;
+			buildPhases = (
+				9609869A5F4DB5CF9CFC9875,
+				894FAB1BD9A0899DB11AF410,
+				6AB5731CF270F81C98D8E9D3,
+				6001D83AF0FE4EBAF7FCC884,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				A3AACA28420C2A4751CE54DA,
+				B8076F95CE799D5F0A3EF1AF,
+				B2A2AC0872B3D1619F3BD9FD,
+				B09B5AE9E174F18D3FCA461B,
+				19BB4F4292EA9FC1E647D495,
+				625C683D540E89F06D45F279,
+			);
+			name = MirrorIOS;
+			productName = Mirror;
+			productReference = 296816B4D4CB1497DEE2FE76;
+			productType = "com.apple.product-type.application";
+		};
+		015EA0394CA9FC33AF266A66 = {
+			isa = PBXBuildFile;
+			fileRef = 54628DF94BA9B9CD246EDB2A;
+		};
+		ECF3C3141F3A99CFCE8C2A82 = {
+			isa = PBXBuildFile;
+			fileRef = 704219C1D82048C4F924D488;
+		};
+		159CC2E0BFB70E84479C5DE2 = {
+			isa = PBXBuildFile;
+			fileRef = DDBC6A2B6DFCD4B0815241FA;
+		};
+		511627D15602B6BFC996A69F = {
+			isa = PBXBuildFile;
+			fileRef = 09A61F564C7CD39BBF560A82;
+		};
+		8A97F5896201B3B714A46CC8 = {
+			isa = PBXBuildFile;
+			fileRef = 125D3800DD3B4A007ADDB445;
+		};
+		9B937A9E07740F485F51C346 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				015EA0394CA9FC33AF266A66,
+				ECF3C3141F3A99CFCE8C2A82,
+				159CC2E0BFB70E84479C5DE2,
+				511627D15602B6BFC996A69F,
+				8A97F5896201B3B714A46CC8,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD793884B70951B6B7A9E2A6 = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		E914967781159317A23D60C0 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		C5D6683C0A0961E0F16CC2D9 = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		3FAFD2B81D04DB8B96E0FDB8 = {
+			isa = PBXBuildFile;
+			fileRef = F4082844BAAD88534D64BD66;
+		};
+		EE0D4319487F5724999E693C = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD793884B70951B6B7A9E2A6,
+				E914967781159317A23D60C0,
+				C5D6683C0A0961E0F16CC2D9,
+				3FAFD2B81D04DB8B96E0FDB8,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BEC15E3554D13270C13B6261 = {
+			isa = PBXBuildFile;
+			fileRef = 6327A1005FF0B783151E530B;
+		};
+		AF1D0711390AC7BD70EF52D2 = {
+			isa = PBXBuildFile;
+			fileRef = 8D22B8C83E2ADF51220418AE;
+		};
+		B6CE772C8D49F42E65D3ABB3 = {
+			isa = PBXBuildFile;
+			fileRef = 3DE0B9653A7F3E08AC5AE5F5;
+		};
+		71C21506AB4DBCD35BCF6562 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BEC15E3554D13270C13B6261,
+				AF1D0711390AC7BD70EF52D2,
+				B6CE772C8D49F42E65D3ABB3,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		14640CBE9F0B2897AF6DF968 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		7143317D4EFF8F53D749CD18 = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = 14640CBE9F0B2897AF6DF968;
+		};
+		001A0F580899D8112DA6223B = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		D98B01BEC81533607C0A02F6 = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 001A0F580899D8112DA6223B;
+		};
+		2C17C052ABFF34DE3D579DA6 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		3CC6B7F389BA372625F59F85 = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = 2C17C052ABFF34DE3D579DA6;
+		};
+		1FF15CC52E65F59D4941F79E = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 5D721B2CD0DEA1E6FA096EC6;
+			remoteInfo = MirrorDesign;
+		};
+		E28C4539D992ACBD791B1AFF = {
+			isa = PBXTargetDependency;
+			target = 5D721B2CD0DEA1E6FA096EC6;
+			targetProxy = 1FF15CC52E65F59D4941F79E;
+		};
+		4735063A21460943191C2B67 = {
+			isa = PBXBuildFile;
+			fileRef = E490BF0524E29A1A828B32CF;
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
+		F79B810488D1E27A047042AD = {
+			isa = PBXBuildFile;
+			fileRef = 030EA7ECC771258E04F23397;
+			settings = {
+				ATTRIBUTES = (
+					RemoveHeadersOnCopy,
+				);
+			};
+		};
+		92B52B0B931DAB4FACB77B4F = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				4735063A21460943191C2B67,
+				F79B810488D1E27A047042AD,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA75DA1893F21B2028D848F7 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 511EAFD3FA2C048C30DC07F3;
+			remoteInfo = MirrorWidgetsMac;
+		};
+		1B1BFDB19DC2D6508495D53A = {
+			isa = PBXTargetDependency;
+			target = 511EAFD3FA2C048C30DC07F3;
+			targetProxy = DA75DA1893F21B2028D848F7;
+		};
+		916AAACBE36B2781C46EE377 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 22212BAEF0B2FFC92FE55634;
+			remoteInfo = MirrorShareMac;
+		};
+		6F88E63D85E402A3E79D02B8 = {
+			isa = PBXTargetDependency;
+			target = 22212BAEF0B2FFC92FE55634;
+			targetProxy = 916AAACBE36B2781C46EE377;
+		};
+		59A979AF2B3395DF14C9880F = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = Mirror;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Configuration/MirrorMac-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorMac.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac;
+			};
+			name = Debug;
+		};
+		11E6C2F549E8B7A3564F528B = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = Mirror;
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Configuration/MirrorMac-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/MirrorMac.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac;
+			};
+			name = Release;
+		};
+		FB54603C2B6EAB0EA2578158 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				59A979AF2B3395DF14C9880F,
+				11E6C2F549E8B7A3564F528B,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		583C3B36359F849E61F1240E = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FB54603C2B6EAB0EA2578158;
+			buildPhases = (
+				9B937A9E07740F485F51C346,
+				EE0D4319487F5724999E693C,
+				71C21506AB4DBCD35BCF6562,
+				92B52B0B931DAB4FACB77B4F,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				7143317D4EFF8F53D749CD18,
+				D98B01BEC81533607C0A02F6,
+				3CC6B7F389BA372625F59F85,
+				E28C4539D992ACBD791B1AFF,
+				1B1BFDB19DC2D6508495D53A,
+				6F88E63D85E402A3E79D02B8,
+			);
+			name = MirrorMac;
+			productName = Mirror;
+			productReference = 1EBCEF81CA5D400E33A2409C;
+			productType = "com.apple.product-type.application";
+		};
+		D0FA538B55C06ABE7FC28B3D = {
+			isa = PBXBuildFile;
+			fileRef = 278097A27B55D0ECB34CBBFD;
+		};
+		6E3677AA62BEB2918F17E344 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D0FA538B55C06ABE7FC28B3D,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		2E0DC3190E2D9E164417D4A2 = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		175EF7BC4E066A98F5B480A7 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		A560BF54B461B7FAE981ADDA = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		676FB492A434E80C338E3D52 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2E0DC3190E2D9E164417D4A2,
+				175EF7BC4E066A98F5B480A7,
+				A560BF54B461B7FAE981ADDA,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7F3A28B72128F021FA0EFD17 = {
+			isa = PBXBuildFile;
+			fileRef = 6327A1005FF0B783151E530B;
+		};
+		0719E5417F161E00A7D7BDF0 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7F3A28B72128F021FA0EFD17,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D8E4ACD90481FAD9380D0293 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		9CDE008604E655F61D2B1CC4 = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = D8E4ACD90481FAD9380D0293;
+		};
+		613A94638ADA5B69CD93EA1D = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		612DBE5712A13FBA498CA857 = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 613A94638ADA5B69CD93EA1D;
+		};
+		30DB18F1F1FE9D1980BE92D8 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		C3A968E0EDAB5278D6D4BC44 = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = 30DB18F1F1FE9D1980BE92D8;
+		};
+		115BE88B7FBE6833EB0BE87F = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				INFOPLIST_FILE = "Configuration/Widgets-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionIOS.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.widgets;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		97F8365CD37D98AC48110811 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				INFOPLIST_FILE = "Configuration/Widgets-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionIOS.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.widgets;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		9EAE88422D1BD18B3E7BD7A4 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				115BE88B7FBE6833EB0BE87F,
+				97F8365CD37D98AC48110811,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1EA3C4E2307C40D74F2DE63A = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9EAE88422D1BD18B3E7BD7A4;
+			buildPhases = (
+				6E3677AA62BEB2918F17E344,
+				676FB492A434E80C338E3D52,
+				0719E5417F161E00A7D7BDF0,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				9CDE008604E655F61D2B1CC4,
+				612DBE5712A13FBA498CA857,
+				C3A968E0EDAB5278D6D4BC44,
+			);
+			name = MirrorWidgetsIOS;
+			productName = MirrorWidgetsIOS;
+			productReference = CAF33B0FD1A18C183795A6F9;
+			productType = "com.apple.product-type.app-extension";
+		};
+		9774A3BCD9199C19B3B931B2 = {
+			isa = PBXBuildFile;
+			fileRef = 278097A27B55D0ECB34CBBFD;
+		};
+		86F937E89DD249137E44919C = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9774A3BCD9199C19B3B931B2,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A123C0F347ABF3002905080B = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		3B39225D2B8F391CCE3DCA10 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		C10423ABE07080F80E8D4B19 = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		D87ABED58CCA9297BEE8661D = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A123C0F347ABF3002905080B,
+				3B39225D2B8F391CCE3DCA10,
+				C10423ABE07080F80E8D4B19,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		65FEA9464933ED3D80CC7C72 = {
+			isa = PBXBuildFile;
+			fileRef = 6327A1005FF0B783151E530B;
+		};
+		9BC7D7F74E7E86F4BF9B0F65 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				65FEA9464933ED3D80CC7C72,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB5CDB639B8738FCC95654D6 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		EECD9BB5A677DD313F2DE989 = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = CB5CDB639B8738FCC95654D6;
+		};
+		94357ACC6B2E966674ABC171 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		A2376A51992E84912F70C56E = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 94357ACC6B2E966674ABC171;
+		};
+		C22B37530EE1F26FAA8961B6 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		A719FA47A37FC69135ECAA04 = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = C22B37530EE1F26FAA8961B6;
+		};
+		C3B264F37631BF86AEBC09FE = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Configuration/Widgets-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionMac.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac.widgets;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		1EC75DA8A57E500702A5F409 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Configuration/Widgets-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionMac.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac.widgets;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		FA024D46E51BFEC09B7401DF = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C3B264F37631BF86AEBC09FE,
+				1EC75DA8A57E500702A5F409,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		511EAFD3FA2C048C30DC07F3 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA024D46E51BFEC09B7401DF;
+			buildPhases = (
+				86F937E89DD249137E44919C,
+				D87ABED58CCA9297BEE8661D,
+				9BC7D7F74E7E86F4BF9B0F65,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				EECD9BB5A677DD313F2DE989,
+				A2376A51992E84912F70C56E,
+				A719FA47A37FC69135ECAA04,
+			);
+			name = MirrorWidgetsMac;
+			productName = MirrorWidgetsMac;
+			productReference = E490BF0524E29A1A828B32CF;
+			productType = "com.apple.product-type.app-extension";
+		};
+		26FAE7A16FC8D571F8313704 = {
+			isa = PBXBuildFile;
+			fileRef = 09CD9763A61D330B70ED6484;
+		};
+		52C5ED1E1358BD995E61085C = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				26FAE7A16FC8D571F8313704,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F1DD6AA8C0F5BD65F8AC7C60 = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		F4A9790818CC7BA2133D0045 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		9CFBEC09F4D67D1F358A2E8D = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		BB142C6435A7886F0BF59745 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1DD6AA8C0F5BD65F8AC7C60,
+				F4A9790818CC7BA2133D0045,
+				9CFBEC09F4D67D1F358A2E8D,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0A332B1CC91B8E18C62B35AF = {
+			isa = PBXBuildFile;
+			fileRef = 6327A1005FF0B783151E530B;
+		};
+		D1CC5E1B4D23F7B8AC0D5790 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0A332B1CC91B8E18C62B35AF,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0C9F7DE53306900A2A3F0C4C = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		A60E852B79B7676F6D7A26BC = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = 0C9F7DE53306900A2A3F0C4C;
+		};
+		978BD35B42CCF15D7813CBAE = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		7BEB46774C2902E4C5C0BC35 = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 978BD35B42CCF15D7813CBAE;
+		};
+		E9437287AB801F5DF8203235 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		6E4EB0DF58ADF5A99B8022D7 = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = E9437287AB801F5DF8203235;
+		};
+		58B4D043D70053B9C7311AC0 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				INFOPLIST_FILE = "Configuration/Share-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionIOS.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.share;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		C3ADDAD2BB9D08E3021C08DD = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				INFOPLIST_FILE = "Configuration/Share-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionIOS.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.share;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		F943DF21CF24783024B13A0D = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				58B4D043D70053B9C7311AC0,
+				C3ADDAD2BB9D08E3021C08DD,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		717A45D080A25DE458E08974 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F943DF21CF24783024B13A0D;
+			buildPhases = (
+				52C5ED1E1358BD995E61085C,
+				BB142C6435A7886F0BF59745,
+				D1CC5E1B4D23F7B8AC0D5790,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				A60E852B79B7676F6D7A26BC,
+				7BEB46774C2902E4C5C0BC35,
+				6E4EB0DF58ADF5A99B8022D7,
+			);
+			name = MirrorShareIOS;
+			productName = MirrorShareIOS;
+			productReference = 48D518475E8F88F1D4FCBC9E;
+			productType = "com.apple.product-type.app-extension";
+		};
+		08BE128FF200F29B853996FA = {
+			isa = PBXBuildFile;
+			fileRef = 09CD9763A61D330B70ED6484;
+		};
+		455CD3F3032D2413C31C97BF = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				08BE128FF200F29B853996FA,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		29D39F650A36CE7906822930 = {
+			isa = PBXBuildFile;
+			fileRef = 1C7CD20E6F843A4FAB2D975C;
+		};
+		08F8FFCB61256D955F17AF76 = {
+			isa = PBXBuildFile;
+			fileRef = 7F21F29F7FD5A3A2BF8CB633;
+		};
+		0C53345FDF68F76A88D3F63E = {
+			isa = PBXBuildFile;
+			fileRef = 03F81A4211E254419D9BBFF8;
+		};
+		F2F56A7A7051031E265F6ED2 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				29D39F650A36CE7906822930,
+				08F8FFCB61256D955F17AF76,
+				0C53345FDF68F76A88D3F63E,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B98C28A9F24BCCFE09BCD412 = {
+			isa = PBXBuildFile;
+			fileRef = 6327A1005FF0B783151E530B;
+		};
+		55ED4E5A11BCE06DFC4520CB = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B98C28A9F24BCCFE09BCD412,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F6831DED9B354BF4CDCE2E35 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = C9B69E813E4E48D4D90A387E;
+			remoteInfo = MirrorDomain;
+		};
+		73D9DDF747B8415643A41D7F = {
+			isa = PBXTargetDependency;
+			target = C9B69E813E4E48D4D90A387E;
+			targetProxy = F6831DED9B354BF4CDCE2E35;
+		};
+		5609F13B43DADF69035E603F = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 3DD9A8D910410B690AE628F4;
+			remoteInfo = MirrorData;
+		};
+		F09503C400775B2DAEFD1F6C = {
+			isa = PBXTargetDependency;
+			target = 3DD9A8D910410B690AE628F4;
+			targetProxy = 5609F13B43DADF69035E603F;
+		};
+		9814B1D8D4C62499A239CC5D = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 31D84426EFD0B0253322BD3C;
+			remoteInfo = MirrorSystem;
+		};
+		269D0ADDA46A0FB17F071657 = {
+			isa = PBXTargetDependency;
+			target = 31D84426EFD0B0253322BD3C;
+			targetProxy = 9814B1D8D4C62499A239CC5D;
+		};
+		2969961AAFA35ED9EE033DF2 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Configuration/Share-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionMac.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac.share;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Debug;
+		};
+		7094D2394F00785CFA73F699 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = "Configuration/Share-Info.plist";
+				CODE_SIGN_ENTITLEMENTS = Configuration/ExtensionMac.entitlements;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.mac.share;
+				SKIP_INSTALL = YES;
+				APPLICATION_EXTENSION_API_ONLY = YES;
+			};
+			name = Release;
+		};
+		91DB85EBAFE61C18EFE5C46D = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2969961AAFA35ED9EE033DF2,
+				7094D2394F00785CFA73F699,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		22212BAEF0B2FFC92FE55634 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 91DB85EBAFE61C18EFE5C46D;
+			buildPhases = (
+				455CD3F3032D2413C31C97BF,
+				F2F56A7A7051031E265F6ED2,
+				55ED4E5A11BCE06DFC4520CB,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				73D9DDF747B8415643A41D7F,
+				F09503C400775B2DAEFD1F6C,
+				269D0ADDA46A0FB17F071657,
+			);
+			name = MirrorShareMac;
+			productName = MirrorShareMac;
+			productReference = 030EA7ECC771258E04F23397;
+			productType = "com.apple.product-type.app-extension";
+		};
+		C3B64E72AB431CA7D065DFA1 = {
+			isa = PBXBuildFile;
+			fileRef = 52B345E5CB1CC1AB6172D7CD;
+		};
+		15D3AB6E749BC5911657AE07 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C3B64E72AB431CA7D065DFA1,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DC63C0C828D9C72FBF144301 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		29924035A8A10A50D323D19E = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F159690E20BDBE696510F55F = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 6D966BF1135AC5B72C078FD9;
+			remoteInfo = MirrorIOS;
+		};
+		8AE3F2D0FA348CDF68F17FE0 = {
+			isa = PBXTargetDependency;
+			target = 6D966BF1135AC5B72C078FD9;
+			targetProxy = F159690E20BDBE696510F55F;
+		};
+		6D5BEF4EE3949B794023FFB8 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirroriosuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorIOS;
+			};
+			name = Debug;
+		};
+		E619E748F0DFC4DC8164B710 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirroriosuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorIOS;
+			};
+			name = Release;
+		};
+		01A93484AB4C676D0CC9F619 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6D5BEF4EE3949B794023FFB8,
+				E619E748F0DFC4DC8164B710,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E8D78EE972D7C897E4D223F0 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 01A93484AB4C676D0CC9F619;
+			buildPhases = (
+				15D3AB6E749BC5911657AE07,
+				DC63C0C828D9C72FBF144301,
+				29924035A8A10A50D323D19E,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				8AE3F2D0FA348CDF68F17FE0,
+			);
+			name = MirrorIOSUITests;
+			productName = MirrorIOSUITests;
+			productReference = 4392A457B8033F15BB254CBE;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		7A6D25F591C1B08BC2D1AA85 = {
+			isa = PBXBuildFile;
+			fileRef = 52B345E5CB1CC1AB6172D7CD;
+		};
+		9FFAFC1306E074743242B011 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A6D25F591C1B08BC2D1AA85,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8AEB965410793CA0273AAF83 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		56FDD26017339045CDF15600 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3D14EF21938CD8CE52EEA619 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 583C3B36359F849E61F1240E;
+			remoteInfo = MirrorMac;
+		};
+		FB7E722B025388005AF738DB = {
+			isa = PBXTargetDependency;
+			target = 583C3B36359F849E61F1240E;
+			targetProxy = 3D14EF21938CD8CE52EEA619;
+		};
+		8F260684F881889F993D655F = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrormacuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorMac;
+			};
+			name = Debug;
+		};
+		CDE9A5EFFB4840DA17117580 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrormacuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorMac;
+			};
+			name = Release;
+		};
+		A63B99113C184D127F6E6BF0 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8F260684F881889F993D655F,
+				CDE9A5EFFB4840DA17117580,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5211D665102AB37A1A8DFCEB = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A63B99113C184D127F6E6BF0;
+			buildPhases = (
+				9FFAFC1306E074743242B011,
+				8AEB965410793CA0273AAF83,
+				56FDD26017339045CDF15600,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				FB7E722B025388005AF738DB,
+			);
+			name = MirrorMacUITests;
+			productName = MirrorMacUITests;
+			productReference = A5FB5F6A0A5D9578D1E6119A;
+			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 		98F54143AB4E86B28C3AFEE0 = {
 			isa = PBXProject;
@@ -693,17 +3185,52 @@
 				LastSwiftUpdateCheck = 2700;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					C9B69E813E4E48D4D90A387E = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					3DD9A8D910410B690AE628F4 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					31D84426EFD0B0253322BD3C = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					5D721B2CD0DEA1E6FA096EC6 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					88FE862294A7C45D0C8D7CA3 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					8CA207AA2EA936D8B1AD1230 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					7AF8BAB8CF2BAB92BEBAA18C = {
+						CreatedOnToolsVersion = 27.0;
+					};
 					6D966BF1135AC5B72C078FD9 = {
 						CreatedOnToolsVersion = 27.0;
 					};
 					583C3B36359F849E61F1240E = {
 						CreatedOnToolsVersion = 27.0;
 					};
-					C9B69E813E4E48D4D90A387E = {
+					1EA3C4E2307C40D74F2DE63A = {
 						CreatedOnToolsVersion = 27.0;
 					};
-					88FE862294A7C45D0C8D7CA3 = {
+					511EAFD3FA2C048C30DC07F3 = {
 						CreatedOnToolsVersion = 27.0;
+					};
+					717A45D080A25DE458E08974 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					22212BAEF0B2FFC92FE55634 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					E8D78EE972D7C897E4D223F0 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 6D966BF1135AC5B72C078FD9;
+					};
+					5211D665102AB37A1A8DFCEB = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 583C3B36359F849E61F1240E;
 					};
 				};
 			};
@@ -721,10 +3248,21 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				C9B69E813E4E48D4D90A387E,
+				3DD9A8D910410B690AE628F4,
+				31D84426EFD0B0253322BD3C,
+				5D721B2CD0DEA1E6FA096EC6,
+				88FE862294A7C45D0C8D7CA3,
+				8CA207AA2EA936D8B1AD1230,
+				7AF8BAB8CF2BAB92BEBAA18C,
 				6D966BF1135AC5B72C078FD9,
 				583C3B36359F849E61F1240E,
-				C9B69E813E4E48D4D90A387E,
-				88FE862294A7C45D0C8D7CA3,
+				1EA3C4E2307C40D74F2DE63A,
+				511EAFD3FA2C048C30DC07F3,
+				717A45D080A25DE458E08974,
+				22212BAEF0B2FFC92FE55634,
+				E8D78EE972D7C897E4D223F0,
+				5211D665102AB37A1A8DFCEB,
 			);
 		};
 	};
