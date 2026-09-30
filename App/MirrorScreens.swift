@@ -331,7 +331,13 @@ struct MirrorReviewView: View {
                     .accessibilityIdentifier("review.finish").disabled(model.isSaving)
             }
             .navigationTitle("정리")
-            .onChange(of: model.currentCard?.id, initial: true) { _, _ in cardFocused = true }
+            .onChange(of: model.currentCard?.id, initial: true) { _, _ in
+                cardFocused = false
+                Task { @MainActor in await Task.yield(); cardFocused = true }
+            }
+            .onChange(of: model.feedback) { _, message in
+                if let message { AccessibilityNotification.Announcement(message).post() }
+            }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: model.currentCard?.id)
             .sheet(item: Binding(get: { model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })) { MirrorPlanPicker(request: $0) }
             .sheet(item: Binding(get: { model.selectedTaskID.map(MirrorDetailRequest.init(id:)) }, set: { if $0 == nil { model.selectedTaskID = nil } })) { detail in
@@ -562,7 +568,8 @@ struct MirrorDeadlineEditor: View {
                         let deadline: Deadline
                         if precise { deadline = .instant(utcTimestamp: date, displayTimeZoneID: model.preferences.timeZoneID) }
                         else {
-                            guard let value = try? LocalDate.from(date, timeZone: TimeZone(identifier: model.preferences.timeZoneID) ?? .gmt) else { return }
+                            guard let value = try? PlanningContext.capture(at: date, timeZoneID: model.preferences.timeZoneID,
+                                                                          policyRevision: model.preferences.policyRevision).planningDay else { return }
                             deadline = .day(localDate: value, timeZoneID: model.preferences.timeZoneID)
                         }
                         await model.setDeadline(task, deadline: deadline)

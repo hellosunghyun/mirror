@@ -103,6 +103,7 @@ struct MirrorRootView: View {
                 } else if let feedback = model.feedback { Text(feedback).accessibilityIdentifier("state.feedback") }
                 if model.projectionPending { Button("저장 결과 다시 확인") { Task { await model.retry() } } }
                 if let systemProblem = model.systemProblem { Text(systemProblem).font(.caption).foregroundStyle(.secondary) }
+                if let cleanupProblem = model.cleanupProblem { Text(cleanupProblem).font(.caption).foregroundStyle(.secondary) }
                 if model.lastUndo != nil { Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo") }
                 Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)

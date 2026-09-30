@@ -320,26 +320,41 @@ struct StoreIntegrationTests {
         after.release()
     }
 
-    @Test("기기 내 삭제는 원본과 캐시를 지우고 구 writer를 차단한다")
-    func localDeleteBlocksOldWriter() async throws {
+    @Test("기기 내 삭제는 원본과 캐시를 지우고 구 writer를 차단한다", arguments: [false, true])
+    func localDeleteBlocksOldWriter(secondConnection: Bool) async throws {
         let configuration = temporaryConfiguration()
         defer { try? FileManager.default.removeItem(at: configuration.directory) }
         let first = try await MirrorStore(configuration: configuration)
-        let oldWriter = try await MirrorStore(configuration: configuration)
+        let oldWriter: MirrorStore?
+        if secondConnection { oldWriter = try await MirrorStore(configuration: configuration) }
+        else { oldWriter = nil }
         let context = try fixedContext()
         #expect(await first.execute(try capture(context: context), at: context.capturedAt).state == .locallyCommitted)
         try await first.setLocalValue(Data("private widget title".utf8), forKey: "widget")
+        for name in ["WidgetSnapshot.json", "NotificationLedger.json"] {
+            try Data("private local presentation".utf8).write(to: configuration.directory.appendingPathComponent(name))
+        }
         let deletion = try await first.deleteLocalData()
         #expect(deletion.deleted)
         #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent("Canonical.sqlite").path))
         #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent("LocalProjection.sqlite").path))
-        await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.snapshot() }
+        for name in ["Canonical.sqlite", "LocalProjection.sqlite"] {
+            for suffix in ["-wal", "-shm", "-journal"] {
+                #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent(name + suffix).path))
+            }
+        }
+        for name in ["WidgetSnapshot.json", "NotificationLedger.json"] {
+            #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent(name).path))
+        }
+        if let oldWriter { await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.snapshot() } }
         let replacementConfiguration = try #require(deletion.newConfiguration)
         let replacement = try await MirrorStore(configuration: replacementConfiguration)
         #expect(try await replacement.snapshot().tasks.isEmpty)
         #expect(try await replacement.localValue(forKey: "widget") == nil)
-        let stale = await oldWriter.execute(try capture(context: context), at: context.capturedAt)
-        #expect(stale.state == .persistenceFailed)
+        if let oldWriter {
+            let stale = await oldWriter.execute(try capture(context: context), at: context.capturedAt)
+            #expect(stale.state == .persistenceFailed)
+        }
         let fresh = try capture(context: context, epoch: replacementConfiguration.workspaceEpoch)
         #expect(await replacement.execute(fresh, at: context.capturedAt).state == .locallyCommitted)
     }

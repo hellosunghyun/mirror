@@ -83,6 +83,7 @@ final class AppModel {
     var feedback: String?
     var problem: String?
     var systemProblem: String?
+    var cleanupProblem: String?
     var projectionPending = false
     var lastCaptureCommittedToken: String?
     var confirmation: CommandEnvelope?
@@ -196,7 +197,10 @@ final class AppModel {
             let system = try await SystemCompositionRoot.open(configuration: config)
             services = system
             store = await system.store
-            if config.cloudSync != nil, let cloud, let store { try await cloud.resumeActiveStore(store) }
+            if config.cloudSync != nil, let cloud, let store {
+                try await cloud.resumeActiveStore(store)
+                await system.attachCloudMonitor(cloud)
+            }
             if !isUITesting, let bytes = try await store?.localValue(forKey: "system-preferences-v1"),
                let systemPreferences = try? JSONDecoder().decode(SystemPreferences.self, from: bytes) {
                 preferences.hideExternalTitles = systemPreferences.hideExternalTitles
@@ -871,6 +875,7 @@ final class AppModel {
             let config = await cloudStore.configuration
             self.store = cloudStore; configuration = config
             services = SystemServices(store: cloudStore, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
+            if let services { await services.attachCloudMonitor(cloud) }
             cloudPreview = nil; review = nil; picker = nil; lastUndo = nil
             defaults.removeObject(forKey: sessionKey)
             cloudSyncStatus = await cloud.status()
@@ -945,6 +950,23 @@ final class AppModel {
         guard let services else { return }
         let metrics = await services.metrics
         try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome))
+    }
+    private func clearTransientData() {
+        endReviewExposureSegment()
+        activeReviewMilliseconds = 0; reviewExposures = []
+        tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
+        retryEnvelope = nil; widgetDecision = nil; archiveData = nil; importData = nil
+        importPreview = nil; archivePreview = nil; selectedTaskID = nil; selectedTaskIDs = []
+        calendarEvents = []; calendars = []; showReview = false; projectionPending = false
+        feedback = nil; problem = nil
+        defaults.removeObject(forKey: sessionKey)
+    }
+    private func reportCleanup(_ report: LocalSurfaceCleanupReport) async {
+        if report.failures.isEmpty {
+            cleanupProblem = "OS가 이미 표시한 위젯 등은 즉시 사라진다고 보장할 수 없어요. 새로고침을 요청했어요."
+        } else {
+            cleanupProblem = "원본 처리 후 시스템 검색 또는 기기 진단 자료 정리의 일부를 확인하지 못했어요. 이미 렌더링된 OS 화면의 즉시 제거도 보장하지 않아요. 설정에서 다시 확인해 주세요."
+        }
     }
 }
 

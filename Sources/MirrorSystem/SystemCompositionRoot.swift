@@ -115,8 +115,13 @@ public actor SystemServices {
     public func attachCloudMonitor(_ monitor: CloudSyncService) { cloudMonitor = monitor }
 
     public func preferences() async throws -> SystemPreferences {
-        guard let data = try await store.localValue(forKey: "system-preferences-v1") else { return .init() }
-        return try JSONDecoder().decode(SystemPreferences.self, from: data)
+        do {
+            guard let data = try await store.localValue(forKey: "system-preferences-v1") else { return .init() }
+            return try JSONDecoder().decode(SystemPreferences.self, from: data)
+        } catch {
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw SystemServiceError.unavailable
+        }
     }
 
     public func savePreferences(_ preferences: SystemPreferences) async throws {

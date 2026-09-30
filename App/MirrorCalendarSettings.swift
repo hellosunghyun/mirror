@@ -10,7 +10,10 @@ struct MirrorCalendarView: View {
     @State private var selectedDate = Date()
     @State private var weekly = false
     @State private var initialized = false
-    private var localDate: LocalDate? { try? LocalDate.from(selectedDate, timeZone: TimeZone(identifier: model.preferences.timeZoneID) ?? .gmt) }
+    private var localDate: LocalDate? {
+        try? PlanningContext.capture(at: selectedDate, timeZoneID: model.preferences.timeZoneID,
+                                     policyRevision: model.preferences.policyRevision).planningDay
+    }
     private var days: [LocalDate] {
         guard let localDate else { return [] }
         if weekly, let week = try? localDate.mondayWeek() { return (0..<7).compactMap { try? week.startDate.addingDays($0) } }

@@ -13,8 +13,21 @@ def annotation(message):
     print(f'::error::{escaped}')
 
 
+def reported_runs(log):
+    return [{'tests': int(count), 'result': state}
+            for count, state in re.findall(r'Test run with (\d+) tests? (?:in \d+ suites? )?(passed|failed)', log)]
+
+
+def report_runs(log):
+    reports = reported_runs(log)
+    if reports:
+        print('::notice::Swift Testing completion reports: ' + json.dumps(reports))
+
+
 def diagnostics(path):
-    lines = Path(path).read_text(errors='replace').splitlines()
+    log = Path(path).read_text(errors='replace')
+    lines = log.splitlines()
+    report_runs(log)
     relevant = [line for line in lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)
                 and not re.match(r'^\s*[|`~-]', line)]
     unique = list(dict.fromkeys(relevant))
@@ -54,6 +67,7 @@ def main():
         return
     if mode == 'swift':
         log = Path(path).read_text(errors='replace')
+        report_runs(log)
         matches = re.findall(r'Test run with (\d+) tests? (?:in \d+ suites? )?passed', log)
         if not matches:
             raise ValueError('Swift Testing의 실제 완료 결과를 찾지 못했습니다.')

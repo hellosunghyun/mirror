@@ -212,6 +212,45 @@ struct NotificationContractTests {
             review: .init(), closedDays: [], tasks: [], deadlines: [.init(taskID: UUID(), fireAt: fixedInstant.addingTimeInterval(-1))])
         #expect(plan.requests.isEmpty)
     }
+
+    @Test("실제 마감 알림은 계획 변경에 유지되고 완료 후 예약에서 빠진다")
+    func deadlineNotificationSurvivesPlanChange() async throws {
+        let h = try await harness()
+        let original = try #require(try await h.store.snapshot().tasks.first { $0.taskID == h.first })
+        let deadlineVersion = try #require(original.versions[.deadline]?.headsDigest)
+        let deadline = Deadline.day(localDate: try LocalDate("2026-10-01"), timeZoneID: "Asia/Seoul")
+        let saved = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setDeadline(taskID: h.first, deadline: deadline, expectedDeadline: deadlineVersion)), at: fixedInstant)
+        #expect(saved.state == .locallyCommitted)
+        let snapshot = try await h.store.snapshot(), task = try #require(snapshot.tasks.first { $0.taskID == h.first })
+        let fireAt = ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z")!
+        let preferences: [DeadlineNotificationPreference] = [.init(taskID: h.first, fireAt: fireAt)]
+        let before = try NotificationPlanner.plan(context: h.context, workspaceEpoch: "local-v1", now: fixedInstant,
+            review: .init(), closedDays: [], tasks: snapshot.tasks, deadlines: preferences)
+        #expect(before.requests.count == 1)
+        let target = PlanTarget.day(try LocalDate("2026-10-05"))
+        let acknowledgment = DeadlineAcknowledgment(taskID: h.first.uuidString,
+            deadlineRevision: try #require(task.versions[.deadline]?.headsDigest), target: target)
+        let moved = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: h.first, expected: .init(task), acknowledgment: acknowledgment),
+                              target: target, review: nil)), at: fixedInstant)
+        #expect(moved.state == .locallyCommitted)
+        let afterMove = try await h.store.snapshot()
+        let after = try NotificationPlanner.plan(context: h.context, workspaceEpoch: "local-v1", now: fixedInstant,
+            review: .init(), closedDays: [], tasks: afterMove.tasks, deadlines: preferences)
+        #expect(after.requests == before.requests)
+        let movedTask = try #require(afterMove.tasks.first { $0.taskID == h.first })
+        let completed = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .completion(taskID: h.first, desiredCompleted: true,
+                                  expectedStatus: try #require(movedTask.versions[.status]?.headsDigest))), at: fixedInstant)
+        #expect(completed.state == .locallyCommitted)
+        let removed = try NotificationPlanner.plan(context: h.context, workspaceEpoch: "local-v1", now: fixedInstant,
+            review: .init(), closedDays: [], tasks: await h.store.snapshot().tasks, deadlines: preferences)
+        #expect(removed.requests.isEmpty)
+    }
     @Test("기본 진단은 민감 원문 없이 명시 동의된 요약만 내보낸다")
     func metricsConsent() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorMetrics-\(UUID())", isDirectory: true)

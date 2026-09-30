@@ -24,6 +24,7 @@ struct StoredReceipt: Sendable {
 /// 컨테이너는 내부에서만 사용한다. NSManagedObject는 각 perform 밖으로 내보내지 않는다.
 /// unchecked는 Core Data queue 제약에 한정하며 공개 경계는 Sendable DTO다.
 final class CoreDataPersistence: @unchecked Sendable {
+    private static let connections = CoreDataConnectionRegistry()
     private let canonical: NSPersistentContainer
     private let projection: NSPersistentContainer
 
@@ -52,6 +53,8 @@ final class CoreDataPersistence: @unchecked Sendable {
         projection.persistentStoreDescriptions = [storeDescription(url: configuration.directory.appendingPathComponent("LocalProjection.sqlite"))]
         try await load(canonical)
         try await load(projection)
+        connections.register(canonical)
+        connections.register(projection)
         return CoreDataPersistence(canonical: canonical, projection: projection)
     }
 
@@ -110,13 +113,36 @@ final class CoreDataPersistence: @unchecked Sendable {
     }
 
     func destroyLocalStores() async throws {
-        try await Task.detached(priority: .userInitiated) { [canonical, projection] in
-            for container in [canonical, projection] {
+        let stores = [canonical, projection].flatMap { container in
+            container.persistentStoreDescriptions.compactMap { description in
+                description.url.map { ($0, container.managedObjectModel) }
+            }
+        }
+        let openConnections = Self.connections.connections(for: Set(stores.map { $0.0 }))
+        try await Task.detached(priority: .userInitiated) {
+            // 같은 프로세스의 별도 인스턴스도 먼저 닫아 지연 checkpoint의 재생성을 막는다.
+            try autoreleasepool {
+            for container in openConnections {
                 let coordinator = container.persistentStoreCoordinator
-                for store in coordinator.persistentStores {
-                    guard let url = store.url else { continue }
-                    try coordinator.remove(store)
+                for store in coordinator.persistentStores { try coordinator.remove(store) }
+            }
+            for (url, model) in stores {
+                let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+                if FileManager.default.fileExists(atPath: url.path) {
                     try coordinator.destroyPersistentStore(at: url, ofType: NSSQLiteStoreType, options: nil)
+                }
+                for store in coordinator.persistentStores { try coordinator.remove(store) }
+            }
+            }
+            // 공식 API의 임시 store와 autoreleased 연결도 해제한 뒤 물리 파일을 확인한다.
+            for (url, _) in stores {
+                // detach/destroy를 파일 소멸과 같은 것으로 취급하지 않는다.
+                for suffix in ["", "-wal", "-shm", "-journal"] {
+                    let file = URL(fileURLWithPath: url.path + suffix)
+                    if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+                    guard !FileManager.default.fileExists(atPath: file.path) else {
+                        throw StoreError.persistence("삭제할 저장소 파일이 남아 있습니다.")
+                    }
                 }
             }
         }.value
@@ -353,4 +379,36 @@ struct HistoryBatch: Sendable {
     let containsGlobalChanges: Bool
     let cursor: Data?
     let changed: Bool
+}
+
+/// 동일 디렉터리를 여는 별도 actor의 연결도 삭제 전에 닫는다. container 수명은 소유하지 않는다.
+private final class CoreDataConnectionRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [WeakCoreDataConnection] = []
+
+    func register(_ container: NSPersistentContainer) {
+        let urls = Set(container.persistentStoreDescriptions.compactMap(\.url).map(Self.key))
+        lock.withLock {
+            entries.removeAll { $0.container == nil }
+            entries.append(WeakCoreDataConnection(container: container, urls: urls))
+        }
+    }
+
+    func connections(for urls: Set<URL>) -> [NSPersistentContainer] {
+        let keys = Set(urls.map(Self.key))
+        return lock.withLock {
+            entries.removeAll { $0.container == nil }
+            return entries.compactMap { entry in
+                entry.urls.isDisjoint(with: keys) ? nil : entry.container
+            }
+        }
+    }
+
+    private static func key(_ url: URL) -> URL { url.standardizedFileURL.resolvingSymlinksInPath() }
+}
+
+private final class WeakCoreDataConnection {
+    weak var container: NSPersistentContainer?
+    let urls: Set<URL>
+    init(container: NSPersistentContainer, urls: Set<URL>) { self.container = container; self.urls = urls }
 }
