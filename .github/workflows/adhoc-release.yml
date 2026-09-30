@@ -1,0 +1,95 @@
+name: Ad Hoc IPA와 GitHub Release
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 각 push는 독립 빌드다. 재실행은 같은 run ID의 Release를 갱신한다.
+concurrency:
+  group: adhoc-release-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  signing-inputs:
+    name: 서명 Secret 준비 확인
+    if: ${{ github.event.deleted != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 필요한 서명 자료 확인
+        env:
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_ADHOC_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROFILE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import os
+          names = ('IOS_DISTRIBUTION_P12_BASE64', 'IOS_DISTRIBUTION_P12_PASSWORD', 'IOS_ADHOC_PROFILE_BASE64')
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              print('::error::Actions Secret 등록이 필요합니다: ' + ', '.join(missing))
+              raise SystemExit(1)
+          print('서명 Secret 세 개의 등록을 확인했습니다. 실제 자료 일치는 archive 단계에서 검증합니다.')
+          PY
+
+  preparation:
+    name: 원본과 배포 도구 회귀 검증
+    needs: signing-inputs
+    uses: ./.github/workflows/validation.yml
+
+  verification:
+    name: 네 경로 실제 검증
+    needs: signing-inputs
+    uses: ./.github/workflows/swift.yml
+    with:
+      preserve_run: true
+
+  archive:
+    name: Ad Hoc 서명과 IPA 내보내기
+    needs: [preparation, verification]
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+      IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+      IOS_ADHOC_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROFILE_BASE64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 실제 archive·export·서명 검증
+        id: build
+        run: bash scripts/ci-adhoc-archive.sh "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: 게시할 IPA와 검증 정보만 보존
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: adhoc-${{ github.run_id }}
+          path: ${{ steps.build.outputs.publish_dir }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  publish:
+    name: GitHub Release 게시
+    needs: archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: adhoc-${{ github.run_id }}
+          path: ${{ runner.temp }}/mirror-adhoc-release
+      - name: 검증된 IPA를 해당 push의 Release에 게시
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/ci-publish-adhoc.py
+          --publish-dir "$RUNNER_TEMP/mirror-adhoc-release"
+          --commit-sha "$GITHUB_SHA"
+          --run-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID"

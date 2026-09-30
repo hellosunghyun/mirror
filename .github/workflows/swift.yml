@@ -32,13 +32,20 @@ on:
       - 'development-baseline.json'
       - 'postpone-app-docs/fixtures/domain-cases.json'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      preserve_run:
+        description: Ad Hoc 배포 검증에서 각 push의 실행을 보존한다.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: swift-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: swift-${{ github.workflow }}-${{ inputs.preserve_run && github.run_id || github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ !inputs.preserve_run }}
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
@@ -109,6 +116,7 @@ jobs:
             .build/ci-macos/unit-context.json
             .build/ci-macos/ui-summary.json
             .build/ci-macos/ui-tests.json
+            .build/ci-macos/crash-summary.json
             .build/ci-macos/ui.log
             .build/ci-macos/Tests.xcresult
             .build/ci-macos/UI.xcresult
@@ -160,6 +168,7 @@ jobs:
             .build/ci-iphone/unit-context.json
             .build/ci-iphone/ui-summary.json
             .build/ci-iphone/ui-tests.json
+            .build/ci-iphone/crash-summary.json
             .build/ci-iphone/ui.log
             .build/ci-iphone/Tests.xcresult
             .build/ci-iphone/UI.xcresult
@@ -211,6 +220,7 @@ jobs:
             .build/ci-ipad/unit-context.json
             .build/ci-ipad/ui-summary.json
             .build/ci-ipad/ui-tests.json
+            .build/ci-ipad/crash-summary.json
             .build/ci-ipad/ui.log
             .build/ci-ipad/Tests.xcresult
             .build/ci-ipad/UI.xcresult

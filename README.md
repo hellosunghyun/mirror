@@ -22,7 +22,7 @@
 
 2026-09-30 로컬 환경에서 Xcode **27.0 (27A266a)**, Swift **6.4**, iPhoneOS / macOS SDK **27.0**, iOS Simulator runtime **27.0**을 확인했다. 설치된 도구 확인은 앱 빌드나 OS 호환성 검증을 의미하지 않는다. 세부 값은 [development-baseline.json](development-baseline.json)에 기록한다.
 
-원본 문서의 제품명 미정 / `Postpone` 작업명과 iOS·iPadOS 18 / macOS 15 권고보다 **이 저장소의 확정 이름과 OS 기준이 우선한다**. 원본 문서의 기술 제안과 미결정 사항은 사용자 승인 사실로 바꾸지 않는다. 식별자 접두사 `com.baserize`는 사용자 지정값이며, 전체 Bundle ID·App Group과 플랫폼별 구성은 아래 후보를 기준으로 결정한다. iCloud container와 서명 Team은 아직 미정이다.
+원본 문서의 제품명 미정 / `Postpone` 작업명과 iOS·iPadOS 18 / macOS 15 권고보다 **이 저장소의 확정 이름과 OS 기준이 우선한다**. 원본 문서의 기술 제안과 미결정 사항은 사용자 승인 사실로 바꾸지 않는다. 식별자 접두사 `com.baserize`는 사용자 지정값이며, 전체 Bundle ID·App Group과 플랫폼별 구성은 아래 후보를 기준으로 결정한다. iCloud container는 아직 미정이다. Ad Hoc 서명 Team은 제공된 프로파일에서 비공개로 확인하며 실제 배포 인증서와의 일치를 검증한다.
 
 ## UI 구성요소
 
@@ -78,6 +78,8 @@ App Group은 같은 개발팀의 앱·확장이 같은 기기의 저장 공간�
 압축 SHA-256은 `1a1c04c47e408b28bd0120babd4befa31841df9b6238c6211f6ebda79b9f5058`이다. 원본 ZIP은 다운로드 폴더에 보존한다. 원본 자료를 수정해야 한다면 변경된 개발 문서를 별도로 만들고 요구사항 연결을 유지한다.
 
 ## 검증 실행
+
+각 push의 Ad Hoc IPA·GitHub Release 자동화와 필요한 서명 Secret 등록은 [Ad Hoc 배포 안내](docs/ADHOC_RELEASE.md)를 따른다. 사용자 승인에 따른 배포 자동화이며 실제 서명·게시 성공은 Actions 결과로 확인한다.
 
 테스트는 **GitHub Actions 러너에서 실행**한다. [Swift workflow](.github/workflows/swift.yml)는 Xcode 27에서 SwiftPM 도메인·SQLite·시스템 테스트와 macOS·iPhone·iPad 앱/확장 빌드 및 실제 UI 테스트를 실행하고 실제 테스트 수와 현재 실행의 로그·xcresult를 보존한다. 기존 [문서 workflow](.github/workflows/validation.yml)는 Python 준비 검증을 계속 수행한다.
 

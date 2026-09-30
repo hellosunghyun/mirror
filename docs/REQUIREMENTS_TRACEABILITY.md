@@ -4,7 +4,9 @@
 
 ## 1. 현재 증거와 상태
 
-전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. `c94a3522fef4515644a721b1fed8000dba23b5e9`의 [Actions 36763990118](https://github.com/hellosunghyun/mirror/actions/runs/36763990118)에서 SwiftPM의 필수 세 target이 실제 통과했다: Domain 94, Data 24, System 33, 합계 151개다. Xcode 27의 독립 worker 완료 보고 세 개를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다. native 앱·확장 빌드와 unit 명령은 성공했지만 bundle/metadata 결과 형식 검사와 실제 UI 오류로 전체 실행은 실패했다. 후속 수정은 다시 실제 Actions 결과를 확인해야 한다.
+전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. 최신 검증은 `aaa901850f7581216a57358058c3fa4f0fd5b5c4`의 [Actions 36785953557](https://github.com/hellosunghyun/mirror/actions/runs/36785953557)이다. SwiftPM과 Mac의 단위·통합 151개(Domain 94, Data 24, System 33), iPhone·iPad 각각 150개(Domain 94, Data 23, System 33)가 실패·skip 없이 통과했다. 앱·두 확장 빌드와 필수 세 bundle, 개인정보/라이선스/URL 및 실제 App Intents actions 16개 검사도 통과했다. UI는 Mac 1/6, iPhone·iPad 각각 0/6 통과로 native job과 전체 실행이 실패했다. Xcode 27의 독립 worker 완료 보고를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다.
+
+이전 `c94a3522fef4515644a721b1fed8000dba23b5e9`의 [Actions 36763990118](https://github.com/hellosunghyun/mirror/actions/runs/36763990118)은 SwiftPM 151개 통과, native bundle/metadata 형식 검사와 UI 실패의 기록이다. 이때의 파서 문제와 최신 실행의 UI 실패를 구별한다.
 
 이전 날짜 기반 증거는 `74d02286d396c59e860394cdc660d72f5ea6dfa2` 및 Simulator 보완 `fa783ae`, [Actions 36747271079](https://github.com/hellosunghyun/mirror/actions/runs/36747271079)의 네 경로 각각 37개다. 아래 U는 이 순수 날짜 판정의 범위이며 새 저장·UI·확장·동기화나 QA 87개 전체 통과로 확장하지 않는다.
 
@@ -19,13 +21,25 @@
 | 새 부분 증거 | 실제 실행 범위와 남은 조건 |
 |---|---|
 | V1 명령·reducer | `CommandValidationTests`/`ReducerTests`와 기존 날짜 tests, Domain 94개. 원본 digest·그룹별 head·멱등성·충돌·pending·조건부 Undo·20개 원자 배치의 생산 API. 실제 CloudKit 전송은 검사하지 않음 |
-| V2 실제 영속화 | `StoreIntegrationTests`, Data 24개. 실제 SQLite 재시작·원본 후 장애 복구·경쟁 인스턴스·export/import·로컬 삭제·복원·구독 알림. Mac 별도 OS 프로세스 lock 회귀 포함. 두 실제 Core Data writer 프로세스·물리 보호 데이터·migration/대용량 성능은 별도 검증 |
+| V2 실제 영속화 | `StoreIntegrationTests`, SwiftPM/Mac Data 24개, iPhone·iPad Data 23개. 실제 SQLite 재시작·원본 후 장애 복구·경쟁 인스턴스·export/import·로컬 삭제·복원·구독 알림. Mac 별도 OS 프로세스 lock 회귀 포함. 두 실제 Core Data writer 프로세스·물리 보호 데이터·migration/대용량 성능은 별도 검증 |
 | V3 시스템 계약 | `SystemContractTests`/`CloudBoundaryTests`, System 33개. 실제 임시 SQLite의 frozen 카드·receipt/토큰·Today 순서·재정리, 알림 planner·안전 딥링크·로컬 계측·Cloud 상태 구독. unhosted OS adapter의 typed 실패를 확인하며 실제 Widget/Siri/권한/CloudKit 성공으로 대신하지 않음 |
-| V4 native 빌드·구성 | `b0c2fa419036b9d80f5c3b4140676bf02f9910fd`, [Actions 36769033639](https://github.com/hellosunghyun/mirror/actions/runs/36769033639). Mac 151 / iPhone·iPad 각 150개 실제 unit 통과, 앱·두 확장/세 bundle/privacy/라이선스/URL/App Intents 실제 actions 16개 구성 검사 통과. UI는 각 6개 모두 실패하므로 앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
+| V4 native 빌드·구성 | `aaa901850f7581216a57358058c3fa4f0fd5b5c4`, [Actions 36785953557](https://github.com/hellosunghyun/mirror/actions/runs/36785953557). Mac 151 / iPhone·iPad 각 150개 실제 unit 통과, 앱·두 확장/세 bundle/privacy/라이선스/URL/App Intents 실제 actions 16개 구성 검사 통과. UI·앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
+| V5 UI 부분 시나리오 | 같은 실행의 실제 UI tree에 플랫폼별 `Test Case` 6개. Mac 긴 제목 오류/원문 보존 1개 통과·5개 실패, iPhone·iPad 모두 6개 실패. 아래 여섯 메서드의 부분 QA 매핑이며 전체 수용 결과가 아님 |
 
-최신 소스 수정 `542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 GitHub 계정 결제/사용 한도 때문에 모든 job의 실행 단계가 0개다. 새 UI 결과나 IPS는 생성되지 않았으며 해당 수정은 `not_run`으로 유지한다. 계정 복구 후 최신 PR HEAD를 검증하며 위 V4의 통과 근거를 최신 소스나 앱 수용 전체로 확장하지 않는다.
+| UI 메서드 | 원본 QA의 관련 부분 | Mac | iPhone / iPad |
+|---|---|---|---|
+| `testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday` | Q-001/Q-009: 미검토 항목의 Today 제외·명시 오늘 배치와 미완료 유지 | 실패 | 실패 / 실패 |
+| `testTomorrowStaysOutOfTodayAndIsSearchableInLibrary` | Q-008/Q-010 부분: 내일 항목 검색·날짜 보존·Today 제외. Q-008의 다음 달 항목·정리 큐 제외는 미검사 | 실패 | 실패 / 실패 |
+| `testOverlongTitleShowsErrorAndPreservesEveryCharacter` | Q-003: 501자 입력의 오류 안내·원문 보존·정상 입력 복구 | 통과 | 실패 / 실패 |
+| `testWeekPanelCancellationAndPartialFinishPreserveUndecidedPlan` | Q-016/Q-019 부분: 취소 뒤 계획 표시 보존·2개 중 1개 결정. plan 변경 0건의 mutation 기록은 미검사이며 원본 10개/6개 결정/4개 미검토와 구별 | 실패 | 실패 / 실패 |
+| `testExplicitCompletionAndUndoPreserveEditedTitleAndPlan` | Q-032 부분: 완료·Undo의 상태/제목/기존 계획 표시. deadline/history는 미검사. Q-030의 plan Undo와 Q-033의 과거 날짜 완료 취소는 미검사 | 실패 | 실패 / 실패 |
+| `testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday` | Q-029 부분: 직전 배치 Undo의 unassigned 복원·Today 제외. reviewNotBefore는 미검사 | 실패 | 실패 / 실패 |
 
-아래 FR 행의 `코드 추가`는 생산 경로가 작성됐다는 뜻이며 새 통합 코드의 빌드·수용 통과를 뜻하지 않는다. 이전 U 근거는 위 순수 함수에 한정한다. 모든 FR의 앱 수용은 아직 미완료이고, 모든 Q 행의 전체 시나리오는 `not_run`이다. 향후 결과는 실제 full SHA/run/OS/기기/고정 시각/expected/actual/증거/남은 범위와 함께 이 파생 추적표에 갱신한다.
+UI 부분 시나리오는 고정 시각 `2026-09-30T03:00:00Z`와 한국어 UI에서 실행한다. 원본 QA의 모든 precondition/steps·기기 표면을 완료한 결과가 아니므로 Q 행 전체 상태를 `pass`로 바꾸지 않는다. iPhone·iPad IPS는 Mirror의 thread 0 `EXC_CRASH`/`SIGABRT`·NSException/UIKitCore 경로를 보고했으나 4,096바이트에서 잘린 진단으로 예외 사유를 확보하지 못했다. UI 원인은 미확정이며 후속 진단/실행 guard 수정은 다음 Actions에서 검증해야 한다.
+
+이전 소스 `542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 GitHub 계정 결제/사용 한도 때문에 모든 job의 실행 단계가 0개였다. 그 실행은 UI/IPS가 생성되지 않은 당시의 `not_run` 기록이며, 현재는 위 최신 실행의 실제 결과로 구분한다. 과거 실행 차단을 현재 UI 실패의 원인으로 쓰지 않는다.
+
+아래 FR 행의 `코드 추가`는 생산 경로가 작성됐다는 뜻이며 새 통합 코드의 빌드·수용 통과를 뜻하지 않는다. 이전 U 근거는 위 순수 함수에 한정한다. 모든 FR의 앱 수용은 아직 미완료이고, 모든 Q 행의 전체 시나리오는 `not_run`이다. 부분 UI 결과는 V5와 해당 Q 행에 별도로 남긴다. Team은 제공된 Ad Hoc profile에서 확인했지만 `.p12` 개인키는 미제공이고 서명용 3개 Secrets 상태도 API 403으로 미확인이다. profile에는 App Group·iCloud container 권한이 없으며 실제 Apple 등록·서명 IPA 배포·공유 컨테이너와 두 기기 검증은 미완료다. 향후 결과는 실제 full SHA/run/OS/기기/고정 시각/expected/actual/증거/남은 범위와 함께 이 파생 추적표에 갱신한다.
 
 ## 2. FR-001~030
 
@@ -89,25 +103,25 @@ Q-048의 과거 최소 OS 문구는 확정된 최소 **OS 27**의 지원/availab
 
 | QA | 상황·기대 결과 | 관련 FR | 단계 | 필요한 경로 | 현재 전체 결과·부분 단위 |
 |---|---|---|---|---|---|
-| Q-001 | 제목만 입력 — open + unassigned. Today 미포함 | FR-001 | D-03/04/06 | A/UI | not_run; U2 Today 판정만 부분 |
+| Q-001 | 제목만 입력 — open + unassigned. Today 미포함 | FR-001 | D-03/04/06 | A/UI | not_run; U2 Today 판정만 부분, V5 UI 부분 실패 |
 | Q-002 | 공백 제목 — 저장 거부, 입력 유지 | FR-001 | D-03/06 | A/UI | not_run |
-| Q-003 | 길이 초과 — 자동 잘림 없이 안내 | FR-001 | D-03/06 | A/UI | not_run |
+| Q-003 | 길이 초과 — 자동 잘림 없이 안내 | FR-001 | D-03/06 | A/UI | not_run; V5 Mac UI 부분 통과, iPhone·iPad 부분 실패 |
 | Q-004 | 여러 줄 붙여넣기 — 한 개 / 줄마다 선택 전 자동 3개 생성 금지 | FR-001 | D-06 | UI | not_run |
 | Q-005 | 공유 텍스트와 URL — 원문 보존, 네트워크 없는 저장 | FR-002 | D-04/07/13 | A/UI/SYS | not_run |
 | Q-006 | 앱 첫 실행 전 인텐트 — 로컬 저장소 초기화 후 작업 저장 | FR-017 | D-04/07 | A/SYS | not_run |
 | Q-007 | 같은 제목 두 작업 — 서로 다른 작업 ID로 보존 | FR-001 | D-03/04/06 | A/UI | not_run |
-| Q-008 | 미래 작업 검색 — 검색 가능하지만 정리 큐에는 미포함 | FR-003 | D-04/06/11 | A/UI | not_run |
-| Q-009 | 오늘 버튼 — plan만 오늘, 완료 안 됨 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 목적지만 부분 |
-| Q-010 | 내일 버튼 — 10월 1일 day 저장 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 부분 |
+| Q-008 | 미래 작업 검색 — 검색 가능하지만 정리 큐에는 미포함 | FR-003 | D-04/06/11 | A/UI | not_run; V5 검색·Today 제외 UI 부분 실패 |
+| Q-009 | 오늘 버튼 — plan만 오늘, 완료 안 됨 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 목적지만 부분, V5 UI 부분 실패 |
+| Q-010 | 내일 버튼 — 10월 1일 day 저장 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 부분, V5 UI 부분 실패 |
 | Q-011 | 이번 주 날짜 — 정확 날짜 저장, 시간 블록 없음 | FR-007 | D-02/06/08 | A/UI/SYS | not_run; U1 범위만 부분 |
 | Q-012 | 다음 주 날짜 — 10월 6일 day 저장 | FR-007 | D-02/06/08 | A/UI/SYS | not_run; U1 범위만 부분 |
 | Q-013 | 현재 주 요일 나중 — week 상태, 같은 날 다시 질문 안 함 | FR-008 | D-02/03/06/09 | A/UI | not_run; U2 판정만 부분 |
 | Q-014 | 다음 주 요일 나중 — 그 주 월요일 검토 후보, Today 아님 | FR-008 | D-02/03/06/09 | A/UI | not_run; U1/U2 부분 |
 | Q-015 | 기타 날짜 — 같은 taskID에 정확 날짜 저장 | FR-009 | D-05/06/08 | A/UI/SYS | not_run |
-| Q-016 | 패널 뒤로 — plan 변경 0건 | FR-007 | D-05/06/08 | A/UI/SYS | not_run |
+| Q-016 | 패널 뒤로 — plan 변경 0건 | FR-007 | D-05/06/08 | A/UI/SYS | not_run; V5 UI 부분 실패 |
 | Q-017 | 미래 날짜 재노출 — 후보에서 제외 | FR-010 | D-02/03/09 | A/UI | not_run; U2 부분 |
 | Q-018 | 과거 미완료 — 검토 후보, Today 아님 | FR-012 | D-02/03/06 | A/UI | not_run; U2 부분 |
-| Q-019 | 부분 정리 종료 — 미검토 4개 보존, 자동 Today 금지 | FR-011 | D-03/06/09 | A/UI/USER | not_run |
+| Q-019 | 부분 정리 종료 — 미검토 4개 보존, 자동 Today 금지 | FR-011 | D-03/06/09 | A/UI/USER | not_run; V5 두 작업 UI 부분 실패 |
 | Q-020 | 주간 일간 중복 — 주간 하나, 일간 중복 큐 / 알림 없음 | FR-005 | D-03/09/12 | A/UI/SYS | not_run |
 | Q-021 | 새 입력 중간 유입 — 현재 카드 앞에 삽입하지 않음 | FR-004 | D-05/06/09 | A/UI | not_run |
 | Q-022 | 같은 날 재실행 — Today 기본, 자동 재정리 안 함 | FR-004 | D-03/06/09 | A/UI | not_run; U2 closed 판정만 부분 |
@@ -117,10 +131,10 @@ Q-048의 과거 최소 OS 문구는 확정된 최소 **OS 27**의 지원/availab
 | Q-026 | 마감 이후 날짜 — 확인 전 변경 없음 | FR-014 | D-02/03/06/08 | A/UI/SYS | not_run; U3 부분 |
 | Q-027 | 마감 확인 중 변경 — 오래된 확인 token 거부 | FR-014 | D-02/03/06/10 | A/UI/SYS | not_run; U3 바인딩만 부분 |
 | Q-028 | 주 안의 마감 — 화요일 마감 표시, 월요일 자동 배치 안 함 | FR-014 | D-02/03/06/09 | A/UI/USER | not_run; U3 부분 |
-| Q-029 | 단순 Undo — 이전 plan과 reviewNotBefore 복원 | FR-015 | D-03/05/09 | A/UI | not_run |
+| Q-029 | 단순 Undo — 이전 plan과 reviewNotBefore 복원 | FR-015 | D-03/05/09 | A/UI | not_run; V5 unassigned 복원 UI 부분 실패 |
 | Q-030 | 제목 수정 후 Undo — plan만 복원, 새 제목 유지 | FR-015 | D-03/09 | A/UI | not_run |
 | Q-031 | 후속 plan 변경 후 Undo — 영향 plan 버전 불일치로 과거 날짜 덮어쓰기 거부 | FR-015 | D-03/09/10 | A/UI/SYS | not_run |
-| Q-032 | 완료 처리 — status 완료, plan / deadline 이력 유지 | FR-013 | D-03/06/12 | A/UI | not_run |
+| Q-032 | 완료 처리 — status 완료, plan / deadline 이력 유지 | FR-013 | D-03/06/12 | A/UI | not_run; V5 상태·plan 보존 UI 부분 실패 |
 | Q-033 | 완료 취소 — 과거 계획 유지, Today 자동 이월 안 함 | FR-013 | D-02/03/06 | A/UI | not_run; U2 판정만 부분 |
 | Q-034 | 휴지통 복구 — 기존 계획 유지, stale 복구는 거부 | FR-024 | D-03/06/13 | A/UI | not_run |
 | Q-035 | 반복 탭 — 한 결정, 한 작업 변경 | FR-016 | D-03/05/08 | A/SYS | not_run |

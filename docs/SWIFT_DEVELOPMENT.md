@@ -18,7 +18,7 @@
 
 `python3 scripts/generate-xcode-project.py`로 외부 생성기·패키지 의존성 없이 소스 glob 기반 프로젝트를 재생성한다. source/test/extension 파일 추가 후 생성 파일을 함께 커밋한다. Swift compiler는 Xcode 27의 6.4, 언어 모드는 Swift 6, strict concurrency는 complete다. domain/data/system/test 기본 격리는 nonisolated, SwiftUI 앱은 명시 MainActor다.
 
-개발 Bundle ID는 `com.baserize.mirror`와 `com.baserize.mirror.mac` 및 각 호스트의 Widget/Share suffix다. 실제 Team·App Group·iCloud container 값은 미제공이므로 Info.plist의 연결 값은 비어 있고 capability 상태는 configurationRequired다. unsigned CI embedding은 등록·서명·공유 컨테이너 접근 성공을 뜻하지 않는다. 확장은 App Group 없이 별도 로컬 폴더로 fallback하지 않는다.
+개발 Bundle ID는 `com.baserize.mirror`와 `com.baserize.mirror.mac` 및 각 호스트의 Widget/Share suffix다. Team은 사용자가 제공한 Ad Hoc profile에서 확인했지만 `.p12` 개인키는 아직 미제공이다. CI의 서명용 3개 Secrets 상태도 API 403으로 확인되지 않았다. App Group·iCloud container 권한은 제공된 profile에 없으며 Info.plist의 연결 값은 비어 있고 capability 상태는 configurationRequired다. 실제 Apple 등록·서명 IPA 배포는 미검증이다. unsigned CI embedding은 공유 컨테이너 접근 성공을 뜻하지 않는다. 확장은 App Group 없이 별도 로컬 폴더로 fallback하지 않는다. Ad Hoc 자동화의 별도 조건은 [배포 안내](ADHOC_RELEASE.md)를 따른다.
 
 저장 선택·복원·계정/삭제 경계는 [구현 결정 기록](ARCHITECTURE_DECISIONS.md), 전체 범위는 [구현 계획](IMPLEMENTATION_PLAN.md), 부분 증거는 [추적표](REQUIREMENTS_TRACEABILITY.md)를 따른다. SwiftPieces 원본 커밋·라이선스·플랫폼 변경은 [고지](../Sources/MirrorDesign/SwiftPieces/PROVENANCE.md)에 보존한다.
 
@@ -89,7 +89,20 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 같은 실행의 UI 결과는 세 플랫폼 모두 6개 중 0개 통과, 6개 실패다. Mac 실제 AX에서 버튼 선택과 StaticText의 빈 label/표시 value가 관측됐다. iPhone·iPad의 현재 실행 IPS는 Mirror의 `SIGABRT`/Objective-C 예외와 UIKit 경로, UI 러너의 crash-log 대기 중 종료를 보고했다. 이 기록만으로 UIKit 예외의 원인을 특정하지 않는다. 다음 수정은 실제 버튼 역할 우선 조회, label/value 표시 문구 검증, 소유 스크롤 영역 조회 및 UI test tree·예외 세부 구조 진단을 포함한다. 실패를 제거·skip하거나 앱 재실행으로 숨기지 않는다.
 
-`542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 SwiftPM·Mac·iPhone·iPad 모두 실행 단계가 0개다. GitHub annotation은 계정 결제 실패 또는 사용 한도와 `Billing & plans` 확인을 요구했다. [준비 검사 36773091846](https://github.com/hellosunghyun/mirror/actions/runs/36773091846)도 러너 시작 전에 차단됐다. 앱/SDK/테스트를 실행한 실패로 해석하지 않으며, 이 커밋의 AX·마감 편집·예외 진단 수정은 아직 검증되지 않았다. 계정 문제 복구 후 최신 PR HEAD의 두 workflow를 실행하고, 실제 4개 경로와 UI 6개·실패/skip·구성 검사를 확인한다. 결제/비용 설정을 자동 변경하거나 사용자 지정 Actions 검증을 로컬 실행으로 대체하지 않는다.
+이전 커밋 `542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 SwiftPM·Mac·iPhone·iPad 모두 실행 단계가 0개였다. GitHub annotation은 계정 결제 실패 또는 사용 한도와 `Billing & plans` 확인을 요구했고, [준비 검사 36773091846](https://github.com/hellosunghyun/mirror/actions/runs/36773091846)도 러너 시작 전에 차단됐다. 이는 당시의 `not_run` 기록이며 앱/SDK/테스트를 실행한 실패가 아니다. 최신 실행은 아래와 같이 실제 러너에서 수행됐으므로 과거 실행 0개를 현재 현황으로 쓰지 않는다.
+
+최신 검증 커밋 `aaa901850f7581216a57358058c3fa4f0fd5b5c4`의 [Actions 36785953557](https://github.com/hellosunghyun/mirror/actions/runs/36785953557)은 앱·두 확장 빌드와 필수 세 unit/integration bundle, 개인정보/라이선스/URL 및 실제 App Intents metadata 검사를 통과했다. 실제 앱의 `extract.actionsdata`에 `$.actions` 16개가 확인됐다. 단위·통합 검사는 실패·skip 없이 통과했지만 UI 실패로 native job과 전체 실행은 실패했다.
+
+| 경로 | 실제 단위·통합 결과 | 실제 UI 결과 |
+|---|---|---|
+| SwiftPM | Domain 94 + Data 24 + System 33 = 151개 통과 | 해당 없음 |
+| macOS | Domain 94 + Data 24 + System 33 = 151개 통과 | 6개 중 1개 통과, 5개 실패 |
+| iPhone Simulator | Domain 94 + Data 23 + System 33 = 150개 통과 | 6개 중 0개 통과, 6개 실패 |
+| iPad Simulator | Domain 94 + Data 23 + System 33 = 150개 통과 | 6개 중 0개 통과, 6개 실패 |
+
+세 native 플랫폼의 실제 UI tree는 선언된 여섯 메서드를 각각 `Test Case`로 보고했다. Mac에서는 `testOverlongTitleShowsErrorAndPreservesEveryCharacter`만 `Passed`이며 나머지는 `Failed`다. iPhone·iPad에서는 여섯 메서드가 모두 `Failed`다. 이는 [추적표의 UI 부분 매핑](REQUIREMENTS_TRACEABILITY.md#1-현재-증거와-상태)에 해당하며 QA 87개 전체 통과나 실기기 수용을 뜻하지 않는다.
+
+iPhone·iPad의 현재 IPS는 Mirror의 thread 0 `EXC_CRASH`/`SIGABRT`와 `NSException`/UIKitCore 경로, 36개 또는 42개 프레임의 `lastExceptionBacktrace`를 보고했다. 예외 세부 notice가 4,096바이트에서 잘려 사유가 확보되지 않았으므로 UI 원인은 아직 미확정이다. 후속 CI helper의 짧은 notice·safe `crash-summary.json`·현재 Simulator 예외 사유 수집과 baseline/추가 UI 메서드 실행 검사는 다음 Actions에서 검증해야 한다. 최신 [준비 검사 36785947353](https://github.com/hellosunghyun/mirror/actions/runs/36785947353)은 통과했다.
 
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 단위 단계 20분·UI 15분 제한과 실패 로그 진단은 중단 원인을 드러내며 성공 판정을 대신하지 않는다.
 
