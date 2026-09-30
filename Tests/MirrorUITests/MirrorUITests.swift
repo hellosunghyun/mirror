@@ -3,6 +3,8 @@ import XCTest
 /// 실제 UI 입력과 앱의 Core Data 저장 경로를 사용한다. 테스트 전용 성공 응답이나 seed는 없다.
 /// 같은 소스를 iPhone, iPad, Mac UI scheme에서 실행한다.
 final class MirrorUITests: XCTestCase {
+    @MainActor private var lastActionDescription = "없음"
+
     @MainActor
     func testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday() throws {
         let app = try launchApp()
@@ -19,7 +21,7 @@ final class MirrorUITests: XCTestCase {
         try showToday(in: app)
         try activate("today.review", in: app)
         let card = try requireElement("review.card", in: app)
-        XCTAssertEqual(card.label, title)
+        XCTAssertEqual(displayedText(of: card), title)
         try activate("review.today", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
@@ -36,7 +38,7 @@ final class MirrorUITests: XCTestCase {
         let title = "UI tomorrow is searchable"
         try capture(title, in: app)
         try activate("today.review", in: app)
-        XCTAssertEqual(try requireElement("review.card", in: app).label, title)
+        XCTAssertEqual(displayedText(of: try requireElement("review.card", in: app)), title)
         try activate("review.tomorrow", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
@@ -50,7 +52,7 @@ final class MirrorUITests: XCTestCase {
         XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
         XCTAssertTrue(value(of: future).contains("미완료"))
         try interact(with: future, in: app)
-        XCTAssertTrue(try requireElement("detail.plan", in: app).label.contains("10월 1일"))
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
         try activate("detail.close", in: app)
         try showToday(in: app)
         XCTAssertFalse(taskRow(title, in: app).exists, "검색은 미래 계획을 Today로 바꾸지 않는다.")
@@ -86,7 +88,7 @@ final class MirrorUITests: XCTestCase {
         let titles = ["UI partial alpha", "UI partial beta"]
         for title in titles { try capture(title, in: app) }
         try activate("today.review", in: app)
-        let decidedTitle = try requireElement("review.card", in: app).label
+        let decidedTitle = displayedText(of: try requireElement("review.card", in: app))
         XCTAssertTrue(titles.contains(decidedTitle))
         let remainingTitle = try XCTUnwrap(titles.first { $0 != decidedTitle })
 
@@ -105,7 +107,7 @@ final class MirrorUITests: XCTestCase {
         let remaining = try requireRow(remainingTitle, in: app)
         XCTAssertTrue(value(of: remaining).contains("아직 정하지 않음"), "Q-016: 주 패널 취소는 계획을 바꾸지 않는다.")
         try interact(with: remaining, in: app)
-        XCTAssertEqual(try requireElement("detail.plan", in: app).label, "아직 정하지 않음")
+        XCTAssertEqual(displayedText(of: try requireElement("detail.plan", in: app)), "아직 정하지 않음")
     }
 
     @MainActor
@@ -125,15 +127,15 @@ final class MirrorUITests: XCTestCase {
         try replaceText(in: field, with: edited, app: app)
         try activate("detail.save", in: app)
         try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app))
-        XCTAssertTrue(try requireElement("detail.plan", in: app).label.contains("9월 30일"))
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
 
         try activate("task.complete", in: app)
         try waitForLabel("완료 취소 · 다시 열기", element: requireElement("task.complete", in: app))
-        XCTAssertTrue(try requireElement("detail.plan", in: app).label.contains("9월 30일"), "완료는 계획을 지우지 않는다.")
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"), "완료는 계획을 지우지 않는다.")
         try activate("task.undo", in: app)
         try waitForLabel("완료", element: requireElement("task.complete", in: app))
-        XCTAssertEqual(try requireElement("detail.contentTitle", in: app).label, edited)
-        XCTAssertTrue(try requireElement("detail.plan", in: app).label.contains("9월 30일"))
+        XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
         try activate("detail.close", in: app)
         try showToday(in: app)
         let reopened = try requireRow(edited, in: app)
@@ -163,6 +165,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func launchApp() throws -> XCUIApplication {
         continueAfterFailure = false
+        lastActionDescription = "없음"
         let app = XCUIApplication()
         app.launchEnvironment["MIRROR_UI_TESTING"] = "1"
         app.launchEnvironment["MIRROR_TEST_DATE"] = "2026-09-30T03:00:00Z"
@@ -207,8 +210,19 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func element(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
+    private func element(_ identifier: String, in app: XCUIApplication, preferButtons: Bool = false) -> XCUIElement {
         // 오류/Undo가 modal과 상태 표시줄 양쪽에 있으면 실제 활성 modal 요소를 우선한다.
+        // Mac에서는 Button의 ID가 Row/Label에도 전달될 수 있으므로 실제 Button role을 우선한다.
+        if preferButtons {
+            let sheetButtons = app.sheets.firstMatch.buttons.matching(identifier: identifier)
+            if sheetButtons.firstMatch.exists {
+                return sheetButtons.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? sheetButtons.firstMatch
+            }
+            let buttons = app.buttons.matching(identifier: identifier)
+            if buttons.firstMatch.exists {
+                return buttons.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? buttons.firstMatch
+            }
+        }
         let sheetMatches = app.sheets.firstMatch.descendants(matching: .any).matching(identifier: identifier)
         if sheetMatches.firstMatch.exists {
             return sheetMatches.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? sheetMatches.firstMatch
@@ -219,12 +233,13 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func requireElement(_ identifier: String, in app: XCUIApplication, timeout: TimeInterval = 15,
+                                preferButtons: Bool = false,
                                 file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
         guard app.state != .notRunning else {
             XCTFail("앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다: \(identifier). appState=\(app.state.rawValue)", file: file, line: line)
             throw UIHarnessError.applicationNotRunning
         }
-        let found = element(identifier, in: app)
+        let found = element(identifier, in: app, preferButtons: preferButtons)
         guard found.waitForExistence(timeout: timeout) else {
             XCTFail("필수 UI 요소가 없다: \(identifier). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.missingElement(identifier)
@@ -260,7 +275,9 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func activate(_ identifier: String, in app: XCUIApplication,
                           file: StaticString = #filePath, line: UInt = #line) throws {
-        try interact(with: requireElement(identifier, in: app, file: file, line: line), in: app, file: file, line: line)
+        let target = try requireElement(identifier, in: app, preferButtons: true, file: file, line: line)
+        lastActionDescription = describe(target)
+        try interact(with: target, in: app, file: file, line: line)
     }
 
     @MainActor
@@ -276,9 +293,12 @@ final class MirrorUITests: XCTestCase {
                 + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
             let identifier = element.identifier
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
-            let surface = surfaces.first { candidate in
+            guard let surface = surfaces.first(where: { candidate in
                 candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
-            } ?? app
+            }) else {
+                XCTFail("대상 UI를 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
+                throw UIHarnessError.unhittable(identifier)
+            }
             #if os(macOS)
             surface.scroll(byDeltaX: 0, deltaY: -250)
             #else
@@ -324,6 +344,13 @@ final class MirrorUITests: XCTestCase {
     private func value(of element: XCUIElement) -> String { element.value as? String ?? "" }
 
     @MainActor
+    private func displayedText(of element: XCUIElement) -> String {
+        // b0c2fa4 Mac 실제 AX: StaticText는 label="", value=표시 문장으로 노출됐다.
+        // nonempty label을 우선하고 빈 label일 때만 실제 value를 사용한다.
+        element.label.isEmpty ? value(of: element) : element.label
+    }
+
+    @MainActor
     private func waitForValue(_ expected: String, element: XCUIElement) throws {
         let predicate: NSPredicate
         if expected.isEmpty {
@@ -338,7 +365,7 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func waitForLabel(_ expected: String, element: XCUIElement) throws {
-        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: element)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ OR (label == '' AND value == %@)", expected, expected), object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
             XCTFail("표시된 원본 상태가 기대값과 다르다: \(describe(element))")
             throw UIHarnessError.unexpectedValue(element.identifier)
@@ -347,7 +374,7 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func waitForLabelContaining(_ expected: String, element: XCUIElement) throws {
-        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", expected), object: element)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ OR (label == '' AND value CONTAINS %@)", expected, expected), object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
             XCTFail("검증 오류가 기대 내용으로 표시되지 않았다: \(describe(element))")
             throw UIHarnessError.unexpectedValue(element.identifier)
@@ -357,7 +384,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func describe(_ element: XCUIElement) -> String {
         guard element.exists else { return "exists=false" }
-        return "id=\(element.identifier), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), hittable=\(element.isHittable), frame=\(element.frame)"
+        return "id=\(element.identifier), type=\(element.elementType.rawValue), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), hittable=\(element.isHittable), frame=\(element.frame)"
     }
 
     @MainActor
@@ -368,12 +395,14 @@ final class MirrorUITests: XCTestCase {
         }
         // UI 테스트는 이 launch에서 직접 입력한 dummy만 사용한다. 앱 데이터나 로그 파일은 읽지 않는다.
         let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state."]
-        let nodes = app.descendants(matching: .any).allElementsBoundByIndex.filter { candidate in
-            prefixes.contains { candidate.identifier.hasPrefix($0) }
-        }
+        let appIDPredicate = NSCompoundPredicate(orPredicateWithSubpredicates: prefixes.map {
+            NSPredicate(format: "identifier BEGINSWITH %@", $0)
+        })
+        // 테스트 러너의 query에서 ID를 먼저 필터링해 시스템 메뉴를 개별 AX IPC로 조회하지 않는다.
+        let nodes = app.descendants(matching: .any).matching(appIDPredicate).allElementsBoundByIndex
         let sheetNodes = app.sheets.allElementsBoundByIndex.flatMap {
-            $0.descendants(matching: .any).allElementsBoundByIndex
-        }.filter { candidate in prefixes.contains { candidate.identifier.hasPrefix($0) } }
+            $0.descendants(matching: .any).matching(appIDPredicate).allElementsBoundByIndex
+        }
         let errors = nodes.filter { $0.identifier == "state.error" }.sorted { $0.isHittable && !$1.isHittable }
         let modalNodes = nodes.filter { candidate in
             candidate.identifier.hasPrefix("review.") || candidate.identifier.hasPrefix("plan.")
@@ -390,7 +419,7 @@ final class MirrorUITests: XCTestCase {
                 guard seen.insert(key).inserted else { continue }
                 let label = node.label.replacingOccurrences(of: "\n", with: " ").prefix(50)
                 let current = value(of: node).replacingOccurrences(of: "\n", with: " ").prefix(35)
-                lines.append("\(node.identifier): label=\(label), value=\(current), e=\(node.isEnabled), h=\(node.isHittable)")
+                lines.append("\(node.identifier): type=\(node.elementType.rawValue), label=\(label), value=\(current), e=\(node.isEnabled), h=\(node.isHittable)")
                 added += 1
             }
         }
@@ -398,8 +427,8 @@ final class MirrorUITests: XCTestCase {
         append(errors, limit: 2)
         append(sheetNodes + modalNodes, limit: 7)
         append(nodes, limit: 5)
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), sheets=\(app.sheets.count); "
-        return header + String(lines.joined(separator: "; ").prefix(1400))
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), sheets=\(app.sheets.count), lastAction={\(lastActionDescription)}; "
+        return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }
 

@@ -52,6 +52,80 @@ def report_body(text):
     return body
 
 
+def frame_summary(frame, images, position):
+    image_index = frame.get('imageIndex')
+    binary = None
+    if isinstance(image_index, int) and not isinstance(image_index, bool) and 0 <= image_index < len(images):
+        image = images[image_index]
+        if isinstance(image, dict):
+            name = image.get('name')
+            if not isinstance(name, str) and isinstance(image.get('path'), str):
+                name = Path(image['path']).name
+            binary = safe_label(name, limit=120)
+    offset = frame.get('imageOffset')
+    return {'frameIndex': position,
+            'imageIndex': image_index if isinstance(image_index, int) and not isinstance(image_index, bool) else None,
+            'imageOffset': offset if isinstance(offset, int) and not isinstance(offset, bool) else None,
+            'binary': binary, 'symbol': safe_label(frame.get('symbol'))}
+
+
+def sanitized_reason(value):
+    # SDK 문구 중 object description/따옴표 내용/입력값은 제거한다. 원문은 보존·출력하지 않는다.
+    value = re.sub(r'<[^>]*>', '<object>', value)
+    value = re.sub(r'[A-Za-z][A-Za-z0-9+.-]*://[^\s]+|\bwww\.[^\s]+', '<url>', value)
+    value = re.sub(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b', '<account>', value)
+    value = re.sub(r'(?:[A-Za-z]:\\|/)[^\s,;)]*', '<path>', value)
+    value = re.sub(r'\b[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\b|\b0x[0-9A-Fa-f]+\b', '<identifier>', value)
+    value = re.sub(r"(['\"])(.*?)(?<!\\)\1", '<quoted-text>', value)
+    value = re.sub(r'(?i)\b(title|text|input|query|account|username|userInfo|email|name|value|task)\s*[:=]\s*[^,;\n]*', r'\1=<input>', value)
+    value = re.sub(r'[^\x20-\x7E]+', '<text>', value)
+    value = re.sub(r'\b\d{7,}\b', '<number>', value)
+    value = ' '.join(value.split())
+    return value[:1000] + (' [truncated]' if len(value) > 1000 else '')
+
+
+def exception_reason(body, exception):
+    sources = {key: body[key] for key in ('applicationSpecificInformation', 'asi') if key in body}
+    candidates = []
+    for container, name in ((body, '$'), (exception, '$.exception')):
+        for key in ('reason', 'exceptionReason'):
+            if isinstance(container.get(key), str):
+                candidates.append((name + '.' + key, container[key]))
+    strings = []
+
+    def visit(value, source, depth=0):
+        if depth > 8 or len(strings) >= 32:
+            return
+        if isinstance(value, str):
+            strings.append((source, value[:16000]))
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child, source, depth + 1)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, source, depth + 1)
+
+    for key, value in sources.items():
+        visit(value, key)
+    name = None
+    for source, text in strings:
+        match = re.search(r"uncaught exception\s+['\"]([A-Za-z0-9_]+Exception)['\"]", text, re.I)
+        if match and name is None:
+            name = safe_label(match.group(1), limit=120)
+        match = re.search(r'\breason\s*:\s*(.+)', text, re.I | re.S)
+        if match:
+            reason = match.group(1).strip()
+            if len(reason) >= 2 and reason[0] in ('\"', "'") and reason[-1] == reason[0]:
+                reason = reason[1:-1]
+            candidates.append((source, reason))
+    if not candidates:
+        return {'status': 'absent', 'name': name, 'reason': None,
+                'sourceStructures': {key: {'valueType': type(value).__name__,
+                    'keys': [safe_label(key, limit=120) for key in list(value)[:16]] if isinstance(value, dict) else []} for key, value in sources.items()}}
+    source, reason = candidates[0]
+    return {'status': 'present', 'name': name, 'source': source, 'reason': sanitized_reason(reason)}
+
+
 def structural_report(path, body):
     exception = body.get('exception')
     termination = body.get('termination')
@@ -72,27 +146,31 @@ def structural_report(path, body):
     for position, frame in enumerate(frames if isinstance(frames, list) else []):
         if not isinstance(frame, dict):
             continue
-        image_index = frame.get('imageIndex')
-        binary = None
-        if isinstance(image_index, int) and not isinstance(image_index, bool) and 0 <= image_index < len(images):
-            image = images[image_index]
-            if isinstance(image, dict):
-                name = image.get('name')
-                if not isinstance(name, str) and isinstance(image.get('path'), str):
-                    name = Path(image['path']).name
-                binary = safe_label(name, limit=120)
-        details = {'frameIndex': position,
-                   'imageIndex': image_index if isinstance(image_index, int) and not isinstance(image_index, bool) else None,
-                   'binary': binary, 'symbol': safe_label(frame.get('symbol'))}
+        details = frame_summary(frame, images, position)
+        binary = details['binary']
         if position < 15:
             result_frames.append(details)
         elif binary in ('Mirror', 'Mirror.debug.dylib') and len(additional_app_frames) < 8:
             additional_app_frames.append(details)
+    last = body.get('lastExceptionBacktrace')
+    if isinstance(last, list):
+        last_frames = last
+    elif isinstance(last, dict) and isinstance(last.get('frames'), list):
+        last_frames = last['frames']
+    else:
+        last_frames = []
+    last_summary = {'status': 'absent' if last is None else 'present',
+                    'valueType': type(last).__name__, 'totalFrameCount': len(last_frames),
+                    'keys': [safe_label(key, limit=120) for key in list(last)[:16]] if isinstance(last, dict) else [],
+                    'frames': [frame_summary(frame, images, position) for position, frame in enumerate(last_frames[:24])
+                               if isinstance(frame, dict)]}
     return {'file': safe_label(path.name, limit=160), 'process': safe_label(body.get('procName'), limit=120),
             'exception': {'type': safe_label(exception.get('type')), 'signal': safe_label(exception.get('signal'))},
             'termination': {key: safe_label(termination.get(key)) for key in ('namespace', 'code', 'indicator')},
             'faultingThread': index, 'frames': result_frames,
-            'additionalAppFrames': additional_app_frames}
+            'additionalAppFrames': additional_app_frames,
+            'bodyStructure': {safe_label(key, limit=120): type(value).__name__ for key, value in list(body.items())[:48]},
+            'lastExceptionBacktrace': last_summary, 'exceptionReason': exception_reason(body, exception)}
 
 
 def main():
@@ -143,7 +221,7 @@ def main():
         except (OSError, UnicodeError, ValueError):
             unreadable += 1
     status = 'reportsFound' if reports else 'noCurrentMirrorReports'
-    # 하나의 큰 annotation으로 여러 stack을 합치지 않는다. 각 report도 상위 15 frame만 있다.
+    # 하나의 큰 annotation으로 여러 stack을 합치지 않는다. 각 stack도 제한된 frame만 출력한다.
     for report in reports:
         notice({'status': 'reportFound', **report})
     notice({'status': status, 'reportCount': len(reports), 'unreadableReports': unreadable,

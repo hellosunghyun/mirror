@@ -85,6 +85,10 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 같은 실행에서 UI 검사도 수행했지만 Mac의 필수 요소 접근·오류 문구와 iPhone·iPad의 앱 종료/연결 끊김으로 실패했다. native 전체 통과로 기록하지 않는다. 실제 관측 형식에 맞춘 파서 수정, 정리 버튼 hit 영역·오류 AX 라벨과 비동기 UI 대기/진단을 다음 검증에 포함한다.
 
+`b0c2fa419036b9d80f5c3b4140676bf02f9910fd`의 [Actions 36769033639](https://github.com/hellosunghyun/mirror/actions/runs/36769033639)에서 앱·두 확장 빌드, 필수 세 unit bundle, 개인정보/라이선스/URL 설정, 실제 App Intents metadata 검사가 모두 통과했다. App Intents의 `extract.actionsdata`는 실제 `$.actions` 16개를 포함했다. SwiftPM 151개, Mac 151개, iPhone·iPad 각각 150개의 단위·통합 검사가 실패·skip 없이 통과했다. iOS는 Mac 전용 별도 OS 프로세스 lock 검사 한 개를 포함하지 않는다.
+
+같은 실행의 UI 결과는 세 플랫폼 모두 6개 중 0개 통과, 6개 실패다. Mac 실제 AX에서 버튼 선택과 StaticText의 빈 label/표시 value가 관측됐다. iPhone·iPad의 현재 실행 IPS는 Mirror의 `SIGABRT`/Objective-C 예외와 UIKit 경로, UI 러너의 crash-log 대기 중 종료를 보고했다. 이 기록만으로 UIKit 예외의 원인을 특정하지 않는다. 다음 수정은 실제 버튼 역할 우선 조회, label/value 표시 문구 검증, 소유 스크롤 영역 조회 및 UI test tree·예외 세부 구조 진단을 포함한다. 실패를 제거·skip하거나 앱 재실행으로 숨기지 않는다.
+
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 단위 단계 20분·UI 15분 제한과 실패 로그 진단은 중단 원인을 드러내며 성공 판정을 대신하지 않는다.
 
 실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다. 개발용 AppIcon과 unsigned CI packaging 결과도 Apple 등록·배포 준비 완료를 뜻하지 않는다.

@@ -92,6 +92,41 @@ def main():
             record(unit + ui, unit, ui)
         else:
             record(unit)
+    elif mode == 'ui-tree':
+        # 실제 SDK test tree의 이름/결과 형식을 관측한다. 아직 guard에 추정 형식을 쓰지 않는다.
+        nodes = json.loads(Path(path).read_text())
+        node_types = {}
+        methods = []
+
+        def result_structure(value):
+            if isinstance(value, str):
+                return value if re.fullmatch(r'[A-Za-z _-]{1,64}', value) else {'valueType': 'string'}
+            if value is None or isinstance(value, (bool, int, float)):
+                return value
+            return {'valueType': type(value).__name__, 'keys': list(value)[:16] if isinstance(value, dict) else []}
+
+        def visit_ui(node):
+            if isinstance(node, dict):
+                node_type = node.get('nodeType')
+                if isinstance(node_type, str):
+                    node_types[node_type] = node_types.get(node_type, 0) + 1
+                name = node.get('name')
+                match = re.search(r'\b(test[A-Za-z0-9_]+)\b', name) if isinstance(name, str) else None
+                if match and len(methods) < 64:
+                    methods.append({'method': match.group(1), 'nodeType': node_type,
+                                    'result': result_structure(node.get('result')),
+                                    'keys': list(node)[:16]})
+                for value in node.values():
+                    visit_ui(value)
+            elif isinstance(node, list):
+                for value in node:
+                    visit_ui(value)
+
+        visit_ui(nodes)
+        print('::notice::UI test structure: ' + json.dumps({
+            'rootKeys': list(nodes)[:16] if isinstance(nodes, dict) else [],
+            'nodeTypes': node_types, 'methods': methods,
+        }, ensure_ascii=False))
     elif mode == 'bundles':
         if not additional_paths:
             raise ValueError('필수 테스트 bundle 목록이 있어야 합니다.')

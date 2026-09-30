@@ -583,6 +583,7 @@ struct MirrorDeadlineEditor: View {
     @State private var alarm = false
     @State private var alarmAt = Date()
     @State private var deadlineTimeZoneID: String?
+    @State private var editingSnapshot: TaskProjection?
     private var editorTimeZoneID: String { deadlineTimeZoneID ?? model.preferences.timeZoneID }
     var body: some View {
         NavigationStack {
@@ -593,27 +594,43 @@ struct MirrorDeadlineEditor: View {
                 Text("마감 시간대: \(editorTimeZoneID)").font(.caption)
                 Toggle("이 기기에서 이 작업의 실제 마감 알림", isOn: $alarm)
                 if alarm { DatePicker("알림을 받을 시각", selection: $alarmAt, displayedComponents: [.date, .hourAndMinute]) }
+                if let original = editingSnapshot,
+                   original.taskID != task.taskID || original.versions[.deadline]?.headsDigest != task.versions[.deadline]?.headsDigest {
+                    Text("편집을 시작한 뒤 작업이나 실제 마감이 바뀌었어요. 입력한 값은 유지했어요. 취소하고 최신 마감을 확인한 뒤 다시 편집하세요.").font(.callout)
+                }
+                if let problem = model.problem {
+                    Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
+                }
                 Button("실제 마감 저장") {
+                    guard let original = editingSnapshot, original.taskID == task.taskID else { return }
+                    let submittedDate = date
+                    let submittedZone = editorTimeZoneID
+                    let submittedPrecise = precise
+                    let submittedAlarm = alarm
+                    let submittedAlarmAt = alarmAt
                     Task {
                         let deadline: Deadline
-                        if precise { deadline = .instant(utcTimestamp: date, displayTimeZoneID: editorTimeZoneID) }
+                        if submittedPrecise { deadline = .instant(utcTimestamp: submittedDate, displayTimeZoneID: submittedZone) }
                         else {
-                            guard let value = try? PlanningContext.capture(at: date, timeZoneID: editorTimeZoneID,
+                            guard let value = try? PlanningContext.capture(at: submittedDate, timeZoneID: submittedZone,
                                                                           policyRevision: model.preferences.policyRevision).planningDay else { return }
-                            deadline = .day(localDate: value, timeZoneID: editorTimeZoneID)
+                            deadline = .day(localDate: value, timeZoneID: submittedZone)
                         }
-                        await model.setDeadline(task, deadline: deadline)
-                        if model.problem == nil {
-                            if alarm { await model.enableNotifications(review: model.preferences.reviewNotifications, deadlines: true) }
-                            model.setDeadlineAlarm(task, fireAt: alarm ? alarmAt : nil)
-                            if model.problem == nil { dismiss() }
-                        }
+                        guard await model.setDeadline(original, deadline: deadline) else { return }
+                        if submittedAlarm { await model.enableNotifications(review: model.preferences.reviewNotifications, deadlines: true) }
+                        model.setDeadlineAlarm(original, fireAt: submittedAlarm ? submittedAlarmAt : nil)
+                        if model.problem == nil { dismiss() }
                     }
-                }.disabled(model.isSaving)
+                }.disabled(model.isSaving || model.projectionPending || editingSnapshot?.taskID != task.taskID)
+                if model.projectionPending {
+                    Button("저장 결과 다시 확인") { Task { await model.retry() } }
+                }
             }.navigationTitle("실제 마감")
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } } }
                 .environment(\.timeZone, TimeZone(identifier: editorTimeZoneID) ?? .gmt)
                 .onAppear {
+                    guard editingSnapshot == nil else { return }
+                    editingSnapshot = task
                     switch task.deadline {
                     case let .day(day, zone): deadlineTimeZoneID = zone; date = AppDate.instant(day, zone: zone) ?? model.now
                     case let .instant(instant, zone): deadlineTimeZoneID = zone; date = instant; precise = true

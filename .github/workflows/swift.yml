@@ -91,6 +91,11 @@ jobs:
               python3 scripts/ci_results.py diagnostics "$log"
             fi
           done
+          if test -d .build/ci-macos/UI.xcresult; then
+            if xcrun xcresulttool get test-results tests --path .build/ci-macos/UI.xcresult > .build/ci-macos/ui-tests.json; then
+              python3 scripts/ci_results.py ui-tree .build/ci-macos/ui-tests.json || true
+            fi
+          fi
           python3 scripts/ci-crash.py macos .build/ci-macos || true
       - name: 현재 실행의 결과 보존
         if: always()
@@ -103,6 +108,7 @@ jobs:
             .build/ci-macos/tests.json
             .build/ci-macos/unit-context.json
             .build/ci-macos/ui-summary.json
+            .build/ci-macos/ui-tests.json
             .build/ci-macos/ui.log
             .build/ci-macos/Tests.xcresult
             .build/ci-macos/UI.xcresult
@@ -136,6 +142,11 @@ jobs:
               python3 scripts/ci_results.py diagnostics "$log"
             fi
           done
+          if test -d .build/ci-iphone/UI.xcresult; then
+            if xcrun xcresulttool get test-results tests --path .build/ci-iphone/UI.xcresult > .build/ci-iphone/ui-tests.json; then
+              python3 scripts/ci_results.py ui-tree .build/ci-iphone/ui-tests.json || true
+            fi
+          fi
           python3 scripts/ci-crash.py iphone .build/ci-iphone || true
       - name: 현재 실행의 결과 보존
         if: always()
@@ -148,6 +159,7 @@ jobs:
             .build/ci-iphone/tests.json
             .build/ci-iphone/unit-context.json
             .build/ci-iphone/ui-summary.json
+            .build/ci-iphone/ui-tests.json
             .build/ci-iphone/ui.log
             .build/ci-iphone/Tests.xcresult
             .build/ci-iphone/UI.xcresult
@@ -181,6 +193,11 @@ jobs:
               python3 scripts/ci_results.py diagnostics "$log"
             fi
           done
+          if test -d .build/ci-ipad/UI.xcresult; then
+            if xcrun xcresulttool get test-results tests --path .build/ci-ipad/UI.xcresult > .build/ci-ipad/ui-tests.json; then
+              python3 scripts/ci_results.py ui-tree .build/ci-ipad/ui-tests.json || true
+            fi
+          fi
           python3 scripts/ci-crash.py ipad .build/ci-ipad || true
       - name: 현재 실행의 결과 보존
         if: always()
@@ -193,6 +210,7 @@ jobs:
             .build/ci-ipad/tests.json
             .build/ci-ipad/unit-context.json
             .build/ci-ipad/ui-summary.json
+            .build/ci-ipad/ui-tests.json
             .build/ci-ipad/ui.log
             .build/ci-ipad/Tests.xcresult
             .build/ci-ipad/UI.xcresult

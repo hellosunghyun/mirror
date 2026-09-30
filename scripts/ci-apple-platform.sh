@@ -169,6 +169,8 @@ if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Deb
   -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
   ci_phase='UI 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
+  xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"
+  python3 scripts/ci_results.py ui-tree "$result_dir/ui-tests.json"
   ci_phase='단위·통합·UI 실제 결과 검증'
   python3 scripts/ci_results.py xcode "$result_dir/summary.json" "$result_dir/ui-summary.json"
   # all 호출은 이전과 같이 독립 검증 실패를 최종 상태에 보존한다.
@@ -184,6 +186,9 @@ else
   # 실패한 UI 실행도 실제 수와 실패/skip을 남긴다. underlying xcodebuild 실패는 그대로 반환한다.
   if xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"; then
     python3 scripts/ci_results.py xcode "$result_dir/summary.json" "$result_dir/ui-summary.json" || true
+  fi
+  if xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"; then
+    python3 scripts/ci_results.py ui-tree "$result_dir/ui-tests.json" || true
   fi
   exit "$test_status"
 fi

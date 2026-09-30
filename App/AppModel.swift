@@ -393,10 +393,11 @@ final class AppModel {
         _ = await submit(.restore(taskID: task.taskID, observedDeleteHeadIDs: version.headIDs,
                                   expectedStatus: version.headsDigest), success: "원래 계획으로 복구했어요.")
     }
-    func setDeadline(_ task: TaskProjection, deadline: Deadline?) async {
-        guard let digest = task.versions[.deadline]?.headsDigest else { return }
-        _ = await submit(.setDeadline(taskID: task.taskID, deadline: deadline, expectedDeadline: digest),
-                         success: deadline == nil ? "실제 마감을 지웠어요. 계획은 유지했어요." : "실제 마감을 저장했어요. 계획은 유지했어요.")
+    @discardableResult
+    func setDeadline(_ task: TaskProjection, deadline: Deadline?) async -> Bool {
+        guard let digest = task.versions[.deadline]?.headsDigest else { return false }
+        return await submit(.setDeadline(taskID: task.taskID, deadline: deadline, expectedDeadline: digest),
+                            success: deadline == nil ? "실제 마감을 지웠어요. 계획은 유지했어요." : "실제 마감을 저장했어요. 계획은 유지했어요.")
     }
 
     func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil,
