@@ -16,7 +16,7 @@
 - 이름의 의미를 설명해야 할 때만 **‘미뤄’를 표현한 이름**이라고 설명한다. 일반적인 앱 이름 표기는 `미러`를 사용한다.
 - 개발 및 최소 배포 기준: **iOS 27.0 / iPadOS 27.0 / macOS 27.0**.
 - UI 구성요소: 사용자 지정 **[SwiftPieces](https://github.com/Saivion/SwiftPieces)**를 사용한다. 적용 방식과 검증 기준은 아래 UI 항목을 따른다.
-- GitHub 저장소: **hellosunghyun/mirror**, **private**.
+- GitHub 저장소: **hellosunghyun/mirror**. 사용자가 **public 전환을 승인했다**. 실제 공개 범위와 전환 상태는 [development-baseline.json](development-baseline.json)에 기록한다.
 - 테스트코드를 적극 활용한다. 날짜·도메인·명령 규칙은 테스트부터 작성하고, 버그 수정에는 재현 회귀 테스트를 함께 추가한다.
 - 제품 요구사항 30개와 QA 명세 87개를 유지하며 단계별로 구현한다. 준비 작업에서 범위를 축소하거나 저장 구조를 새로 확정하지 않는다.
 
