@@ -6,6 +6,7 @@ import SwiftUI
 struct MirrorRootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -99,7 +100,8 @@ struct MirrorRootView: View {
                 if let systemProblem = model.systemProblem { Text(systemProblem).font(.caption).foregroundStyle(.secondary) }
                 if model.lastUndo != nil { Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo") }
                 Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
-            }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.bar)
+            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.bar))
         }
     }
     private var detailSheet: Binding<MirrorDetailRequest?> {

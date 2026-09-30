@@ -250,8 +250,9 @@ public actor CloudSyncService {
                   CloudSyncPolicy.accountMatches(expected: expected, observed: account) else {
                 await handleAccountChanged(); return nil
             }
-            guard generation == ticket, optedIn else { return nil }
+            guard generation == ticket, optedIn, Self.identityMatches(identity) else { return nil }
             let config = await cloud.configuration
+            guard generation == ticket, optedIn else { return nil }
             // 새 확장 프로세스가 이전 로컬 writer를 열지 않게 전환 상태를 먼저 공유한다.
             try Self.write(ActiveCloudPointer(version: 1, optedIn: true, transitionRequired: true,
                 containerIdentifier: containerID, accountFingerprint: expected, identityTokenArchive: identity,
@@ -261,6 +262,7 @@ public actor CloudSyncService {
                 // 마지막 원본 export와 writer 중지는 하나의 저장 게이트 경계에서 수행한다.
                 let latest = try await local.exportAndSuspend(exportedAt: instant)
                 let sourceConfiguration = await local.configuration
+                guard generation == ticket, optedIn else { return nil }
                 if sourceConfiguration.workspaceEpoch == config.workspaceEpoch {
                     // 미리 보기가 비어 있었어도 그 이후 입력을 모두 병합한다.
                     _ = try await cloud.importArchive(latest, consent: ArchiveImportConsent(accountChangeConfirmed: true))

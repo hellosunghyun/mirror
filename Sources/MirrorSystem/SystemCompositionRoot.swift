@@ -71,7 +71,18 @@ private actor ProcessServicesRegistry {
         if let task = roots[key] { return try await task.value }
         let task = Task {
             let store = try await MirrorStore(configuration: configuration)
-            return SystemServices(store: store, directory: configuration.directory, workspaceEpoch: configuration.workspaceEpoch)
+            let services = SystemServices(store: store, directory: configuration.directory, workspaceEpoch: configuration.workspaceEpoch)
+            if let sync = configuration.cloudSync {
+                let group = (Bundle.main.object(forInfoDictionaryKey: "MirrorAppGroupIdentifier") as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let group, !group.isEmpty else { throw SystemServiceError.configurationRequired }
+                let monitor = CloudSyncService(localConfiguration: configuration,
+                    setup: .init(containerIdentifier: sync.containerIdentifier, appGroupIdentifier: group,
+                                 workspaceEpoch: configuration.workspaceEpoch))
+                try await monitor.resumeActiveStore(active: store)
+                await services.attachCloudMonitor(monitor)
+            }
+            return services
         }
         roots[key] = task
         do { return try await task.value }
@@ -92,6 +103,7 @@ public actor SystemServices {
     public let spotlight: SpotlightService
     public let metrics: LocalMetrics
     public let widget: WidgetReviewService
+    private var cloudMonitor: CloudSyncService?
 
     public init(store: MirrorStore, directory: URL, workspaceEpoch: String) {
         self.store = store; self.directory = directory; self.workspaceEpoch = workspaceEpoch
@@ -99,6 +111,8 @@ public actor SystemServices {
         metrics = LocalMetrics(directory: directory)
         widget = WidgetReviewService(store: store, directory: directory, workspaceEpoch: workspaceEpoch)
     }
+
+    public func attachCloudMonitor(_ monitor: CloudSyncService) { cloudMonitor = monitor }
 
     public func preferences() async throws -> SystemPreferences {
         guard let data = try await store.localValue(forKey: "system-preferences-v1") else { return .init() }
@@ -116,8 +130,23 @@ public actor SystemServices {
         WidgetReload.request()
     }
 
+    /// 로컬 원본 삭제/공간 교체 후 호출한다. 실패한 후처리를 숨기지 않으며 모든 표면에 시도한다.
+    public func eraseLocalSurfaceData() async -> LocalSurfaceCleanupReport {
+        var failures: Set<LocalSurfaceCleanupFailure> = []
+        do { try await spotlight.removeAll() } catch { failures.insert(.spotlight) }
+        await notifications.clearAll()
+        await calendar.clearCache()
+        do { try await metrics.erase() } catch { failures.insert(.diagnostics) }
+        await SystemCompositionRoot.invalidate(directory: directory)
+        WidgetReload.request()
+        return .init(failures: failures, widgetReloadRequested: true)
+    }
+
     public func currentContext(at date: Date = Date()) async throws -> PlanningContext {
-        do { return try await store.currentContext(at: date) }
+        do {
+            try await validateBoundary()
+            return try await store.currentContext(at: date)
+        }
         catch {
             if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
             throw error
@@ -125,7 +154,10 @@ public actor SystemServices {
     }
 
     public func tasks() async throws -> [TaskProjection] {
-        do { return try await store.snapshot().tasks }
+        do {
+            try await validateBoundary()
+            return try await store.snapshot().tasks
+        }
         catch {
             if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
             throw error
@@ -195,5 +227,34 @@ public actor SystemServices {
         let task = try await task(id)
         guard let status = task.versions[.status]?.headsDigest else { throw SystemServiceError.unavailable }
         return try await execute(.completion(taskID: id, desiredCompleted: completed, expectedStatus: status), source: source)
+    }
+
+    private func validateBoundary() async throws {
+        if let cloudMonitor {
+            guard await cloudMonitor.validateLocalIdentity() else { throw SystemServiceError.accountTransitionRequired }
+        } else { try await SystemStoreBoundary.validate(store) }
+    }
+}
+
+enum SystemStoreBoundary {
+    static func validate(_ store: MirrorStore) async throws {
+        let configuration = store.configuration
+        guard let sync = configuration.cloudSync else { return }
+        let group = (Bundle.main.object(forInfoDictionaryKey: "MirrorAppGroupIdentifier") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let group, !group.isEmpty else { throw SystemServiceError.configurationRequired }
+        do {
+            guard let current = try await CloudSyncService.resolveActiveConfiguration(appGroupIdentifier: group,
+                deviceID: configuration.deviceID, expectedContainerIdentifier: sync.containerIdentifier),
+                  current.cloudSync?.accountScope == sync.accountScope,
+                  current.workspaceEpoch == configuration.workspaceEpoch,
+                  current.directory.standardizedFileURL == configuration.directory.standardizedFileURL else {
+                throw SystemServiceError.accountTransitionRequired
+            }
+        } catch {
+            try? await store.suspend()
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw SystemServiceError.accountTransitionRequired
+        }
     }
 }

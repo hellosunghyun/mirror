@@ -58,11 +58,13 @@ public actor WidgetReviewService {
     }
 
     public func snapshot(scopeKey: String = "default", at now: Date = Date()) async throws -> WidgetReviewState {
+        try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
         return try await locked(scopeKey) { [self] in try await loadAndRefresh(scopeKey: scopeKey, now: now) }
     }
 
     public func startReview(scopeKey: String = "default", todayOnly: Bool = false, at now: Date = Date()) async throws -> WidgetReviewState {
+        try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
         return try await locked(scopeKey) { [self] in
             try await store.setLocalValue(nil, forKey: localKey(scopeKey))
@@ -72,6 +74,7 @@ public actor WidgetReviewService {
 
     public func showPanel(scopeKey: String, cardID: UUID, expectedPanelVersion: Int,
                           panel: WidgetDatePanel, at now: Date = Date()) async throws {
+        try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
         try await locked(scopeKey) { [self] in
             var state = try await loadAndRefresh(scopeKey: scopeKey, now: now)
@@ -88,6 +91,7 @@ public actor WidgetReviewService {
     public func commit(scopeKey: String, sessionID: UUID, card: WidgetCard,
                        target: PlanTarget, acknowledgment: DeadlineAcknowledgment? = nil,
                        at now: Date = Date()) async throws -> CommandResult {
+        try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
         let start = ContinuousClock.now
         let result = try await locked(scopeKey) { [self] in
@@ -149,6 +153,7 @@ public actor WidgetReviewService {
     }
 
     public func finish(scopeKey: String, sessionID: UUID, at now: Date = Date()) async throws -> CommandResult {
+        try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
         let result = try await locked(scopeKey) { [self] in
             let state = try await loadAndRefresh(scopeKey: scopeKey, now: now)
@@ -161,6 +166,7 @@ public actor WidgetReviewService {
 
     public func undo(scopeKey: String, operationID: String, expected: [TaskVersionExpectation],
                      at now: Date = Date()) async throws -> CommandResult {
+        try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
         let result = try await locked(scopeKey) { [self] in
             let snapshot = try await store.snapshot()

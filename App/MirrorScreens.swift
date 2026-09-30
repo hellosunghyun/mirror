@@ -87,6 +87,9 @@ struct MirrorCaptureView: View {
     @State private var sourceURL = ""
     @State private var more = false
     @State private var splitPreview = false
+    @State private var requestToken = UUID().uuidString
+    @State private var pendingLine: String?
+    @State private var pendingSingle = false
     private enum InputField: Hashable { case title, note, url }
     @FocusState private var focusedField: InputField?
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
@@ -97,19 +100,20 @@ struct MirrorCaptureView: View {
                     Text("일단 넣고, 나중에 정하세요").font(.headline)
                     TextField("할 일 제목", text: $title, axis: .vertical)
                         .lineLimit(1...8).focused($focusedField, equals: .title)
+                        .disabled(model.isSaving || model.projectionPending)
                         .accessibilityIdentifier("capture.title")
                     Text("\(title.count)/500자 · 입력은 자동으로 잘리지 않아요").font(.caption).foregroundStyle(title.count > 500 ? .red : .secondary)
                 }
                 DisclosureGroup("메모와 원문 링크", isExpanded: $more) {
-                    TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).accessibilityIdentifier("capture.note")
-                    TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).accessibilityIdentifier("capture.url")
+                    TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
+                    TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
                     Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption)
                 }
                 if lines.count > 1 {
                     Section("여러 줄 입력") {
                         Text("자동으로 여러 작업을 만들지 않아요. 저장 방식을 고르세요.")
-                        Button("한 개로 저장") { save() }
-                        Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }
+                        Button("한 개로 저장") { save() }.disabled(model.isSaving || model.projectionPending)
+                        Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }.disabled(model.isSaving || model.projectionPending)
                     }
                 }
                 if let problem = model.problem { Text(problem).foregroundStyle(.red).accessibilityIdentifier("state.error") }
@@ -125,6 +129,15 @@ struct MirrorCaptureView: View {
             .onAppear { focusedField = .title }
             .onChange(of: focusedField) { _, focused in model.isTextEditing = focused != nil }
             .onDisappear { model.isTextEditing = false }
+            .onChange(of: model.lastCaptureCommittedToken) { _, token in
+                guard token == requestToken else { return }
+                if pendingSingle { title = ""; note = ""; sourceURL = ""; pendingSingle = false; requestToken = UUID().uuidString }
+                else if let pendingLine {
+                    var remaining = title.components(separatedBy: .newlines)
+                    if remaining.first == pendingLine { remaining.removeFirst(); title = remaining.joined(separator: "\n") }
+                    self.pendingLine = nil; requestToken = UUID().uuidString
+                }
+            }
             .sheet(isPresented: $splitPreview) {
                 NavigationStack {
                     List {
@@ -134,14 +147,18 @@ struct MirrorCaptureView: View {
                             Task {
                                 var remaining = lines
                                 for line in lines {
-                                    guard await model.capture(title: line, note: "", sourceURL: "") else { break }
+                                    requestToken = UUID().uuidString
+                                    guard await model.capture(title: line, note: note, sourceURL: sourceURL, requestToken: requestToken) else {
+                                        if model.projectionPending { pendingLine = line }
+                                        break
+                                    }
                                     remaining.removeFirst()
                                 }
                                 title = remaining.joined(separator: "\n")
                                 splitPreview = false
                                 focusedField = .title
                             }
-                        }.disabled(model.isSaving)
+                        }.disabled(model.isSaving || model.projectionPending)
                     }.navigationTitle("줄마다 나누기")
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { splitPreview = false } } }
                 }
@@ -150,9 +167,11 @@ struct MirrorCaptureView: View {
     }
     private func save() {
         Task {
-            if await model.capture(title: title, note: note, sourceURL: sourceURL) {
+            requestToken = UUID().uuidString
+            if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken) {
                 title = ""; note = ""; sourceURL = ""; focusedField = .title
-            }
+                requestToken = UUID().uuidString
+            } else if model.projectionPending { pendingSingle = true }
         }
     }
 }
@@ -244,6 +263,7 @@ struct MirrorReviewView: View {
     @Environment(AppModel.self) private var model
     @AccessibilityFocusState private var cardFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     var body: some View {
         @Bindable var model = model
         NavigationStack {
@@ -262,7 +282,8 @@ struct MirrorReviewView: View {
                             if task.deadline != nil { Label("실제 마감: \(deadlineLabel(task.deadline, context: model.context))", systemImage: "flag") }
                             if let note = task.content.note, !note.isEmpty { ExpandableText(note, lineLimit: 2).foregroundStyle(.secondary) }
                             if task.content.sourceURL != nil { Label("원문 링크가 있어요", systemImage: "link").font(.caption) }
-                        }.padding().frame(maxWidth: .infinity, alignment: .leading).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+                        }.padding().frame(maxWidth: .infinity, alignment: .leading)
+                            .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.regular), in: RoundedRectangle(cornerRadius: 18))
                         if let destinations = try? model.review?.context.destinations() {
                             ViewThatFits(in: .horizontal) {
                                 HStack { todayButton(destinations.today); tomorrowButton(destinations.tomorrow) }

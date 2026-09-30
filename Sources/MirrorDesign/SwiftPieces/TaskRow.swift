@@ -166,7 +166,7 @@ public struct TaskRow: View {
                 .padding(.vertical, 3)
                 .background(style.snooze, in: Capsule())
         } else if let due {
-            Label(due, systemImage: "clock")
+            Label(due, systemImage: "calendar")
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(completing ? style.ink.opacity(0.7) : style.muted)
                 .labelStyle(TightLabel())
@@ -236,9 +236,9 @@ public struct TaskRow: View {
         if let due, status != .snoozed { parts.append("배치: \(due)") }
         if let priority, status == .open {
             switch priority {
-            case .low: parts.append("Low priority")
-            case .medium: parts.append("Medium priority")
-            case .high: parts.append("High priority")
+            case .low: parts.append("낮은 우선순위")
+            case .medium: parts.append("보통 우선순위")
+            case .high: parts.append("높은 우선순위")
             }
         }
         return parts.joined(separator: ", ")
