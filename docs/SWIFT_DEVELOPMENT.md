@@ -57,6 +57,15 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 ## 검증 기록
 
-새 코드의 플랫폼 build/test 검증을 Actions에서 진행 중이다. 성공/실패와 실제 실행 수는 해당 commit의 run 결과가 확인된 뒤 여기에 기록한다. 원본 명세·QA 보고서는 보존한다.
+커밋 `74d02286d396c59e860394cdc660d72f5ea6dfa2`의 [Actions 실행 36743523286](https://github.com/hellosunghyun/mirror/actions/runs/36743523286)은 네 경로와 최종 결과 집계 모두 성공했다. 원격 run의 headSha와 실제 build/test step 및 결과 집계의 실행 수를 확인했다.
+
+| 경로 | 실제 결과 |
+|---|---|
+| SwiftPM | Swift 도메인 테스트 37개 통과 |
+| macOS | MirrorMac unsigned 빌드, 도메인 테스트 37개 통과 |
+| iPhone Simulator | MirrorIOS unsigned 빌드, 도메인 테스트 37개 통과 |
+| iPad Simulator | MirrorIOS unsigned 빌드, 도메인 테스트 37개 통과 |
+
+37은 각 도구가 보고한 테스트 수다. 같은 테스트 소스를 네 경로에서 실행했으며 원본 fixture 36개는 매개변수 사례로 포함된다. 이를 서로 다른 테스트 148개나 전체 앱 QA 성공으로 합산하지 않는다. 실패·skip·0-test는 CI에서 거부한다. 같은 커밋의 [준비 검사 36743523087](https://github.com/hellosunghyun/mirror/actions/runs/36743523087)도 성공했다. 원본 명세·QA 보고서는 보존한다.
 
 실제 화면 동작·VoiceOver·SwiftPieces·위젯·Siri·실기기 서명·App Group·두 기기 동기화·저장 복구는 후속 검증 범위다.

@@ -47,7 +47,7 @@
 
 ## 식별자 후보
 
-사용자 지정 접두사는 **`com.baserize`**다. 아래 값은 이름과 원본의 타깃 제안으로 구성한 **후보**이며 Apple Developer 등록, 사용 가능 여부 확인, 실제 Xcode 설정 적용은 아직 수행하지 않았다.
+사용자 지정 접두사는 **`com.baserize`**다. 아래 값은 이름과 원본의 타깃 제안으로 구성한 **후보**다. 앱의 unsigned 개발 빌드에는 `com.baserize.mirror`와 `com.baserize.mirror.mac`을 적용했지만 Apple Developer 등록·사용 가능 여부·최종 플랫폼 공유 구성은 아직 확인하지 않았다.
 
 | 대상 | 후보 | 결정할 사항 |
 |---|---|---|

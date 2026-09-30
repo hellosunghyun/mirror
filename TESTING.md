@@ -49,4 +49,4 @@ UI는 사용자 지정 SwiftPieces를 사용한다. 현재는 적용 기준과 �
 4. 저장·동시성은 실제 선택된 저장소를 대상으로 통합 검증한다. mock 성공만으로 복구·동기화 완료를 판정하지 않는다.
 5. 수용 시나리오별 실행 대상, OS / SDK, 명령, 통과·실패·미실행 상태를 기록한다.
 
-Swift Testing, XCTest / XCUITest는 Apple 제공 테스트 도구를 사용한다. Xcode 프로젝트와 명령은 다음 구현 작업에서 실제 타깃 구성에 맞춰 확정한다.
+Swift Testing, XCTest / XCUITest는 Apple 제공 테스트 도구를 사용한다. 현재 Xcode 프로젝트·공유 scheme과 실행 명령은 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)에 기록했다. 후속 저장·명령·UI 검증은 실제 타깃 구성에 맞춰 확장한다.
