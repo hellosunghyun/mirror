@@ -17,6 +17,7 @@
 
 1. Git 상태와 저장소 구조를 확인하고 사용자가 변경 중인 파일을 파악한다.
 2. README, 개발 기준, 해당 작업의 원본 명세와 [테스트 전략](TESTING.md)을 읽는다.
+   전체 제작은 [구현 계획](docs/IMPLEMENTATION_PLAN.md)과 [요구사항 추적표](docs/REQUIREMENTS_TRACEABILITY.md)의 모든 단계·FR·QA·게이트를 유지하며 진행한다. 코드 구현과 서명·실기기·사용자 검증의 완료를 구분한다.
 3. [Package.swift](Package.swift), `Mirror.xcodeproj`, 기존 코드 스타일과 테스트·빌드 명령을 확인한다. Python 준비 도구의 의존성은 [requirements-dev.txt](requirements-dev.txt)에 있다. Swift 언어 모드·strict concurrency·default isolation은 실제 설정을 읽는다.
 4. 기존 방식이 있으면 따르고, 요청에 필요한 가장 명확한 변경을 수행한다.
 

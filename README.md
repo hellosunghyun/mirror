@@ -102,4 +102,6 @@ python3.12 -m venv .venv
 
 ## 개발 착수
 
+최종 목표는 전체 명세의 앱 제작이다. [전체 구현 계획](docs/IMPLEMENTATION_PLAN.md)은 D-01~D-16의 산출물·선행 조건·검증 게이트·외부 준비를, [요구사항 추적표](docs/REQUIREMENTS_TRACEABILITY.md)는 FR 30개·NFR 12개·QA 87개의 구현과 증거를 관리한다. 중간 단계의 골격이나 단위 테스트 통과를 전체 제품 완성으로 기록하지 않는다.
+
 먼저 [개발 지침](AGENTS.md), 원본 문서 01·03·04·06, [테스트 전략](TESTING.md)을 읽는다. 타깃 골격과 날짜 판정은 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)에 기록한다. D-01의 서명·등록 결정과 D-03 이후 저장·명령·시스템 통합은 원본의 검증 게이트에 따라 이어간다.
