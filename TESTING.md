@@ -4,7 +4,13 @@
 
 ## 현재 실행 가능한 검사
 
+사용자 지정 실행 위치는 **GitHub Actions 러너**다. [Swift workflow](.github/workflows/swift.yml)는 SwiftPM 및 Xcode의 macOS·iPhone·iPad 환경에서 같은 생산 날짜 도메인과 Swift Testing 소스를 검사한다. 결과 파서는 실제 실행 수가 양수인지, 실패·skip이 없는지 확인하며 현재 실행의 로그·xcresult를 보존한다. 자세한 실행과 결과는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
+
+Swift 테스트는 원본 fixture 36개를 그대로 읽어 날짜 목적지, Today/Review 판정, 마감 확인, 신규 배치, receipt 우선 stale context 판정을 검사한다. 추가 사례는 윤년·연말·Gregorian 역사적 경계·DST·자정·잘못된 입력·주 구조·수동 검토와 마감 확인 바인딩을 검증한다. 원본 파일을 수정하거나 기대값을 생산 구현에서 계산하지 않는다.
+
 준비 검사와 회귀 테스트는 원본 문서의 무결성, 문서 연결, JSON 계약, fixture 기대값, FR / QA 매핑을 검증한다. 기존 검증기는 임시 복사본에서 실행한다. 준비 검사가 통과해도 실제 앱의 QA 상태 87개는 미실행으로 유지한다.
+
+현재 Swift 단위 테스트는 QA의 날짜·판정 부분에 대한 증거다. 명령 저장·영수증의 실제 조회·세션 무효화·알림 재예약·화면·동기화 등 QA 전체 시나리오의 성공을 뜻하지 않는다. 원본 보고서의 상태를 덮어쓰지 않고 파생 검증 기록에 실행 범위를 남긴다.
 
 ## 앱 구현에 연결할 테스트
 

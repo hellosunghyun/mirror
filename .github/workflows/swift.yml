@@ -1,0 +1,147 @@
+name: Swift 앱 빌드와 도메인 테스트
+
+on:
+  push:
+    paths:
+      - 'App/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'Package.swift'
+      - 'scripts/ci*'
+      - '.github/workflows/swift.yml'
+      - 'development-baseline.json'
+      - 'postpone-app-docs/fixtures/domain-cases.json'
+  pull_request:
+    paths:
+      - 'App/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'Package.swift'
+      - 'scripts/ci*'
+      - '.github/workflows/swift.yml'
+      - 'development-baseline.json'
+      - 'postpone-app-docs/fixtures/domain-cases.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+
+jobs:
+  domain:
+    name: SwiftPM 도메인
+    runs-on: xcode-27
+    timeout-minutes: 15
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Swift 도메인 테스트
+        id: test
+        run: bash scripts/ci-swift-package.sh
+      - name: 현재 실행의 로그 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: swiftpm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-swift/test.log
+          include-hidden-files: true
+          retention-days: 7
+
+  macos:
+    name: macOS 앱 빌드와 테스트
+    runs-on: xcode-27
+    timeout-minutes: 20
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Mac 앱 빌드 및 Swift 테스트
+        id: test
+        run: bash scripts/ci-apple-platform.sh macos
+      - name: 현재 실행의 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-macos/test.log
+            .build/ci-macos/summary.json
+            .build/ci-macos/Tests.xcresult
+          include-hidden-files: true
+          retention-days: 7
+
+  iphone:
+    name: iPhone 앱 빌드와 테스트
+    runs-on: xcode-27
+    timeout-minutes: 20
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: iPhone 앱 빌드 및 Swift 테스트
+        id: test
+        run: bash scripts/ci-apple-platform.sh iphone
+      - name: 현재 실행의 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-iphone/test.log
+            .build/ci-iphone/summary.json
+            .build/ci-iphone/Tests.xcresult
+          include-hidden-files: true
+          retention-days: 7
+
+  ipad:
+    name: iPad 앱 빌드와 테스트
+    runs-on: xcode-27
+    timeout-minutes: 20
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: iPad 앱 빌드 및 Swift 테스트
+        id: test
+        run: bash scripts/ci-apple-platform.sh ipad
+      - name: 현재 실행의 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-ipad/test.log
+            .build/ci-ipad/summary.json
+            .build/ci-ipad/Tests.xcresult
+          include-hidden-files: true
+          retention-days: 7
+
+  results:
+    name: '실행 결과 · SwiftPM ${{ needs.domain.outputs.tests }} / Mac ${{ needs.macos.outputs.tests }} / iPhone ${{ needs.iphone.outputs.tests }} / iPad ${{ needs.ipad.outputs.tests }}'
+    needs: [domain, macos, iphone, ipad]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 실제 테스트 실행과 완료 확인
+        env:
+          RUN_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          values = json.loads(os.environ['RUN_RESULTS'])
+          for name, result in values.items():
+              if result['result'] != 'success' or int(result['outputs'].get('tests', 0)) <= 0:
+                  raise SystemExit(f"{name}: 테스트 실행 또는 결과 확인 실패")
+          print('모든 플랫폼의 실제 테스트 실행과 완료를 확인했습니다.')
+          PY
