@@ -14,6 +14,16 @@
     "iPadOS": "27.0",
     "macOS": "27.0"
   },
+  "ui": {
+    "framework": "SwiftUI",
+    "componentSource": "SwiftPieces",
+    "repository": "https://github.com/Saivion/SwiftPieces",
+    "reviewedCommit": "15e4a68ce09a58f7c93a8043f88fca9ea224af75",
+    "integrationMethod": "copy_selected_swift_and_required_metal_sources",
+    "license": "MIT + Commons Clause License Condition v1.0",
+    "status": "selected_not_integrated",
+    "platformBuildsExecuted": false
+  },
   "observedToolchain": {
     "xcode": "27.0",
     "xcodeBuild": "27A266a",

@@ -15,6 +15,7 @@
 - 앱 이름: **미러(Mirror)**. 한국어 표시명은 `미러`, 영문 이름은 `Mirror`.
 - 이름의 의미를 설명해야 할 때만 **‘미뤄’를 표현한 이름**이라고 설명한다. 일반적인 앱 이름 표기는 `미러`를 사용한다.
 - 개발 및 최소 배포 기준: **iOS 27.0 / iPadOS 27.0 / macOS 27.0**.
+- UI 구성요소: 사용자 지정 **[SwiftPieces](https://github.com/Saivion/SwiftPieces)**를 사용한다. 적용 방식과 검증 기준은 아래 UI 항목을 따른다.
 - GitHub 저장소: **hellosunghyun/mirror**, **private**.
 - 테스트코드를 적극 활용한다. 날짜·도메인·명령 규칙은 테스트부터 작성하고, 버그 수정에는 재현 회귀 테스트를 함께 추가한다.
 - 제품 요구사항 30개와 QA 명세 87개를 유지하며 단계별로 구현한다. 준비 작업에서 범위를 축소하거나 저장 구조를 새로 확정하지 않는다.
@@ -22,6 +23,27 @@
 2026-09-30 로컬 환경에서 Xcode **27.0 (27A266a)**, Swift **6.4**, iPhoneOS / macOS SDK **27.0**, iOS Simulator runtime **27.0**을 확인했다. 설치된 도구 확인은 앱 빌드나 OS 호환성 검증을 의미하지 않는다. 세부 값은 [development-baseline.json](development-baseline.json)에 기록한다.
 
 원본 문서의 제품명 미정 / `Postpone` 작업명과 iOS·iPadOS 18 / macOS 15 권고보다 **이 저장소의 확정 이름과 OS 기준이 우선한다**. 원본 문서의 기술 제안과 미결정 사항은 사용자 승인 사실로 바꾸지 않는다. 식별자 접두사 `com.baserize`는 사용자 지정값이며, 전체 Bundle ID·App Group과 플랫폼별 구성은 아래 후보를 기준으로 결정한다. iCloud container와 서명 Team은 아직 미정이다.
+
+## UI 구성요소
+
+미러 UI는 **SwiftUI + SwiftPieces**를 기준으로 제작한다. SwiftPieces 채택은 사용자 지정 결정이며, 현재는 적용 기준을 정한 단계다. 앱 프로젝트와 실제 컴포넌트 소스 도입은 아직 수행하지 않았다.
+
+- 초기 확인 기준: [`15e4a68ce09a58f7c93a8043f88fca9ea224af75`](https://github.com/Saivion/SwiftPieces/tree/15e4a68ce09a58f7c93a8043f88fca9ea224af75).
+- [공식 사용 방식](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/README.md): 필요한 `registry/swift/` 소스를 UI / Design 계층에 가져와 사용한다. 셰이더를 쓰는 구성요소는 필요한 `.metal` 파일도 포함한다. 각 도입 파일의 원본 경로·커밋·수정 내역을 기록한다.
+- [라이선스](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/LICENSE): **MIT + Commons Clause License Condition v1.0**. 앱의 일부로 사용·수정·배포할 때 저작권·허가문을 보존한다. 컴포넌트 자체의 판매·재허가·재배포는 제한된다. 일반 MIT로 표기하지 않는다.
+- 초기 검토 대상은 아래 후보에서 실제 화면 요구에 맞춰 선택한다. 화면 구조와 컴포넌트 배치는 시안과 검증으로 결정한다.
+
+| 미러 화면의 역할 | SwiftPieces 검토 후보 |
+|---|---|
+| 한 줄 입력·수정 | [FormField](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/registry/swift/inputs/FormField.swift) |
+| 오늘 목록의 작업 행 | [TaskRow](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/registry/swift/lists/TaskRow.swift) |
+| 정리 카드의 긴 내용 펼치기 | [ExpandableText](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/registry/swift/text/ExpandableText.swift) |
+| 화면 내부의 분류 선택 | [TrackingTabs](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/registry/swift/navigation/TrackingTabs.swift) |
+| 저장·처리 상태 피드백 | [StatusMorph](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/registry/swift/feedback/StatusMorph.swift) |
+
+확인한 후보에는 UIKit 타입·색상 의존성이 있다. 상위 저장소의 [검증 워크플로](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/.github/workflows/swift.yml)는 iOS 26 Simulator 기준이므로 미러의 OS 27·Mac 지원을 증명하지 않는다. 필요한 플랫폼별 수정을 수행하고 iOS / iPadOS / macOS 27에서 각각 빌드와 실제 사용을 검증한다.
+
+컴포넌트 내부 상태는 미러의 날짜·계획·완료 데이터와 분리한다. 입력은 공통 명령 경로로 전달하고 저장 성공 이후 성공 상태를 표시한다. 접근성·한국어 문구·큰 글자·Reduce Motion·Reduce Transparency·실패 복구는 [테스트 전략](TESTING.md)에 따라 확인한다.
 
 ## 식별자 후보
 
