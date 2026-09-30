@@ -494,10 +494,13 @@ private final class CanonicalStoreChangeHub: @unchecked Sendable {
     private func removeSubscriber(_ id: UUID) { _ = lock.withLock { subscribers.removeValue(forKey: id) } }
 
     private func belongsToCanonical(_ notification: Notification) -> Bool {
-        if let url = notification.userInfo?[NSStoreURLKey] as? URL { return storeURLs.contains(Self.key(url)) }
         if let uuid = notification.userInfo?[NSStoreUUIDKey] as? String { return storeUUIDs.contains(uuid) }
         guard let own = coordinator, let notifying = notification.object as? NSPersistentStoreCoordinator else { return false }
-        return notifying === own
+        if notifying === own { return true }
+        // 공개 UUID가 없는 알림은 실제 coordinator의 등록 URL로만 식별한다.
+        // userInfo의 문서화되지 않은 URL 키를 가정하지 않는다.
+        let notifyingURLs = Set(notifying.persistentStores.compactMap(\.url).map(Self.key))
+        return !storeURLs.isDisjoint(with: notifyingURLs)
     }
 
     private static func key(_ url: URL) -> URL { url.standardizedFileURL.resolvingSymlinksInPath() }
