@@ -1,0 +1,103 @@
+name: Apple 개발 도구 확인
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apple-toolchain.yml'
+      - 'development-baseline.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  toolchain:
+    name: Xcode 27 · OS 27 환경 확인
+    runs-on: xcode-27
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+    steps:
+      - name: 저장소 가져오기
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Python 준비
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: 실제 도구와 SDK 및 Simulator 확인
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          def output(*command):
+              return subprocess.check_output(command, text=True).strip()
+
+          baseline = json.loads(Path('development-baseline.json').read_text())
+          expected = baseline['observedToolchain']
+          host_os = output('sw_vers', '-productVersion')
+          xcode = output('xcodebuild', '-version')
+          swift = output('xcrun', 'swift', '--version')
+          sdk_versions = {
+              sdk: output('xcrun', '--sdk', sdk, '--show-sdk-version')
+              for sdk in ('macosx', 'iphoneos', 'iphonesimulator')
+          }
+          runtimes = json.loads(output('xcrun', 'simctl', 'list', 'runtimes', '--json'))
+          devices = json.loads(output('xcrun', 'simctl', 'list', 'devices', 'available', '--json'))
+          expected_runtime = expected['iOSSimulatorRuntime']
+          runtime = next((
+              value for value in runtimes['runtimes']
+              if value['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')
+              and value['version'] == expected_runtime
+              and value.get('isAvailable')
+          ), None)
+
+          errors = []
+          if int(host_os.split('.')[0]) < int(baseline['deploymentTargets']['macOS'].split('.')[0]):
+              errors.append(f'Mac 테스트를 실행할 호스트 OS가 부족합니다: {host_os}')
+          if f"Xcode {expected['xcode']}" not in xcode.splitlines():
+              errors.append(f'Xcode 버전 불일치: {xcode}')
+          if f"Build version {expected['xcodeBuild']}" not in xcode.splitlines():
+              errors.append(f'Xcode 빌드 불일치: {xcode}')
+          swift_version = re.search(r'Apple Swift version (\d+\.\d+)(?:\.\d+)?\b', swift)
+          if swift_version is None or swift_version.group(1) != expected['swift']:
+              errors.append(f'Swift 버전 불일치: {swift}')
+          for sdk, expected_version in (
+              ('macosx', expected['macOSSDK']),
+              ('iphoneos', expected['iPhoneOSSDK']),
+              ('iphonesimulator', expected_runtime),
+          ):
+              if sdk_versions[sdk] != expected_version:
+                  errors.append(f'{sdk} SDK 불일치: {sdk_versions[sdk]}')
+          available_devices = []
+          if runtime is None:
+              errors.append(f'iOS {expected_runtime} Simulator runtime이 없습니다.')
+          else:
+              available_devices = devices['devices'].get(runtime['identifier'], [])
+              for family in ('iPhone', 'iPad'):
+                  if not any(device['name'].startswith(family) for device in available_devices):
+                      errors.append(f'iOS {expected_runtime}의 {family} Simulator가 없습니다.')
+
+          report = {
+              'scope': 'apple_toolchain_only',
+              'hostOS': host_os,
+              'xcode': xcode,
+              'swift': swift,
+              'sdkVersions': sdk_versions,
+              'simulatorRuntime': runtime,
+              'simulatorDevices': [
+                  {'name': device['name'], 'udid': device['udid'], 'state': device['state']}
+                  for device in available_devices
+                  if device['name'].startswith(('iPhone', 'iPad'))
+              ],
+              'appBuildExecuted': False,
+              'appTestsExecuted': 0,
+              'errors': errors,
+          }
+          print(json.dumps(report, ensure_ascii=False, indent=2))
+          raise SystemExit(1 if errors else 0)
+          PY
