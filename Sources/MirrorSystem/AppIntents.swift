@@ -44,16 +44,16 @@ public struct MirrorTaskQuery: EntityStringQuery {
         if identifier == nil, (!preferences.spotlightEnabled || preferences.hideExternalTitles) {
             throw SystemServiceError.externalSearchDisabled
         }
-        return try await services.tasks().filter {
-            $0.status != .deleted && $0.isProjectionComplete &&
-                ($0.taskID == identifier || $0.title.localizedStandardContains(string))
+        return try await services.tasks().filter { task in
+            task.status != .deleted && task.isProjectionComplete &&
+                (identifier.map { $0 == task.taskID } ?? task.title.localizedStandardContains(string))
         }.prefix(50).map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
     }
     public func suggestedEntities() async throws -> [MirrorTaskEntity] {
         let services = try await SystemCompositionRoot.open()
         let preferences = try await services.preferences(), context = try await services.currentContext()
         let tasks = try await services.tasks().filter { $0.status != .deleted && $0.isProjectionComplete }
-        let today = tasks.filter { PlanningRules.isToday($0.planningState, on: context.planningDay) }
+        let today = try await services.todayTasks(on: context.planningDay)
         let recent = tasks.sorted { $0.createdAt > $1.createdAt }.prefix(10)
         var seen: Set<UUID> = []
         return (today + recent).filter { seen.insert($0.taskID).inserted }.prefix(20)
@@ -74,7 +74,8 @@ public struct AddTaskIntent: AppIntent {
         let services = try await SystemCompositionRoot.open()
         let task = try await services.capture(title: title, note: note, sourceURL: link?.absoluteString, source: .shortcut)
         let preferences = try await services.preferences()
-        return .result(value: MirrorTaskEntity(task: task, hideTitle: preferences.hideExternalTitles), dialog: "저장했어요. 날짜는 나중에 정해도 돼요.")
+        let warning = await services.lastSurfaceReport?.safeUserMessage ?? ""
+        return .result(value: MirrorTaskEntity(task: task, hideTitle: preferences.hideExternalTitles), dialog: "저장했어요. 날짜는 나중에 정해도 돼요. \(warning)")
     }
 }
 
@@ -88,20 +89,38 @@ public struct GetTodayTasksIntent: AppIntent {
         let services = try await SystemCompositionRoot.open()
         let context = try await services.currentContext(), preferences = try await services.preferences()
         let date = try planningDate.map { try LocalDate($0) } ?? context.planningDay
-        let tasks = try await services.tasks().filter { PlanningRules.isToday($0.planningState, on: date) && $0.isProjectionComplete }
+        let tasks = try await services.todayTasks(on: date)
             .prefix(50).map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
         return .result(value: tasks, dialog: "명시적으로 이 날짜에 남긴 일이 \(tasks.count)개예요.")
     }
 }
 
+public enum MirrorTaskStatusFilter: String, AppEnum {
+    case open, completed
+    public static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "할 일 상태")
+    public static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [.open: "미완료", .completed: "완료"]
+}
+
 public struct FindTasksIntent: AppIntent {
     public static let title: LocalizedStringResource = "할 일 찾기"
     public static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
-    @Parameter(title: "제목 또는 작업 ID") public var query: String
-    public static var parameterSummary: some ParameterSummary { Summary("\(\.$query) 찾기") }
+    @Parameter(title: "제목 또는 작업 ID") public var query: String?
+    @Parameter(title: "상태") public var status: MirrorTaskStatusFilter?
+    public static var parameterSummary: some ParameterSummary { Summary("할 일 찾기") }
     public init() {}
     public func perform() async throws -> some IntentResult & ReturnsValue<[MirrorTaskEntity]> {
-        .result(value: try await MirrorTaskQuery().entities(matching: query))
+        let text = query?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text?.isEmpty == false || status != nil else { throw SystemServiceError.invalidInput }
+        let matches: [MirrorTaskEntity]
+        if let text, !text.isEmpty { matches = try await MirrorTaskQuery().entities(matching: text) }
+        else {
+            let services = try await SystemCompositionRoot.open(), preferences = try await services.preferences()
+            matches = try await services.tasks().filter { $0.status != .deleted && $0.isProjectionComplete }
+                .map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
+        }
+        return .result(value: Array(matches.filter { entity in
+            status.map { entity.completed == ($0 == .completed) } ?? true
+        }.prefix(50)))
     }
 }
 
@@ -127,7 +146,7 @@ public struct ScheduleTaskIntent: AppIntent {
         }
         try await services.requireCommitted(result)
         let updated = try await services.task(task.id), preferences = try await services.preferences()
-        return .result(value: MirrorTaskEntity(task: updated, hideTitle: preferences.hideExternalTitles), dialog: "계획 날짜를 저장했어요. 완료나 실제 마감은 바꾸지 않았어요.")
+        return .result(value: MirrorTaskEntity(task: updated, hideTitle: preferences.hideExternalTitles), dialog: "\(result.safeUserMessage)")
     }
 }
 
@@ -154,7 +173,7 @@ public struct ScheduleTaskForWeekIntent: AppIntent {
             result = try await services.execute(.setPlan(item: .init(taskID: task.id, expected: .init(original), acknowledgment: acknowledgment), target: target, review: nil), source: .shortcut, displayedContext: context)
         }
         try await services.requireCommitted(result)
-        return .result(dialog: "그 주에 배치했어요. 월요일 할 일로 정한 것은 아니에요.")
+        return .result(dialog: "\(result.safeUserMessage) 월요일 할 일로 정한 것은 아니에요.")
     }
 }
 
@@ -169,7 +188,7 @@ public struct SetTaskCompletedIntent: AppIntent {
         let services = try await SystemCompositionRoot.open()
         let result = try await services.setCompleted(id: task.id, completed: completed, source: .shortcut)
         try await services.requireCommitted(result)
-        return .result(dialog: completed ? "완료했어요." : "완료를 취소했어요. 원래 계획은 유지해요.")
+        return .result(dialog: "\(result.safeUserMessage)")
     }
 }
 
@@ -216,7 +235,7 @@ public struct UndoLastDecisionIntent: AppIntent {
         let result = try await services.execute(.undo(operationID: operation.operationID, expected: operation.undoExpectations()), source: .shortcut,
                                                 key: "undo:\(operation.operationID)")
         try await services.requireCommitted(result)
-        return .result(dialog: "직전 결정의 해당 항목만 되돌렸어요.")
+        return .result(dialog: "\(result.safeUserMessage)")
     }
 }
 
@@ -282,7 +301,7 @@ public struct FinishReviewIntent: AppIntent {
         let services = try await SystemCompositionRoot.open()
         let result = try await services.widget.finish(scopeKey: scopeKey, sessionID: session)
         try await services.requireCommitted(result)
-        return .result(dialog: "정리를 마쳤어요. 미검토는 그대로 남겨 두고 오늘 목록을 보여드려요.")
+        return .result(dialog: "\(result.safeUserMessage) 미검토는 그대로 남겨 두고 오늘 목록을 보여드려요.")
     }
 }
 public struct OpenDatePickerIntent: AppIntent {
@@ -324,13 +343,13 @@ public struct CompleteDisplayedWidgetTaskIntent: AppIntent {
     @Parameter(title: "표시 상태 버전") public var expectedStatus: String
     public init() {}
     public init(item: WidgetTodayItem) { taskID = item.taskID.uuidString; expectedStatus = item.expectedStatus }
-    public func perform() async throws -> some IntentResult {
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
         guard let id = UUID(uuidString: taskID), !expectedStatus.isEmpty else { throw SystemServiceError.invalidInput }
         let services = try await SystemCompositionRoot.open()
         let result = try await services.execute(.completion(taskID: id, desiredCompleted: true, expectedStatus: expectedStatus),
                                                 source: .widget, key: "widget-complete:\(taskID):\(expectedStatus)")
         try await services.requireCommitted(result)
-        return .result()
+        return .result(dialog: "\(result.safeUserMessage)")
     }
 }
 public struct WidgetUndoPayload: Codable, Sendable {
@@ -339,6 +358,19 @@ public struct WidgetUndoPayload: Codable, Sendable {
     public let expected: [TaskVersionExpectation]
     public init(state: WidgetReviewState, operationID: String) {
         scopeKey = state.scopeKey; self.operationID = operationID; expected = state.undoExpected
+    }
+}
+public struct StartTodayWidgetReviewIntent: AppIntent {
+    public static let title: LocalizedStringResource = "위젯에서 오늘 다시 정리"
+    public static let isDiscoverable = false
+    public static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
+    @Parameter(title: "범위") public var scopeKey: String
+    public init() {}
+    public init(scopeKey: String) { self.scopeKey = scopeKey }
+    public func perform() async throws -> some IntentResult {
+        let services = try await SystemCompositionRoot.open()
+        _ = try await services.widget.startReview(scopeKey: scopeKey, todayOnly: true)
+        return .result()
     }
 }
 public struct UndoDisplayedWidgetDecisionIntent: AppIntent {

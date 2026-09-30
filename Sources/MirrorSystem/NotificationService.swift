@@ -1,19 +1,21 @@
 import Foundation
 import UserNotifications
 
-public enum NotificationServiceError: Error, Sendable { case permissionRequired }
+public enum NotificationServiceError: Error, Equatable, Sendable { case permissionRequired, configurationRequired }
 
 public actor NotificationService {
-    private let center: UNUserNotificationCenter
+    private var center: UNUserNotificationCenter?
     public private(set) var omittedCount = 0
 
-    public init(center: UNUserNotificationCenter = .current()) { self.center = center }
+    public init(center: UNUserNotificationCenter? = nil) { self.center = center }
 
     public func requestAuthorization() async throws -> Bool {
-        try await center.requestAuthorization(options: [.alert, .sound, .badge])
+        let center = try resolvedCenter()
+        return try await center.requestAuthorization(options: [.alert, .sound, .badge])
     }
 
-    public func isAuthorized() async -> Bool {
+    public func isAuthorized() async throws -> Bool {
+        let center = try resolvedCenter()
         let settings = await center.notificationSettings()
         switch settings.authorizationStatus {
         case .authorized, .provisional: return true
@@ -26,13 +28,15 @@ public actor NotificationService {
 
     /// 이 기기의 앱 소유 예약만 조정한다. 다른 기기의 예약 취소를 보장하지 않는다.
     public func reconcile(plan: NotificationPlan) async throws {
-        guard await isAuthorized() else { throw NotificationServiceError.permissionRequired }
+        let center = try resolvedCenter()
         let pending = await center.pendingNotificationRequests()
         let desired = Set(plan.requests.map(\.identifier))
         let removed = pending.filter { isOwned($0.identifier) && !desired.contains($0.identifier) }.map(\.identifier)
         center.removePendingNotificationRequests(withIdentifiers: removed)
         let delivered = await center.deliveredNotifications()
         center.removeDeliveredNotifications(withIdentifiers: delivered.map { $0.request.identifier }.filter { isOwned($0) && !desired.contains($0) })
+        if plan.requests.isEmpty { omittedCount = plan.omittedCount; return }
+        guard try await isAuthorized() else { throw NotificationServiceError.permissionRequired }
         for item in plan.requests {
             let content = UNMutableNotificationContent()
             content.title = item.kind == .deadline ? "실제 마감을 확인하세요" : "잠깐 정리할까요?"
@@ -52,12 +56,21 @@ public actor NotificationService {
         omittedCount = plan.omittedCount
     }
 
-    public func clearAll() async {
+    public func clearAll() async throws {
+        let center = try resolvedCenter()
         let pending = await center.pendingNotificationRequests()
         center.removePendingNotificationRequests(withIdentifiers: pending.map(\.identifier).filter(isOwned))
         let delivered = await center.deliveredNotifications()
         center.removeDeliveredNotifications(withIdentifiers: delivered.map { $0.request.identifier }.filter(isOwned))
         omittedCount = 0
+    }
+
+    private func resolvedCenter() throws -> UNUserNotificationCenter {
+        guard SystemAppleRuntimeHost.isApplicationOrExtension else { throw NotificationServiceError.configurationRequired }
+        if let center { return center }
+        let resolved = UNUserNotificationCenter.current()
+        center = resolved
+        return resolved
     }
 
     private func isOwned(_ identifier: String) -> Bool {

@@ -90,6 +90,8 @@ def main():
             raise ValueError('필수 테스트 bundle 목록이 있어야 합니다.')
         nodes = json.loads(Path(path).read_text())
         bundles = {}
+        node_types = {}
+        named_nodes = []
 
         def cases(node):
             if isinstance(node, dict):
@@ -100,6 +102,12 @@ def main():
 
         def visit(node):
             if isinstance(node, dict):
+                node_type = node.get('nodeType')
+                if isinstance(node_type, str):
+                    node_types[node_type] = node_types.get(node_type, 0) + 1
+                name = node.get('name')
+                if isinstance(name, str) and any(b in name for b in additional_paths) and len(named_nodes) < 12:
+                    named_nodes.append({'name': name[:120], 'nodeType': node_type, 'keys': list(node)[:12]})
                 if node.get('nodeType') == 'Test Bundle':
                     bundles[node.get('name')] = cases(node)
                 for value in node.values():
@@ -109,6 +117,7 @@ def main():
                     visit(value)
 
         visit(nodes)
+        print('::notice::Xcode test structure: ' + json.dumps({'rootKeys': list(nodes)[:16] if isinstance(nodes, dict) else [], 'nodeTypes': node_types, 'bundles': bundles, 'namedNodes': named_nodes}, ensure_ascii=False))
         for bundle in additional_paths:
             if bundles.get(bundle, 0) <= 0:
                 raise ValueError(f'{bundle}: 실제 테스트 bundle/case를 찾지 못했습니다. 확인한 bundle: {bundles}')

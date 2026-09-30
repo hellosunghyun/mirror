@@ -159,13 +159,32 @@ struct SystemContractTests {
         #expect(after.card?.decisionToken != visible.card?.decisionToken)
     }
 
+    @Test("위젯 오늘 다시 정리는 종료한 주기에서 Today만 다시 카드로 만든다")
+    func reopenOnlyExplicitToday() async throws {
+        let h = try await harness(), initial = try await h.widget.snapshot(at: fixedInstant)
+        let card = try #require(initial.card)
+        _ = try await h.widget.commit(scopeKey: initial.scopeKey, sessionID: initial.sessionID, card: card,
+                                      target: .day(h.context.planningDay), at: fixedInstant)
+        _ = try await h.widget.finish(scopeKey: initial.scopeKey, sessionID: initial.sessionID, at: fixedInstant)
+        let before = try await h.store.snapshot()
+        let reopened = try await h.widget.startReview(scopeKey: initial.scopeKey, todayOnly: true, at: fixedInstant)
+        #expect(reopened.mode == .review)
+        #expect(reopened.manualTodayOverride)
+        #expect(reopened.queue == [card.taskID])
+        #expect(reopened.card?.taskID == card.taskID)
+        #expect(reopened.card?.decisionToken != card.decisionToken)
+        #expect(reopened.sessionID != initial.sessionID)
+        #expect(try await h.store.snapshot().records == before.records)
+        #expect(try await h.widget.snapshot(at: fixedInstant).card == reopened.card)
+    }
+
     @Test("오늘 목록은 operation ID의 사전 순서 대신 배치한 결정 순서를 유지한다")
     func todayUsesDecisionOrder() async throws {
         let h = try await harness()
         let keys = try ["today-first", "today-second"].map { key in
             (key, try OperationRecord.logicalID(workspaceKey: "personal-v1", workspaceEpoch: "local-v1", idempotencyKey: key))
         }.sorted { $0.1 > $1.1 }
-        for (id, key) in zip([h.first, h.second], keys.map(\.0)) {
+        for (id, key) in zip([h.first, h.second], keys.map { $0.0 }) {
             let task = try #require(try await h.store.snapshot().tasks.first { $0.taskID == id })
             let result = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: key,
                 source: .app, context: h.context, workspaceEpoch: "local-v1",
@@ -177,6 +196,8 @@ struct SystemContractTests {
         let second = try await reopened.snapshot(at: fixedInstant)
         #expect(first.today.map(\.taskID) == [h.first, h.second])
         #expect(second.today == first.today)
+        let services = SystemServices(store: h.store, directory: h.directory, workspaceEpoch: "local-v1")
+        #expect(try await services.todayTasks(on: h.context.planningDay, at: fixedInstant).map(\.taskID) == [h.first, h.second])
     }
 
     @Test("위젯 Undo는 원본 결정 버전에 고정하고 후속 제목 수정은 보존한다")
@@ -207,6 +228,28 @@ struct SystemContractTests {
         #expect(!ShowWidgetDatePanelIntent.isDiscoverable)
         #expect(!FinishReviewIntent.isDiscoverable)
     }
+
+    @Test("OS host가 없는 실행도 실제 저장 성공과 시스템 후처리 실패를 분리한다")
+    func canonicalCommitWithRuntimeBoundary() async throws {
+        let h = try await harness(twoTasks: false), state = try await h.widget.snapshot(at: fixedInstant)
+        let card = try #require(state.card)
+        let result = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+                                              target: .day(h.context.planningDay), at: fixedInstant)
+        #expect(result.state == .locallyCommitted)
+        #expect(try await h.store.snapshot().tasks.first { $0.taskID == card.taskID }?.plan.target == .day(h.context.planningDay))
+        let report = try #require(await h.widget.lastSurfaceReport)
+        if !SystemAppleRuntimeHost.isApplicationOrExtension {
+            #expect(report.failures.contains(.notifications))
+            #expect(report.failures.contains(.spotlight))
+            #expect(result.safeUserMessage.contains("저장은 유지"))
+            await #expect(throws: NotificationServiceError.configurationRequired) {
+                try await NotificationService().clearAll()
+            }
+            await #expect(throws: SpotlightServiceError.configurationRequired) {
+                try await SpotlightService().removeAll()
+            }
+        }
+    }
 }
 
 @Suite("알림 예약은 데이터와 전달 정책을 분리한다")
@@ -231,6 +274,24 @@ struct NotificationContractTests {
         let plan = try NotificationPlanner.plan(context: context(), workspaceEpoch: "e1", now: fixedInstant,
             review: .init(), closedDays: [], tasks: [], deadlines: [.init(taskID: UUID(), fireAt: fixedInstant.addingTimeInterval(-1))])
         #expect(plan.requests.isEmpty)
+    }
+
+    @Test("위젯에서 실제 정리를 닫은 뒤 공통 예약 계획은 당일 알림만 제거한다")
+    func widgetClosureCancelsTodayReminder() async throws {
+        let h = try await harness()
+        var preferences = SystemPreferences()
+        preferences.reviewNotification = .init(enabled: true, hour: 15)
+        let before = try SurfaceReconciliationPlan.notifications(snapshot: try await h.store.snapshot(), preferences: preferences, at: fixedInstant)
+        let todayID = "review:local-v1:\(h.context.planningDay)"
+        #expect(before.requests.count == 28)
+        #expect(before.requests.contains { $0.identifier == todayID })
+        let state = try await h.widget.snapshot(at: fixedInstant)
+        let closed = try await h.widget.finish(scopeKey: state.scopeKey, sessionID: state.sessionID, at: fixedInstant)
+        #expect(closed.state == .locallyCommitted)
+        let after = try SurfaceReconciliationPlan.notifications(snapshot: try await h.store.snapshot(), preferences: preferences, at: fixedInstant)
+        #expect(after.requests.count == 27)
+        #expect(!after.requests.contains { $0.identifier == todayID })
+        #expect(Set(before.requests.map(\.identifier)).subtracting([todayID]) == Set(after.requests.map(\.identifier)))
     }
 
     @Test("실제 마감 알림은 계획 변경에 유지되고 완료 후 예약에서 빠진다")

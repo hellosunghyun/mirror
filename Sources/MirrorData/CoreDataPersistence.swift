@@ -27,10 +27,12 @@ final class CoreDataPersistence: @unchecked Sendable {
     private static let connections = CoreDataConnectionRegistry()
     private let canonical: NSPersistentContainer
     private let projection: NSPersistentContainer
+    private let changeHub: CanonicalStoreChangeHub
 
     private init(canonical: NSPersistentContainer, projection: NSPersistentContainer) {
         self.canonical = canonical
         self.projection = projection
+        self.changeHub = CanonicalStoreChangeHub(coordinator: canonical.persistentStoreCoordinator)
     }
 
     static func open(configuration: StoreConfiguration) async throws -> CoreDataPersistence {
@@ -53,9 +55,14 @@ final class CoreDataPersistence: @unchecked Sendable {
         projection.persistentStoreDescriptions = [storeDescription(url: configuration.directory.appendingPathComponent("LocalProjection.sqlite"))]
         try await load(canonical)
         try await load(projection)
-        connections.register(canonical)
+        let persistence = CoreDataPersistence(canonical: canonical, projection: projection)
+        connections.register(canonical, changes: persistence.changeHub)
         connections.register(projection)
-        return CoreDataPersistence(canonical: canonical, projection: projection)
+        return persistence
+    }
+
+    func canonicalChanges(includeInitial: Bool) -> AsyncStream<StoreChangeEvent> {
+        changeHub.stream(includeInitial: includeInitial)
     }
 
     func operations(taskIDs: Set<String>? = nil) async throws -> [StoredOperation] {
@@ -110,6 +117,7 @@ final class CoreDataPersistence: @unchecked Sendable {
             }
             try context.save()
         }
+        if !operations.isEmpty { changeHub.publish() }
     }
 
     func destroyLocalStores() async throws {
@@ -119,6 +127,7 @@ final class CoreDataPersistence: @unchecked Sendable {
             }
         }
         let openConnections = Self.connections.connections(for: Set(stores.map { $0.0 }))
+        Self.connections.finishObservers(for: Set(stores.map { $0.0 }))
         try await Task.detached(priority: .userInitiated) {
             // 같은 프로세스의 별도 인스턴스도 먼저 닫아 지연 checkpoint의 재생성을 막는다.
             try autoreleasepool {
@@ -149,6 +158,7 @@ final class CoreDataPersistence: @unchecked Sendable {
     }
 
     func close() async throws {
+        changeHub.finish()
         try await Task.detached(priority: .userInitiated) { [canonical, projection] in
             for container in [canonical, projection] {
                 let coordinator = container.persistentStoreCoordinator
@@ -386,12 +396,22 @@ private final class CoreDataConnectionRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var entries: [WeakCoreDataConnection] = []
 
-    func register(_ container: NSPersistentContainer) {
+    func register(_ container: NSPersistentContainer, changes: CanonicalStoreChangeHub? = nil) {
         let urls = Set(container.persistentStoreDescriptions.compactMap(\.url).map(Self.key))
         lock.withLock {
             entries.removeAll { $0.container == nil }
-            entries.append(WeakCoreDataConnection(container: container, urls: urls))
+            entries.append(WeakCoreDataConnection(container: container, urls: urls, changes: changes))
         }
+    }
+
+    func finishObservers(for urls: Set<URL>) {
+        let keys = Set(urls.map(Self.key))
+        let observers = lock.withLock {
+            entries.compactMap { entry -> CanonicalStoreChangeHub? in
+                entry.urls.isDisjoint(with: keys) ? nil : entry.changes
+            }
+        }
+        for observer in observers { observer.finish() }
     }
 
     func connections(for urls: Set<URL>) -> [NSPersistentContainer] {
@@ -409,6 +429,77 @@ private final class CoreDataConnectionRegistry: @unchecked Sendable {
 
 private final class WeakCoreDataConnection {
     weak var container: NSPersistentContainer?
+    weak var changes: CanonicalStoreChangeHub?
     let urls: Set<URL>
-    init(container: NSPersistentContainer, urls: Set<URL>) { self.container = container; self.urls = urls }
+    init(container: NSPersistentContainer, urls: Set<URL>, changes: CanonicalStoreChangeHub?) {
+        self.container = container; self.urls = urls; self.changes = changes
+    }
+}
+
+/// Notification은 callback 내부에서 식별하고 Sendable 변경 신호만 소비자에게 보낸다.
+private final class CanonicalStoreChangeHub: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var coordinator: NSPersistentStoreCoordinator?
+    private let storeURLs: Set<URL>
+    private let storeUUIDs: Set<String>
+    private var observer: (any NSObjectProtocol)?
+    private var subscribers: [UUID: AsyncStream<StoreChangeEvent>.Continuation] = [:]
+    private var closed = false
+
+    init(coordinator: NSPersistentStoreCoordinator) {
+        self.coordinator = coordinator
+        self.storeURLs = Set(coordinator.persistentStores.compactMap(\.url).map(Self.key))
+        self.storeUUIDs = Set(coordinator.persistentStores.compactMap {
+            coordinator.metadata(for: $0)[NSStoreUUIDKey] as? String
+        })
+        observer = NotificationCenter.default.addObserver(forName: .NSPersistentStoreRemoteChange, object: nil, queue: nil) {
+            [weak self] notification in
+            guard let self, self.belongsToCanonical(notification) else { return }
+            self.publish()
+        }
+    }
+
+    func stream(includeInitial: Bool) -> AsyncStream<StoreChangeEvent> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<StoreChangeEvent>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        continuation.onTermination = { [weak self] _ in self?.removeSubscriber(id) }
+        let active = lock.withLock {
+            guard !closed else { return false }
+            subscribers[id] = continuation
+            return true
+        }
+        if !active { continuation.finish() }
+        else if includeInitial { continuation.yield(.canonicalChanged) }
+        return stream
+    }
+
+    func publish() {
+        let targets = lock.withLock { closed ? [] : Array(subscribers.values) }
+        for subscriber in targets { subscriber.yield(.canonicalChanged) }
+    }
+
+    func finish() {
+        let resources: ((any NSObjectProtocol)?, [AsyncStream<StoreChangeEvent>.Continuation]) = lock.withLock {
+            guard !closed else { return (nil, []) }
+            closed = true
+            let resources = (observer, Array(subscribers.values))
+            observer = nil
+            subscribers = [:]
+            return resources
+        }
+        if let observer = resources.0 { NotificationCenter.default.removeObserver(observer) }
+        for subscriber in resources.1 { subscriber.finish() }
+    }
+
+    private func removeSubscriber(_ id: UUID) { _ = lock.withLock { subscribers.removeValue(forKey: id) } }
+
+    private func belongsToCanonical(_ notification: Notification) -> Bool {
+        if let url = notification.userInfo?[NSStoreURLKey] as? URL { return storeURLs.contains(Self.key(url)) }
+        if let uuid = notification.userInfo?[NSStoreUUIDKey] as? String { return storeUUIDs.contains(uuid) }
+        guard let own = coordinator, let notifying = notification.object as? NSPersistentStoreCoordinator else { return false }
+        return notifying === own
+    }
+
+    private static func key(_ url: URL) -> URL { url.standardizedFileURL.resolvingSymlinksInPath() }
+    deinit { finish() }
 }

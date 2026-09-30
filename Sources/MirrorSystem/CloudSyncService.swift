@@ -128,7 +128,13 @@ private struct CloudEventNotice: Sendable {
 public actor CloudSyncService {
     private let localConfiguration: StoreConfiguration
     private let setup: CloudSyncSetup
-    private var currentStatus: CloudSyncStatus = .localOnly
+    private var currentStatus: CloudSyncStatus = .localOnly {
+        didSet {
+            guard currentStatus != oldValue else { return }
+            for continuation in statusContinuations.values { continuation.yield(currentStatus) }
+        }
+    }
+    private var statusContinuations: [UUID: AsyncStream<CloudSyncStatus>.Continuation] = [:]
     private var optedIn = false
     private var generation = 0
     private var pendingToken: String?
@@ -147,6 +153,23 @@ public actor CloudSyncService {
         self.localConfiguration = localConfiguration; self.setup = setup
     }
     public func status() -> CloudSyncStatus { currentStatus }
+    /// 현재 상태와 이후 변경만 전달한다. 네트워크나 타이머를 시작하지 않는다.
+    public func statuses() -> AsyncStream<CloudSyncStatus> {
+        let id = UUID()
+        let pair = AsyncStream.makeStream(of: CloudSyncStatus.self, bufferingPolicy: .bufferingNewest(1))
+        pair.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeStatusSubscription(id) }
+        }
+        statusContinuations[id] = pair.continuation
+        pair.continuation.yield(currentStatus)
+        return pair.stream
+    }
+    private func removeStatusSubscription(_ id: UUID) {
+        statusContinuations.removeValue(forKey: id)
+    }
+    deinit {
+        for continuation in statusContinuations.values { continuation.finish() }
+    }
     public func resumeActiveStore(_ active: MirrorStore) async throws {
         try await resumeActiveStore(active: active)
     }

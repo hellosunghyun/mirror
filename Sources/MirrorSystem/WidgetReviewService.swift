@@ -46,15 +46,30 @@ public struct WidgetReviewState: Hashable, Codable, Sendable {
     }
 }
 
+enum TodayTaskOrdering {
+    static func sorted(_ tasks: [TaskProjection], records: [OperationRecord], appliedIDs: Set<String>) -> [TaskProjection] {
+        let order = Dictionary(records.filter { appliedIDs.contains($0.operationID) }
+            .map { ($0.operationID, $0.lamport) }, uniquingKeysWith: { first, _ in first })
+        return tasks.sorted {
+            let left = $0.versions[.plan].flatMap { order[$0.winningOperationID] } ?? 0
+            let right = $1.versions[.plan].flatMap { order[$0.winningOperationID] } ?? 0
+            return left == right ? $0.taskID.uuidString < $1.taskID.uuidString : left < right
+        }
+    }
+}
+
 /// 동일 설정 위젯은 같은 scope의 세션과 카드를 공유한다. 인스턴스 고유 ID를 가정하지 않는다.
 public actor WidgetReviewService {
     private let store: MirrorStore
     private let directory: URL
     private let workspaceEpoch: String
     private let metrics: LocalMetrics
-    public init(store: MirrorStore, directory: URL, workspaceEpoch: String) {
+    private let surfaces: SurfaceReconciler
+    public private(set) var lastSurfaceReport: SurfaceReconciliationReport?
+    public init(store: MirrorStore, directory: URL, workspaceEpoch: String, surfaces: SurfaceReconciler? = nil) {
         self.store = store; self.directory = directory; self.workspaceEpoch = workspaceEpoch
         metrics = LocalMetrics(directory: directory)
+        self.surfaces = surfaces ?? SurfaceReconciler(store: store, directory: directory)
     }
 
     public func snapshot(scopeKey: String = "default", at now: Date = Date()) async throws -> WidgetReviewState {
@@ -66,10 +81,12 @@ public actor WidgetReviewService {
     public func startReview(scopeKey: String = "default", todayOnly: Bool = false, at now: Date = Date()) async throws -> WidgetReviewState {
         try await SystemStoreBoundary.validate(store)
         try validateScope(scopeKey)
-        return try await locked(scopeKey) { [self] in
+        let state = try await locked(scopeKey) { [self] in
             try await store.setLocalValue(nil, forKey: localKey(scopeKey))
             return try await loadAndRefresh(scopeKey: scopeKey, now: now, todayOnly: todayOnly, manuallyStarted: true)
         }
+        WidgetReload.request()
+        return state
     }
 
     public func showPanel(scopeKey: String, cardID: UUID, expectedPanelVersion: Int,
@@ -150,8 +167,9 @@ public actor WidgetReviewService {
             [.staleContext, .staleSnapshot, .alreadyDecided].contains(result.state) ? .stale : .failure
         try? await metrics.record(.init(kind: .widgetInteractionFinished, at: now, surface: .widget, outcome: outcome,
                                        processingMilliseconds: Int(milliseconds)))
+        let reported = await reconcile(result: result, scopeKey: scopeKey, at: now)
         WidgetReload.request()
-        return result
+        return reported
     }
 
     public func finish(scopeKey: String, sessionID: UUID, at now: Date = Date()) async throws -> CommandResult {
@@ -162,8 +180,9 @@ public actor WidgetReviewService {
             guard state.sessionID == sessionID else { throw SystemServiceError.staleCard }
             return try await close(state: state, now: now)
         }
+        let reported = await reconcile(result: result, scopeKey: scopeKey, at: now)
         WidgetReload.request()
-        return result
+        return reported
     }
 
     public func undo(scopeKey: String, operationID: String, expected: [TaskVersionExpectation],
@@ -186,8 +205,26 @@ public actor WidgetReviewService {
             try await save(state)
             return result
         }
+        let reported = await reconcile(result: result, scopeKey: scopeKey, at: now)
         WidgetReload.request()
-        return result
+        return reported
+    }
+
+    private func reconcile(result: CommandResult, scopeKey: String, at now: Date) async -> CommandResult {
+        guard result.requiresSurfaceReconciliation else { return result }
+        let report = await surfaces.reconcile(at: now)
+        lastSurfaceReport = report
+        let reported = result.reporting(report)
+        if !report.failures.isEmpty {
+            // 이미 저장한 명령과 별개의 갱신 경고다. 카드나 결정 토큰을 바꾸지 않는다.
+            try? await locked(scopeKey) { [self] in
+                guard let data = try await store.localValue(forKey: localKey(scopeKey)) else { return }
+                var state = try JSONDecoder().decode(WidgetReviewState.self, from: data)
+                state.message = reported.safeUserMessage
+                try await save(state)
+            }
+        }
+        return reported
     }
 
     private func close(state: WidgetReviewState, now: Date) async throws -> CommandResult {
@@ -236,14 +273,9 @@ public actor WidgetReviewService {
             })
             if report.isCycleClosed(cycle), !manuallyStarted { state.mode = .today }
         }
-        let decisionOrder = Dictionary(snapshot.records.filter { report.appliedOperationIDs.contains($0.operationID) }
-            .map { ($0.operationID, $0.lamport) }, uniquingKeysWith: { first, _ in first })
-        state.today = snapshot.tasks.filter { PlanningRules.isToday($0.planningState, on: context.planningDay) && $0.isProjectionComplete }
-            .sorted {
-                let left = $0.versions[.plan].flatMap { decisionOrder[$0.winningOperationID] } ?? 0
-                let right = $1.versions[.plan].flatMap { decisionOrder[$0.winningOperationID] } ?? 0
-                return left == right ? $0.taskID.uuidString < $1.taskID.uuidString : left < right
-            }
+        state.today = TodayTaskOrdering.sorted(snapshot.tasks.filter {
+            PlanningRules.isToday($0.planningState, on: context.planningDay) && $0.isProjectionComplete
+        }, records: snapshot.records, appliedIDs: report.appliedOperationIDs)
             .prefix(5).compactMap { task in
                 task.versions[.status].map { .init(taskID: task.taskID, title: preferences.hideExternalTitles ? "할 일" : task.title, expectedStatus: $0.headsDigest) }
             }

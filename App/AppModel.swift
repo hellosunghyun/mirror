@@ -115,6 +115,13 @@ final class AppModel {
     @ObservationIgnored private var configuration: StoreConfiguration?
     @ObservationIgnored private var services: SystemServices?
     @ObservationIgnored private var cloud: CloudSyncService?
+    @ObservationIgnored private var cloudStatusObservation: Task<Void, Never>?
+    @ObservationIgnored private var cloudObservationID = UUID()
+    @ObservationIgnored private var canonicalObservation: Task<Void, Never>?
+    @ObservationIgnored private var canonicalRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var storeObservationID = UUID()
+    @ObservationIgnored private var canonicalChangePending = false
+    @ObservationIgnored private var canonicalStreamEnded = false
     @ObservationIgnored private var lamportByOperationID: [String: Int64] = [:]
     @ObservationIgnored private var retryEnvelope: CommandEnvelope?
     @ObservationIgnored private var widgetDecision: (request: PlanPickerRequest, target: PlanTarget)?
@@ -130,6 +137,11 @@ final class AppModel {
         if let bytes = defaults.data(forKey: preferenceKey),
            let saved = try? JSONDecoder().decode(MirrorPreferences.self, from: bytes) { preferences = saved }
         else { preferences = MirrorPreferences() }
+    }
+    deinit {
+        cloudStatusObservation?.cancel()
+        canonicalObservation?.cancel()
+        canonicalRefreshTask?.cancel()
     }
 
     var selectedTask: TaskProjection? { tasks.first { $0.taskID == selectedTaskID } }
@@ -189,6 +201,7 @@ final class AppModel {
             let setup = CloudSyncSetup(containerIdentifier: containerID.flatMap { $0.isEmpty ? nil : $0 },
                                        appGroupIdentifier: configuredGroup.flatMap { $0.isEmpty ? nil : $0 })
             cloud = CloudSyncService(localConfiguration: config, setup: setup)
+            if let cloud { observeCloudStatus(cloud) }
             configuration = config
             if !isUITesting, let configuredGroup, !configuredGroup.isEmpty,
                let active = try await CloudSyncService.resolveActiveConfiguration(appGroupIdentifier: configuredGroup,
@@ -215,6 +228,7 @@ final class AppModel {
                 preferences.deadlineNotifications = systemPreferences.notificationsOnThisDevice && !systemPreferences.deadlineNotifications.isEmpty
                 preferences.deadlineAlarmDates = Dictionary(uniqueKeysWithValues: systemPreferences.deadlineNotifications.map { ($0.taskID, $0.fireAt) })
             }
+            if let store { observeCanonicalChanges(store) }
             await refresh()
             if !isUITesting, let bytes = defaults.data(forKey: sessionKey),
                let saved = try? JSONDecoder().decode(AppReviewSession.self, from: bytes),
@@ -224,21 +238,28 @@ final class AppModel {
             problem = "저장소를 열지 못했어요. 원본은 지우지 않았어요. 다시 시도해 주세요."
         }
         isLoading = false
+        drainCanonicalChanges()
     }
 
     @discardableResult
     func refresh() async -> Bool {
         guard let store else { return false }
+        let identity = storeObservationID
         do {
             if configuration?.cloudSync != nil, let cloud {
                 _ = await cloud.validateLocalIdentity()
-                cloudSyncStatus = await cloud.status()
+                let status = await cloud.status()
+                guard storeObservationID == identity else { return false }
+                cloudSyncStatus = status
                 if cloudSyncStatus == .accountTransitionRequired {
+                    stopCanonicalObservation()
+                    clearTransientData()
                     problem = "iCloud 계정이 바뀌었어요. 이전 계정의 자료를 새 계정에 자동으로 업로드하지 않아요. 동기화 설정을 확인해 주세요."
                     return false
                 }
             }
             let snapshot = try await store.snapshot()
+            guard storeObservationID == identity else { return false }
             tasks = snapshot.tasks.sorted { $0.createdAt < $1.createdAt }
             records = snapshot.records
             lamportByOperationID = Dictionary(snapshot.records.map { ($0.operationID, $0.lamport) },
@@ -259,7 +280,70 @@ final class AppModel {
             if retryEnvelope == nil { projectionPending = false }
             await reconcileSystemServices()
             return true
-        } catch { problem = "저장된 화면을 불러오지 못했어요. 원본을 유지한 채 다시 시도해 주세요."; return false }
+        } catch {
+            guard storeObservationID == identity else { return false }
+            problem = "저장된 화면을 불러오지 못했어요. 원본을 유지한 채 다시 시도해 주세요."
+            return false
+        }
+    }
+
+    private func observeCanonicalChanges(_ activeStore: MirrorStore) {
+        stopCanonicalObservation()
+        let identity = storeObservationID
+        canonicalObservation = Task { [weak self] in
+            do {
+                let changes = try await activeStore.changes()
+                for await _ in changes {
+                    guard !Task.isCancelled, let self, self.storeObservationID == identity else { return }
+                    self.canonicalChangePending = true
+                    self.drainCanonicalChanges()
+                }
+            } catch {
+                // 종료와 구독 실패는 현재 원본의 읽기 경계를 다시 검사한다.
+            }
+            guard !Task.isCancelled, let self, self.storeObservationID == identity else { return }
+            self.canonicalStreamEnded = true
+            self.canonicalChangePending = true
+            self.drainCanonicalChanges()
+        }
+    }
+    private func stopCanonicalObservation() {
+        canonicalObservation?.cancel(); canonicalObservation = nil
+        canonicalRefreshTask?.cancel(); canonicalRefreshTask = nil
+        storeObservationID = UUID()
+        canonicalChangePending = false; canonicalStreamEnded = false
+    }
+    private func drainCanonicalChanges() {
+        guard canonicalChangePending, !isSaving, !isLoading, canonicalRefreshTask == nil else { return }
+        let identity = storeObservationID
+        canonicalRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.storeObservationID == identity,
+                  self.canonicalChangePending, !self.isSaving, !self.isLoading {
+                self.canonicalChangePending = false
+                let ended = self.canonicalStreamEnded
+                let refreshed = await self.refresh()
+                guard !Task.isCancelled, self.storeObservationID == identity else { return }
+                if ended {
+                    self.stopCanonicalObservation()
+                    if !refreshed {
+                        self.store = nil; self.services = nil
+                        self.clearTransientData()
+                        self.problem = "현재 개인 공간의 저장소 연결을 확인할 수 없어요. 이전 화면을 비웠어요. 원본을 다시 열거나 선택한 복원 파일로 복구해 주세요."
+                    } else {
+                        self.problem = "현재 작업은 읽었지만 원본 변경의 자동 갱신 연결을 확인하지 못했어요. 다시 확인을 선택해 저장소를 연결해 주세요."
+                    }
+                    return
+                }
+            }
+            guard self.storeObservationID == identity else { return }
+            self.canonicalRefreshTask = nil
+            self.drainCanonicalChanges()
+        }
+    }
+    private func finishSaving() {
+        isSaving = false
+        drainCanonicalChanges()
     }
 
     func savePreferences() {
@@ -473,13 +557,15 @@ final class AppModel {
         } catch { problem = "파일의 버전·개인 공간·원본 형식을 확인해 주세요. 현재 데이터는 바뀌지 않았어요." }
     }
     func importArchive(confirmAccount: Bool = false, confirmWorkspace: Bool = false) async {
-        guard let bytes = importData else { return }
+        guard let bytes = importData, !isSaving else { return }
         if archivePreview?.requiresAccountConfirmation == true, !confirmAccount {
             problem = "다른 계정의 자료를 이 공간에 가져올지 먼저 확인해 주세요."; return
         }
         if archivePreview?.requiresWorkspaceConfirmation == true, !confirmWorkspace {
             problem = "현재 기기의 작업을 교체하고 원래 자료의 공간을 복원할지 확인해 주세요."; return
         }
+        isSaving = true
+        defer { finishSaving() }
         var sourceRestored = false
         do {
             let oldServices = services
@@ -506,6 +592,7 @@ final class AppModel {
     }
     private func openRestoredWorkspace(_ config: StoreConfiguration, replacing oldServices: SystemServices?) async throws {
         // 교체된 원본에 예전 actor나 화면의 작업을 다시 연결하지 않는다.
+        stopCanonicalObservation()
         store = nil; services = nil; configuration = config
         clearTransientData()
         preferences.deadlineAlarmDates = [:]
@@ -513,15 +600,19 @@ final class AppModel {
         let next = try await MirrorStore(configuration: config)
         store = next
         services = SystemServices(store: next, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
+        observeCanonicalChanges(next)
     }
     func deleteLocalData() async {
-        guard let store else { return }
+        guard let store, !isSaving else { return }
+        isSaving = true
+        defer { finishSaving() }
         var sourceDeleted = false
         do {
             let oldServices = services
             let report = try await store.deleteLocalData()
             guard report.deleted, let config = report.newConfiguration else { problem = report.safeUserMessage; return }
             sourceDeleted = true
+            stopCanonicalObservation()
             self.store = nil; services = nil
             configuration = config
             clearTransientData()
@@ -532,6 +623,7 @@ final class AppModel {
             let next = try await MirrorStore(configuration: config)
             self.store = next
             services = SystemServices(store: next, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
+            observeCanonicalChanges(next)
             resetCloudService(localConfiguration: config)
             defaults.set(config.workspaceEpoch, forKey: "Mirror.workspaceEpoch.v1")
             tasks = []; records = []; review = nil; lastUndo = nil
@@ -547,7 +639,10 @@ final class AppModel {
         if let widgetDecision { _ = await commitWidget(widgetDecision.request, target: widgetDecision.target) }
         else if let retryEnvelope { _ = await execute(retryEnvelope, success: "이 기기에 저장했어요.") }
         else if store == nil { await start() }
-        else { await refresh() }
+        else {
+            if let store, canonicalObservation == nil, cloudSyncStatus != .accountTransitionRequired { observeCanonicalChanges(store) }
+            await refresh()
+        }
     }
 
     @discardableResult
@@ -565,10 +660,11 @@ final class AppModel {
     private func execute(_ envelope: CommandEnvelope, success: String) async -> Bool {
         guard let store, !isSaving, !projectionPending || envelope.idempotencyKey == retryEnvelope?.idempotencyKey else { return false }
         isSaving = true; problem = nil
-        defer { isSaving = false }
+        defer { finishSaving() }
         if configuration?.cloudSync != nil, let cloud, !isUITesting {
             guard await cloud.validateLocalIdentity() else {
                 cloudSyncStatus = await cloud.status()
+                stopCanonicalObservation()
                 problem = "iCloud 계정을 확인하지 못했어요. 이전 계정 공간의 쓰기를 잠시 멈췄어요. 동기화 설정을 확인해 주세요."
                 return false
             }
@@ -797,7 +893,8 @@ final class AppModel {
         } catch { problem = "이 공간의 작업을 찾을 수 없거나 링크가 오래되었어요. 데이터는 바뀌지 않았어요." }
     }
     private func reconcileSystemServices() async {
-        guard let services, let context, let configuration else { return }
+        guard let services, let context else { return }
+        let identity = storeObservationID
         do {
             let reviewPreference = ReviewNotificationPreference(enabled: preferences.reviewNotifications,
                                                                  hour: preferences.reviewHour, minute: preferences.reviewMinute,
@@ -809,33 +906,21 @@ final class AppModel {
                                                       selectedCalendarIDs: preferences.selectedCalendars,
                                                       reviewNotification: reviewPreference, deadlineNotifications: deadlinePreferences)
             try await services.savePreferences(systemPreferences)
-            let closedDays: Set<LocalDate> = Set(records.compactMap { record in
-                guard let closure = record.reviewClosure else { return nil }
-                for offset in 0..<28 {
-                    guard let day = try? context.planningDay.addingDays(offset),
-                          let dayContext = try? PlanningContext(planningDay: day, timeZoneID: context.timeZoneID,
-                                                                 policyRevision: context.policyRevision, capturedAt: now) else { continue }
-                    if closure.cycleID == ReviewCycle.id(workspaceEpoch: configuration.workspaceEpoch, context: dayContext) { return day }
-                }
-                return nil
-            })
-            let plan = try NotificationPlanner.plan(context: context, workspaceEpoch: configuration.workspaceEpoch, now: now,
-                                                    review: reviewPreference, closedDays: closedDays, tasks: tasks, deadlines: deadlinePreferences)
-            notificationOmittedCount = plan.omittedCount
-            let notifications = await services.notifications
-            if systemPreferences.notificationsOnThisDevice { try await notifications.reconcile(plan: plan) }
-            else { await notifications.clearAll() }
-            let spotlight = await services.spotlight
-            try await spotlight.reconcile(tasks: tasks, enabled: preferences.spotlightEnabled, hideTitles: preferences.hideExternalTitles)
+            let report = await services.reconcileExternalSurfaces(at: now)
+            guard storeObservationID == identity else { return }
+            notificationOmittedCount = report.omittedNotificationCount
             WidgetReload.request()
-            systemProblem = nil
-        } catch { systemProblem = "할 일은 저장되어 있어요. 알림 또는 시스템 검색 갱신을 다시 확인해 주세요." }
+            systemProblem = report.safeUserMessage
+        } catch {
+            guard storeObservationID == identity else { return }
+            systemProblem = "할 일은 저장되어 있어요. 알림 또는 시스템 검색 갱신을 다시 확인해 주세요."
+        }
     }
     private func commitWidget(_ request: PlanPickerRequest, target: PlanTarget, acknowledgment: DeadlineAcknowledgment? = nil) async -> Bool {
         guard let services, let state = request.widgetState, let card = state.card, !isSaving,
               let configuration else { return false }
         isSaving = true; problem = nil
-        defer { isSaving = false }
+        defer { finishSaving() }
         let envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: card.decisionToken, source: .widget,
                                        context: card.context, workspaceEpoch: configuration.workspaceEpoch,
                                        payload: .setPlan(item: PlanCommandItem(taskID: card.taskID, expected: card.expected, acknowledgment: acknowledgment),
@@ -863,29 +948,67 @@ final class AppModel {
                                                       appGroupIdentifier: group.flatMap { $0.isEmpty ? nil : $0 }))
         cloudSyncStatus = .localOnly
         cloudPreview = nil
+        if let cloud { observeCloudStatus(cloud) }
+    }
+    private func observeCloudStatus(_ connection: CloudSyncService) {
+        cloudStatusObservation?.cancel()
+        let identity = UUID()
+        cloudObservationID = identity
+        cloudStatusObservation = Task { [weak self] in
+            let stream = await connection.statuses()
+            for await status in stream {
+                guard !Task.isCancelled, let self, self.cloudObservationID == identity else { break }
+                self.cloudSyncStatus = status
+                if status == .accountTransitionRequired {
+                    self.stopCanonicalObservation()
+                    self.clearTransientData()
+                    self.problem = "iCloud 계정이 바뀌어 이전 개인 공간의 화면을 비웠어요. 새 계정으로 자동 병합하지 않아요. 동기화 설정을 확인해 주세요."
+                }
+            }
+        }
     }
     func previewCloudConnection() async {
         guard let cloud, let store, !isSaving else { return }
         isSaving = true
-        defer { isSaving = false }
+        defer { finishSaving() }
         cloudPreview = await cloud.previewEnable(localStore: store, explicitOptIn: true, at: now)
         cloudSyncStatus = await cloud.status()
     }
     func confirmCloudConnection() async {
         guard let cloud, let preview = cloudPreview, !isSaving else { return }
         isSaving = true
-        defer { isSaving = false }
+        defer { finishSaving() }
         if let cloudStore = await cloud.confirmEnable(token: preview.token, consentToMerge: true) {
             let config = await cloudStore.configuration
             self.store = cloudStore; configuration = config
             services = SystemServices(store: cloudStore, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
             if let services { await services.attachCloudMonitor(cloud) }
+            observeCanonicalChanges(cloudStore)
             cloudPreview = nil; review = nil; picker = nil; lastUndo = nil
             defaults.removeObject(forKey: sessionKey)
             cloudSyncStatus = await cloud.status()
             await refresh()
             feedback = "이 기기의 작업을 연결했어요. iCloud 전송과 다른 기기의 반영은 별도 상태로 확인해요."
-        } else { cloudSyncStatus = await cloud.status(); problem = "iCloud 연결을 마치지 못했어요. 계정과 병합 상태를 다시 확인해 주세요." }
+        } else {
+            let failureStatus = await cloud.status()
+            do {
+                // 병합 전에 exportAndSuspend로 닫힌 로컬 actor도 새로 개설한다.
+                let local = try await cloud.disable()
+                let config = await local.configuration
+                self.store = local; configuration = config
+                services = SystemServices(store: local, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
+                observeCanonicalChanges(local)
+                cloudPreview = nil
+                cloudSyncStatus = await cloud.status()
+                await refresh()
+                problem = "iCloud 연결을 마치지 못해 기기 전용 공간을 다시 열었어요. 기존 원본은 유지했어요. 계정과 병합 상태를 다시 확인해 주세요."
+            } catch {
+                stopCanonicalObservation()
+                self.store = nil; services = nil
+                cloudSyncStatus = failureStatus
+                problem = "iCloud 연결과 기기 전용 저장소를 다시 확인해야 해요. 저장된 원본은 지우지 않았어요. 다시 확인을 선택해 주세요."
+            }
+        }
     }
     func cancelCloudConnection() async {
         guard let cloud else { return }
@@ -894,12 +1017,13 @@ final class AppModel {
     func disableCloudConnection() async {
         guard let cloud, !isSaving else { return }
         isSaving = true
-        defer { isSaving = false }
+        defer { finishSaving() }
         do {
             let local = try await cloud.disable()
             let config = await local.configuration
             self.store = local; configuration = config
             services = SystemServices(store: local, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
+            observeCanonicalChanges(local)
             cloudPreview = nil; review = nil; lastUndo = nil; cloudSyncStatus = .localOnly
             await refresh()
             feedback = "동기화 연결을 중지했어요. 연결 전의 기기 전용 공간으로 돌아왔어요. iCloud 원본은 지우거나 자동 복사하지 않았어요."

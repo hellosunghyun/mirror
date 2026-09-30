@@ -4,6 +4,12 @@ import MirrorData
 
 public enum SystemProcessRole: Sendable { case automatic, application, sharedExtension }
 
+enum SystemAppleRuntimeHost {
+    static var isApplicationOrExtension: Bool {
+        ["app", "appex"].contains(Bundle.main.bundleURL.pathExtension.lowercased())
+    }
+}
+
 /// 각 프로세스에서 직접 초기화한다. 앱 화면의 실행이나 온보딩 singleton에 의존하지 않는다.
 public enum SystemCompositionRoot {
     public static func open(role: SystemProcessRole = .automatic) async throws -> SystemServices {
@@ -103,16 +109,30 @@ public actor SystemServices {
     public let spotlight: SpotlightService
     public let metrics: LocalMetrics
     public let widget: WidgetReviewService
+    public let surfaces: SurfaceReconciler
+    public private(set) var lastSurfaceReport: SurfaceReconciliationReport?
     private var cloudMonitor: CloudSyncService?
 
     public init(store: MirrorStore, directory: URL, workspaceEpoch: String) {
         self.store = store; self.directory = directory; self.workspaceEpoch = workspaceEpoch
-        calendar = CalendarService(); notifications = NotificationService(); spotlight = SpotlightService()
+        calendar = CalendarService()
+        let notificationService = NotificationService(), spotlightService = SpotlightService()
+        notifications = notificationService; spotlight = spotlightService
         metrics = LocalMetrics(directory: directory)
-        widget = WidgetReviewService(store: store, directory: directory, workspaceEpoch: workspaceEpoch)
+        let reconciler = SurfaceReconciler(store: store, directory: directory,
+                                          notifications: notificationService, spotlight: spotlightService)
+        surfaces = reconciler
+        widget = WidgetReviewService(store: store, directory: directory, workspaceEpoch: workspaceEpoch, surfaces: reconciler)
     }
 
     public func attachCloudMonitor(_ monitor: CloudSyncService) { cloudMonitor = monitor }
+
+    @discardableResult
+    public func reconcileExternalSurfaces(at now: Date = Date()) async -> SurfaceReconciliationReport {
+        let report = await surfaces.reconcile(at: now)
+        lastSurfaceReport = report
+        return report
+    }
 
     public func preferences() async throws -> SystemPreferences {
         do {
@@ -130,7 +150,7 @@ public actor SystemServices {
         }
         try await store.setLocalValue(JSONEncoder().encode(preferences), forKey: "system-preferences-v1")
         if !preferences.spotlightEnabled || preferences.hideExternalTitles { try await spotlight.removeAll() }
-        if !preferences.notificationsOnThisDevice { await notifications.clearAll() }
+        if !preferences.notificationsOnThisDevice { try await notifications.clearAll() }
         await calendar.clearCache()
         WidgetReload.request()
     }
@@ -139,7 +159,7 @@ public actor SystemServices {
     public func eraseLocalSurfaceData() async -> LocalSurfaceCleanupReport {
         var failures: Set<LocalSurfaceCleanupFailure> = []
         do { try await spotlight.removeAll() } catch { failures.insert(.spotlight) }
-        await notifications.clearAll()
+        do { try await notifications.clearAll() } catch { failures.insert(.notifications) }
         await calendar.clearCache()
         do { try await metrics.erase() } catch { failures.insert(.diagnostics) }
         await SystemCompositionRoot.invalidate(directory: directory)
@@ -175,6 +195,22 @@ public actor SystemServices {
         return task
     }
 
+    public func todayTasks(on date: LocalDate? = nil, at now: Date = Date()) async throws -> [TaskProjection] {
+        do {
+            try await validateBoundary()
+            let snapshot = try await store.snapshot()
+            let context = try PlanningContext.capture(at: now, timeZoneID: snapshot.policy.timeZoneID,
+                                                     policyRevision: snapshot.policy.revision)
+            let report = TaskReducer.reduce(snapshot.records, workspaceKey: snapshot.workspaceKey, workspaceEpoch: snapshot.workspaceEpoch)
+            return TodayTaskOrdering.sorted(snapshot.tasks.filter {
+                $0.isProjectionComplete && PlanningRules.isToday($0.planningState, on: date ?? context.planningDay)
+            }, records: snapshot.records, appliedIDs: report.appliedOperationIDs)
+        } catch {
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw error
+        }
+    }
+
     public func execute(_ payload: CommandPayload, source: CommandSource, key: String = UUID().uuidString,
                         displayedContext: PlanningContext? = nil) async throws -> CommandResult {
         let current = try await currentContext()
@@ -203,6 +239,9 @@ public actor SystemServices {
                                             outcome: outcome, processingMilliseconds: Int(milliseconds)))
         }
         WidgetReload.request()
+        if result.requiresSurfaceReconciliation {
+            return result.reporting(await reconcileExternalSurfaces(at: current.capturedAt))
+        }
         return result
     }
 

@@ -1,6 +1,11 @@
 import Foundation
 import MirrorDomain
 
+/// 저장소가 바뀌었다는 신호만 전달한다. 원본 제목·Notification·Core Data 객체를 전달하지 않는다.
+public enum StoreChangeEvent: Sendable, Equatable {
+    case canonicalChanged
+}
+
 public struct StoreSnapshot: Sendable {
     public let tasks: [TaskProjection]
     public let records: [OperationRecord]
@@ -125,6 +130,12 @@ public actor MirrorStore {
             defer { projectionLease.release() }
             try await persistence.saveProjection(try Self.projectionValues(tasks: self.tasks, policy: self.policy), replacingTasks: true)
         }
+    }
+
+    /// 최초 1회와 원본 변경만 알린다. 투영/영수증 저장은 이 stream의 변경 사유가 아니다.
+    public func changes(includeInitial: Bool = true) throws -> AsyncStream<StoreChangeEvent> {
+        try assertIdentity()
+        return persistence.canonicalChanges(includeInitial: includeInitial)
     }
 
     public func snapshot() async throws -> StoreSnapshot {

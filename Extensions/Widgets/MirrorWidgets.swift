@@ -188,7 +188,9 @@ struct MirrorWidgetView: View {
                     Label(item.title, systemImage: "circle").lineLimit(1).privacySensitive()
                 }.frame(minHeight: 44).accessibilityLabel("\(item.title), 완료하기")
             }
-            Link("오늘 다시 정리", destination: MirrorDeepLink.url(for: .review(weekly: false)))
+            Button(intent: StartTodayWidgetReviewIntent(scopeKey: state.scopeKey)) {
+                Text("오늘 다시 정리")
+            }.frame(minHeight: 44)
         }
     }
     private func unavailable(_ message: String) -> some View {

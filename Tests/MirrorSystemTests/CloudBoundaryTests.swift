@@ -1,5 +1,6 @@
 import Foundation
 import CloudKit
+import MirrorData
 import Testing
 @testable import MirrorSystem
 
@@ -67,6 +68,63 @@ struct CloudBoundaryTests {
             == .blocked([.authoritativeEpochNotConfigured, .offlineResurrectionNotVerified]))
         #expect(CloudSyncPolicy.deletion(confirmedTwice: true, activeAccountVerified: false)
             == .blocked([.accountNotVerified, .authoritativeEpochNotConfigured, .offlineResurrectionNotVerified]))
+    }
+
+    @Test("상태 구독은 계정 API 없이 초기 로컬 상태를 제공한다")
+    func statusSubscriptionHasInitialState() async {
+        let service = CloudSyncService(localConfiguration: Self.configuration(),
+            setup: CloudSyncSetup(containerIdentifier: nil, appGroupIdentifier: nil))
+        let stream = await service.statuses()
+        var iterator = stream.makeAsyncIterator()
+        #expect(await iterator.next() == .localOnly)
+    }
+
+    @Test("느린 상태 구독에는 오래된 초기값 대신 최신 설정 오류만 남는다")
+    func statusSubscriptionKeepsLatestBoundedValue() async throws {
+        let configuration = Self.configuration()
+        let local = try await MirrorStore(configuration: configuration)
+        let service = CloudSyncService(localConfiguration: configuration,
+            setup: CloudSyncSetup(containerIdentifier: nil, appGroupIdentifier: nil))
+        let stream = await service.statuses()
+        let preview = await service.previewEnable(localStore: local, explicitOptIn: true,
+                                                    at: Date(timeIntervalSince1970: 1_790_000_000))
+        #expect(preview == nil)
+        var iterator = stream.makeAsyncIterator()
+        #expect(await iterator.next() == .configurationRequired([.cloudContainerIdentifier, .appGroupIdentifier]))
+        try await local.suspend()
+        try? FileManager.default.removeItem(at: configuration.directory)
+    }
+
+    @Test("상태 소비 취소는 추가 변화 없이 대기를 끝낸다")
+    func statusSubscriptionCancellationFinishes() async {
+        let service = CloudSyncService(localConfiguration: Self.configuration(),
+            setup: CloudSyncSetup(containerIdentifier: nil, appGroupIdentifier: nil))
+        let stream = await service.statuses()
+        let consumer = Task {
+            for await _ in stream {}
+            return true
+        }
+        consumer.cancel()
+        #expect(await consumer.value)
+    }
+
+    @Test("서비스 수명이 끝나면 상태 구독도 종료한다")
+    func statusSubscriptionFollowsServiceLifetime() async {
+        let stream = await Self.streamAfterServiceScopeEnds()
+        var iterator = stream.makeAsyncIterator()
+        #expect(await iterator.next() == .localOnly)
+        #expect(await iterator.next() == nil)
+    }
+
+    private static func streamAfterServiceScopeEnds() async -> AsyncStream<CloudSyncStatus> {
+        let service = CloudSyncService(localConfiguration: configuration(),
+            setup: CloudSyncSetup(containerIdentifier: nil, appGroupIdentifier: nil))
+        return await service.statuses()
+    }
+
+    private static func configuration() -> StoreConfiguration {
+        StoreConfiguration(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+            deviceID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     }
 
     @Test("서명 식별자가 없는 제품은 stable 기본 세대를 사용하되 설정 완료로 표시하지 않는다")

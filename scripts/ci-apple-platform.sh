@@ -85,7 +85,8 @@ if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
   xcrun xcresulttool get test-results summary --path "$result_dir/Tests.xcresult" > "$result_dir/summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/Tests.xcresult" > "$result_dir/tests.json"
   ci_phase='필수 unit/integration bundle 실행 확인'
-  python3 scripts/ci_results.py bundles "$result_dir/tests.json" MirrorDomainTests MirrorDataTests MirrorSystemTests
+  bundle_status=0
+  python3 scripts/ci_results.py bundles "$result_dir/tests.json" MirrorDomainTests MirrorDataTests MirrorSystemTests || bundle_status=$?
 else
   test_status=$?
   python3 scripts/ci_results.py diagnostics "$result_dir/test.log" || true
@@ -93,7 +94,8 @@ else
 fi
 
 ci_phase='앱과 확장 packaging 확인'
-python3 scripts/ci-package.py "$platform" "$result_dir/DerivedData"
+package_status=0
+python3 scripts/ci-package.py "$platform" "$result_dir/DerivedData" || package_status=$?
 
 ci_phase='실제 UI 테스트'
 if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
@@ -104,6 +106,11 @@ if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Deb
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
   ci_phase='단위·통합·UI 실제 결과 검증'
   python3 scripts/ci_results.py xcode "$result_dir/summary.json" "$result_dir/ui-summary.json"
+  # 다른 독립 검증 결과도 수집하되 필수 bundle/packaging 실패는 최종 상태에 보존한다.
+  if test "$bundle_status" -ne 0 || test "$package_status" -ne 0; then
+    ci_phase='필수 bundle·packaging 결과'
+    exit 1
+  fi
 else
   test_status=$?
   python3 scripts/ci_results.py diagnostics "$result_dir/ui.log" || true

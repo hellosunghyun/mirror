@@ -23,6 +23,23 @@ private func capture(id: UUID = UUID(), key: String = UUID().uuidString, title: 
                     payload: .capture(taskID: id, content: try TaskContent(title: title)))
 }
 
+private enum ObservationTestError: Error { case timeout }
+
+private func nextChange(in stream: AsyncStream<StoreChangeEvent>, timeout: Duration = .seconds(5)) async throws -> StoreChangeEvent? {
+    try await withThrowingTaskGroup(of: StoreChangeEvent?.self) { group in
+        group.addTask {
+            for await event in stream { return event }
+            return nil
+        }
+        group.addTask {
+            try await Task.sleep(for: timeout)
+            throw ObservationTestError.timeout
+        }
+        defer { group.cancelAll() }
+        return try await group.next() ?? nil
+    }
+}
+
 @Suite("실제 Core Data SQLite 저장과 복구")
 struct StoreIntegrationTests {
     @Test("원본 저장 전 실패는 원본과 작업을 남기지 않는다")
@@ -447,6 +464,54 @@ struct StoreIntegrationTests {
         #expect(try await reopened.snapshot().tasks.count == 1)
         #expect(try await reopened.snapshot().records.count == 1)
         #expect(await reopened.cloudStoreIdentifiers().isEmpty)
+    }
+
+    @Test("다른 SQLite store의 원본 알림 뒤 snapshot에 저장한 작업이 나타난다")
+    func canonicalChangeObservationAcrossInstances() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let reader = try await MirrorStore(configuration: configuration)
+        let writer = try await MirrorStore(configuration: configuration)
+        let stream = try await reader.changes(includeInitial: false)
+        let context = try fixedContext()
+        #expect(await writer.execute(try capture(title: "실제 저장소 알림", context: context), at: context.capturedAt).state == .locallyCommitted)
+        #expect(try await nextChange(in: stream) == .canonicalChanged)
+        let changed = try await reader.snapshot()
+        #expect(changed.tasks.map(\.title) == ["실제 저장소 알림"])
+        #expect(changed.records.count == 1)
+    }
+
+    @Test("투영과 영수증 저장은 원본 변경 stream의 refresh 반복을 만들지 않는다")
+    func localProjectionDoesNotPublishCanonicalChange() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let reader = try await MirrorStore(configuration: configuration)
+        let writer = try await MirrorStore(configuration: configuration)
+        let stream = try await reader.changes(includeInitial: false)
+        try await writer.setLocalValue(Data("local presentation".utf8), forKey: "widget")
+        await #expect(throws: ObservationTestError.timeout) { try await nextChange(in: stream, timeout: .milliseconds(350)) }
+        #expect(try await reader.snapshot().records.isEmpty)
+        #expect(try await reader.snapshot().tasks.isEmpty)
+    }
+
+    @Test("소비자 취소와 suspend는 변경 구독을 종료하며 원본을 남긴다")
+    func canonicalObservationTermination() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let cancelledStream = try await store.changes(includeInitial: false)
+        let cancelled = Task {
+            for await _ in cancelledStream { }
+            return true
+        }
+        cancelled.cancel()
+        #expect(await cancelled.value)
+        let closingStream = try await store.changes(includeInitial: false)
+        try await store.suspend()
+        #expect(try await nextChange(in: closingStream) == nil)
+        await #expect(throws: StoreError.obsoleteEpoch) { try await store.changes() }
+        let reopened = try await MirrorStore(configuration: configuration)
+        #expect(try await reopened.snapshot().records.isEmpty)
     }
 
     @Test("활성화 확인 시 export는 preview 이후 성공한 입력도 포함한다")

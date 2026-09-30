@@ -40,7 +40,7 @@ public enum SystemServiceError: Error, Equatable, Sendable, LocalizedError {
     }
 }
 
-public enum LocalSurfaceCleanupFailure: String, Codable, Sendable { case spotlight, diagnostics }
+public enum LocalSurfaceCleanupFailure: String, Codable, Sendable { case spotlight, notifications, diagnostics }
 public struct LocalSurfaceCleanupReport: Equatable, Sendable {
     public let failures: Set<LocalSurfaceCleanupFailure>
     /// 이미 그려진 OS snapshot은 reload 요청 이후 시스템이 갱신한다.
