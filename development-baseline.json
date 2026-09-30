@@ -7,9 +7,9 @@
   },
   "repository": {
     "nameWithOwner": "hellosunghyun/mirror",
-    "visibility": "private",
+    "visibility": "public",
     "requestedVisibility": "public",
-    "visibilityChangeStatus": "blocked_integration_permission"
+    "visibilityChangeStatus": "verified"
   },
   "deploymentTargets": {
     "iOS": "27.0",

@@ -6,7 +6,7 @@
 
 ## 1. 현재 구현과 완료의 의미
 
-확정 기준은 미러/Mirror, 저장소 공개 목표 public, iOS·iPadOS·macOS 27.0, SwiftUI와 SwiftPieces다. 원본의 Postpone 가칭과 이전 최소 OS보다 [개발 기준](../development-baseline.json)과 [README](../README.md)가 우선한다. 식별자 접두사는 `com.baserize`이며 개발 Bundle ID 적용과 Apple 등록·서명 완료는 별개다.
+확정 기준은 미러/Mirror, public 저장소, iOS·iPadOS·macOS 27.0, SwiftUI와 SwiftPieces다. 원본의 Postpone 가칭과 이전 최소 OS보다 [개발 기준](../development-baseline.json)과 [README](../README.md)가 우선한다. 식별자 접두사는 `com.baserize`이며 개발 Bundle ID 적용과 Apple 등록·서명 완료는 별개다.
 
 최초 계획의 출발점은 이름을 표시하는 앱 골격과 날짜 도메인이었다. 이는 과거 이력이다. 코드 `74d02286d396c59e860394cdc660d72f5ea6dfa2`와 Simulator 준비를 보완한 `fa783ae`의 [Actions 36747271079](https://github.com/hellosunghyun/mirror/actions/runs/36747271079)에서 SwiftPM·Mac·iPhone·iPad 각각 도메인 테스트 37개가 통과했다. 현재 구현이나 전체 수용 결과를 이 초기 실행으로 대신하지 않는다.
 
