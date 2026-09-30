@@ -10,7 +10,7 @@
 - 저장소: `hellosunghyun/mirror`, **private**. 공개 범위를 임의로 변경하지 않는다.
 - 현재는 개발 명세와 준비 검증 코드가 있는 단계다. 앱 코드, Xcode 프로젝트, 앱 빌드·테스트 명령은 아직 없다.
 - 원본의 `Postpone` 작업명과 이전 최소 OS 권고보다 [README](README.md)와 [개발 기준](development-baseline.json)의 확정값이 우선한다.
-- Bundle ID, App Group, iCloud container, 서명 Team은 미정이다. 실제 사용자 계정과 함께 결정하며 원본 가칭을 확정값으로 복사하지 않는다.
+- 식별자 접두사는 사용자 지정 `com.baserize`다. 전체 Bundle ID·App Group은 [README의 후보](README.md#식별자-후보)이며 Apple 등록이나 실제 설정 완료를 뜻하지 않는다. 플랫폼별 ID 구성, iCloud container, 서명 Team은 아직 미정이다. 원본 가칭을 확정값으로 복사하지 않는다.
 
 ## 작업 전 확인
 

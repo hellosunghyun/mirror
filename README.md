@@ -4,6 +4,12 @@
 
 미루기와 재결정 최소화를 중심으로 하는 iPhone / iPad / Mac 앱의 제작 준비 저장소다. 개발 명세, JSON 계약, 도메인 fixture, QA 명세와 자동 검증을 포함한다. 앱 구현과 Xcode 프로젝트 생성은 다음 개발 작업이다.
 
+## 이름 설명
+
+이름의 의미를 소개할 때만 사용하는 짧은 설명 초안:
+
+> 미러(Mirror)는 ‘미뤄’를 표현한 이름입니다. 할 일을 알맞은 때로 미루고, 지금 할 일에 집중하도록 돕습니다.
+
 ## 확정된 개발 기준
 
 - 앱 이름: **미러(Mirror)**. 한국어 표시명은 `미러`, 영문 이름은 `Mirror`.
@@ -15,7 +21,24 @@
 
 2026-09-30 로컬 환경에서 Xcode **27.0 (27A266a)**, Swift **6.4**, iPhoneOS / macOS SDK **27.0**, iOS Simulator runtime **27.0**을 확인했다. 설치된 도구 확인은 앱 빌드나 OS 호환성 검증을 의미하지 않는다. 세부 값은 [development-baseline.json](development-baseline.json)에 기록한다.
 
-원본 문서의 제품명 미정 / `Postpone` 작업명과 iOS·iPadOS 18 / macOS 15 권고보다 **이 저장소의 확정 이름과 OS 기준이 우선한다**. 원본 문서의 기술 제안과 미결정 사항은 사용자 승인 사실로 바꾸지 않는다. Bundle ID, App Group, iCloud container, 서명 Team은 아직 미정이다.
+원본 문서의 제품명 미정 / `Postpone` 작업명과 iOS·iPadOS 18 / macOS 15 권고보다 **이 저장소의 확정 이름과 OS 기준이 우선한다**. 원본 문서의 기술 제안과 미결정 사항은 사용자 승인 사실로 바꾸지 않는다. 식별자 접두사 `com.baserize`는 사용자 지정값이며, 전체 Bundle ID·App Group과 플랫폼별 구성은 아래 후보를 기준으로 결정한다. iCloud container와 서명 Team은 아직 미정이다.
+
+## 식별자 후보
+
+사용자 지정 접두사는 **`com.baserize`**다. 아래 값은 이름과 원본의 타깃 제안으로 구성한 **후보**이며 Apple Developer 등록, 사용 가능 여부 확인, 실제 Xcode 설정 적용은 아직 수행하지 않았다.
+
+| 대상 | 후보 | 결정할 사항 |
+|---|---|---|
+| iPhone / iPad 메인 앱 | `com.baserize.mirror` | 메인 Bundle ID 추천 후보 |
+| Mac 메인 앱 | `com.baserize.mirror` 또는 `com.baserize.mirror.mac` | 플랫폼 간 Bundle ID 공유 여부 |
+| iOS 위젯 | `com.baserize.mirror.widgets` | 실제 위젯 타깃 구성 |
+| Mac 위젯 | `com.baserize.mirror.widgets` 또는 `com.baserize.mirror.mac.widgets` | Mac 호스트 앱의 Bundle ID에 맞춰 결정 |
+| 공유 확장 | `com.baserize.mirror.share` | 지원 플랫폼·호스트 타깃; Mac 별도 ID 사용 시 호스트 접두사에 맞춰 조정 |
+| App Group | `group.com.baserize.mirror` | 실제 앱·확장의 그룹 연결과 서명 검증 |
+
+App Group은 같은 개발팀의 앱·확장이 같은 기기의 저장 공간을 공유하기 위한 식별자다. 기기 간 동기화는 별도이며, `com.baserize`는 Apple의 서명 Team ID가 아니다. Mac의 App Group 적용 방식은 서명 Team과 배포 구성이 정해진 후 공유 컨테이너 접근으로 확인한다. iCloud container와 URL scheme은 이 후보 작업에서 확정하지 않는다.
+
+표기와 공유 범위는 Apple의 [App Group 구성](https://developer.apple.com/documentation/xcode/configuring-app-groups) 및 [App Groups entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.application-groups) 문서로 확인했다. 원본 05 문서의 가칭 식별자 예시를 덮어쓰지 않는다.
 
 ## 압축에서 가져온 자료
 

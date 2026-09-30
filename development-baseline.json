@@ -2,7 +2,8 @@
   "recordedAt": "2026-09-30",
   "product": {
     "displayName": "미러",
-    "englishName": "Mirror"
+    "englishName": "Mirror",
+    "identifierPrefix": "com.baserize"
   },
   "repository": {
     "nameWithOwner": "hellosunghyun/mirror",
