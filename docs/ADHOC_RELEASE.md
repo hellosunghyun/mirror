@@ -36,3 +36,9 @@ Release 태그는 adhoc-실행ID다. 실행을 재시도하면 같은 태그의 
 프로파일 원본, .p12, 개인키, 키체인, archive와 배포 로그는 Release와 Git에 넣지 않는다. 임시 키체인과 설치한 프로파일은 실행 종료 시 정리한다. Secret 미등록·만료·서명 불일치·검증 실패를 빈 Release 게시로 대신하지 않는다.
 
 첫 실제 IPA 게시 전까지 자동화 코드 작성과 성공한 배포를 구별한다. 실제 UI·두 기기 동기화·전체 CloudKit 삭제·VoiceOver·사용자 검증의 남은 범위는 [요구사항 추적표](REQUIREMENTS_TRACEABILITY.md)에 유지한다.
+
+## 원격 검증 기록
+
+`4ef52f969059ff15c693b635bfd1596d69b42e25`의 [준비 검사 36791084443](https://github.com/hellosunghyun/mirror/actions/runs/36791084443)은 원본 무결성과 Python 회귀 40개를 통과했다. 기존 준비 9개, 합성 프로파일 검증 12개, 합성 IPA/API 게시 경계 19개다. 합성 테스트는 실제 Apple 개인키 서명이나 IPA 설치 성공을 대신하지 않는다.
+
+같은 push의 [첫 자동 배포 36791084786](https://github.com/hellosunghyun/mirror/actions/runs/36791084786)은 세 서명 Secret이 모두 누락된 것으로 확인되어 준비 단계에서 실패했다. 배포용 검증·archive·publish는 실행되지 않았고 Release도 생성하지 않았다. 등록 후 해당 실행을 재시도해 실제 자료 일치와 검증·서명·게시를 확인해야 한다.

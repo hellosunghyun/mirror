@@ -16,7 +16,9 @@ struct MirrorApp: App {
             MirrorRootView()
                 .environment(model)
         }
+        #if os(macOS)
         .commands { MirrorCommands(model: model) }
+        #endif
         .defaultSize(width: 1_100, height: 740)
         #if os(macOS)
         MenuBarExtra("미러", systemImage: "sun.max") {
@@ -63,6 +65,7 @@ struct MirrorMenuBarContent: View {
 }
 #endif
 
+#if os(macOS)
 @MainActor
 struct MirrorCommands: Commands {
     let model: AppModel
@@ -84,10 +87,9 @@ struct MirrorCommands: Commands {
             Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
             Button("오늘은 여기까지") { Task { await model.finishReview() } }.disabled(model.review == nil)
         }
-        #if os(macOS)
         CommandGroup(replacing: .appSettings) {
             Button("미러 설정…") { model.showSettings = true }.keyboardShortcut(",", modifiers: .command)
         }
-        #endif
     }
 }
+#endif
