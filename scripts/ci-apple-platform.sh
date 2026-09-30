@@ -171,6 +171,8 @@ if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Deb
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"
   python3 scripts/ci_results.py ui-tree "$result_dir/ui-tests.json"
+  ci_phase='필수 UI bundle·baseline·현재 선언의 실제 실행 검증'
+  python3 scripts/ci_results.py ui-guard "$result_dir/ui-tests.json" "${scheme}UITests" Tests/MirrorUITests
   ci_phase='단위·통합·UI 실제 결과 검증'
   python3 scripts/ci_results.py xcode "$result_dir/summary.json" "$result_dir/ui-summary.json"
   # all 호출은 이전과 같이 독립 검증 실패를 최종 상태에 보존한다.

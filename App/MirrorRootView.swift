@@ -20,6 +20,7 @@ struct MirrorRootView: View {
     }
     var body: some View {
         @Bindable var model = model
+        let selectedDestination = model.destination
         Group {
             if model.isLoading {
                 ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -36,16 +37,21 @@ struct MirrorRootView: View {
                 }
             } else {
                 NavigationSplitView {
-                    List {
+                    List(selection: sidebarSelection) {
                         ForEach(MirrorDestination.allCases) { destination in
-                            Button { model.destination = destination } label: { Label(destination.title, systemImage: destination.symbol) }
+                            Button { model.destination = destination } label: {
+                                Label(destination.title, systemImage: destination.symbol)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
                                 .buttonStyle(.plain)
-                                .listRowBackground(model.destination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
+                                .tag(destination)
+                                .listRowBackground(selectedDestination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
                                 .accessibilityIdentifier("destination.\(destination.rawValue)")
                         }
                     }.navigationTitle("미러").navigationSplitViewColumnWidth(min: 160, ideal: 190)
                 } content: {
-                    content(model.destination).toolbar { commonToolbar }
+                    content(selectedDestination).id(selectedDestination).toolbar { commonToolbar }
                         .navigationSplitViewColumnWidth(min: 280, ideal: 420)
                 } detail: {
                     if let task = model.selectedTask { MirrorTaskDetail(task: task) }
@@ -113,6 +119,9 @@ struct MirrorRootView: View {
     }
     private var detailSheet: Binding<MirrorDetailRequest?> {
         Binding(get: { isCompact && !model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: { if $0 == nil { model.selectedTaskID = nil } })
+    }
+    private var sidebarSelection: Binding<MirrorDestination?> {
+        Binding(get: { model.destination }, set: { if let destination = $0 { model.destination = destination } })
     }
     private var basePicker: Binding<PlanPickerRequest?> {
         Binding(get: { !model.showReview && model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })

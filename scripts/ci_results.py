@@ -8,6 +8,16 @@ import sys
 from pathlib import Path
 
 
+UI_BASELINE_METHODS = {
+    'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday',
+    'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary',
+    'testOverlongTitleShowsErrorAndPreservesEveryCharacter',
+    'testWeekPanelCancellationAndPartialFinishPreserveUndecidedPlan',
+    'testExplicitCompletionAndUndoPreserveEditedTitleAndPlan',
+    'testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday',
+}
+
+
 def annotation(message):
     escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
     print(f'::error::{escaped}')
@@ -67,6 +77,52 @@ def xcode_count(path):
     return total
 
 
+def ui_guard(path, required_bundle, source_root):
+    """실제 UI bundle/case와 baseline 및 현재 선언을 함께 확인한다."""
+    source_root = Path(source_root)
+    declarations = set()
+    for source in source_root.rglob('*.swift'):
+        declarations.update(re.findall(
+            r'^\s*(?:(?:public|open|internal|fileprivate|private|final|override|nonisolated|static|class)\s+)*'
+            r'func\s+(test[A-Za-z0-9_]+)\s*\(', source.read_text(), re.M))
+    if not UI_BASELINE_METHODS.issubset(declarations):
+        raise ValueError('UI 소스에 필수 baseline 6개 메서드 선언이 모두 있어야 합니다.')
+    nodes = json.loads(Path(path).read_text())
+    bundles = []
+    cases = []
+
+    def visit(node, in_required_bundle=False):
+        if isinstance(node, dict):
+            # run 36785953557의 실제 UI tree: UI test bundle / Test Case / Passed 또는 Failed.
+            if node.get('nodeType') == 'UI test bundle':
+                in_required_bundle = node.get('name') == required_bundle
+                if in_required_bundle:
+                    bundles.append(node.get('result'))
+            if in_required_bundle and node.get('nodeType') == 'Test Case':
+                name = node.get('name')
+                match = re.search(r'\b(test[A-Za-z0-9_]+)\b', name) if isinstance(name, str) else None
+                cases.append({'method': match.group(1) if match else None, 'result': node.get('result')})
+            for value in node.values():
+                visit(value, in_required_bundle)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value, in_required_bundle)
+
+    visit(nodes)
+    executed = {case['method'] for case in cases if case['method'] is not None}
+    missing = sorted(declarations - executed)
+    failed = [case['method'] for case in cases if case['result'] != 'Passed' or case['method'] is None]
+    print('::notice::UI execution guard: ' + json.dumps({
+        'requiredBundle': required_bundle, 'actualBundleCount': len(bundles),
+        'actualCaseCount': len(cases), 'declaredMethods': sorted(declarations),
+        'missingMethods': missing, 'nonPassedMethods': failed,
+    }, ensure_ascii=False))
+    if not bundles:
+        raise ValueError(f'{required_bundle}: 실제 필수 UI bundle이 있어야 합니다.')
+    if not cases or missing or failed:
+        raise ValueError('UI baseline과 현재 선언된 모든 테스트가 실제 Test Case로 실행되어 Passed여야 합니다.')
+
+
 def main():
     mode, path, *additional_paths = sys.argv[1:]
     if mode == 'diagnostics':
@@ -93,7 +149,7 @@ def main():
         else:
             record(unit)
     elif mode == 'ui-tree':
-        # 실제 SDK test tree의 이름/결과 형식을 관측한다. 아직 guard에 추정 형식을 쓰지 않는다.
+        # 실패/timeout에서도 실제 SDK test tree 구조를 진단한다.
         nodes = json.loads(Path(path).read_text())
         node_types = {}
         methods = []
@@ -127,6 +183,10 @@ def main():
             'rootKeys': list(nodes)[:16] if isinstance(nodes, dict) else [],
             'nodeTypes': node_types, 'methods': methods,
         }, ensure_ascii=False))
+    elif mode == 'ui-guard':
+        if len(additional_paths) != 2:
+            raise ValueError('필수 UI bundle과 현재 UI 테스트 소스 디렉터리를 지정해야 합니다.')
+        ui_guard(path, additional_paths[0], additional_paths[1])
     elif mode == 'bundles':
         if not additional_paths:
             raise ValueError('필수 테스트 bundle 목록이 있어야 합니다.')

@@ -427,7 +427,9 @@ final class MirrorUITests: XCTestCase {
         append(errors, limit: 2)
         append(sheetNodes + modalNodes, limit: 7)
         append(nodes, limit: 5)
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), sheets=\(app.sheets.count), lastAction={\(lastActionDescription)}; "
+        let windowFrames = app.windows.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
+        let sheetFrames = app.sheets.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], lastAction={\(lastActionDescription)}; "
         return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }
