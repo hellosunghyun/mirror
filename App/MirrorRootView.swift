@@ -96,7 +96,8 @@ struct MirrorRootView: View {
                 if model.isSaving { HStack { ProgressView(); Text("저장 중 · 현재 작업을 유지하고 있어요") } }
                 else if let problem = model.problem {
                     HStack(alignment: .top) {
-                        Label(problem, systemImage: "exclamationmark.triangle").accessibilityIdentifier("state.error")
+                        Label(problem, systemImage: "exclamationmark.triangle")
+                            .accessibilityElement(children: .ignore).accessibilityLabel(problem).accessibilityIdentifier("state.error")
                         Spacer()
                         Button("다시 확인") { Task { await model.retry() } }.accessibilityIdentifier("state.retry")
                     }

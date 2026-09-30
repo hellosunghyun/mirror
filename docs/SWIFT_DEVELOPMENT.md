@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 원격 컴파일 검증 중이며 작성 완료를 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 공통 명령·실제 SQLite·시스템 계약은 SwiftPM에서 통과했으며 native 통합·UI 검증을 이어가고 있다. 작성 완료를 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -75,4 +75,16 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 37은 각 도구가 보고한 테스트 수다. 같은 테스트 소스를 네 경로에서 실행했으며 원본 fixture 36개는 매개변수 사례로 포함된다. 이를 서로 다른 테스트 148개나 전체 앱 QA 성공으로 합산하지 않는다. 실패·skip·0-test는 CI에서 거부한다. 같은 커밋의 [준비 검사 36743523087](https://github.com/hellosunghyun/mirror/actions/runs/36743523087)도 성공했다. 원본 명세·QA 보고서는 보존한다.
 
-위 결과는 이전 날짜 기반 코드의 근거다. 새 전체 구현은 현재 원격 검증 중이다. 실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다.
+위 결과는 이전 날짜 기반 코드의 근거다. 새 전체 구현의 결과는 다음 기록과 구별한다.
+
+## 전체 통합 검증 기록
+
+`c94a3522fef4515644a721b1fed8000dba23b5e9`의 [Actions 36763990118](https://github.com/hellosunghyun/mirror/actions/runs/36763990118)에서 SwiftPM 필수 세 target이 실패·skip 없이 통과했다. 실제 worker 완료 보고는 Domain 94, Data 24, System 33, 합계 151개다. 이전 마지막 worker만 집계하던 파서를 수정해 세 완료 보고를 모두 요구한다. 실제 SQLite 원본 변경 구독과 projection 제외·취소/종료 회귀도 포함한다.
+
+`c94a352`에서 native 세 플랫폼의 앱·확장 빌드와 unit 명령은 성공했다. 실제 tests JSON은 `Unit test bundle` 세 개와 Mac 151 / iPhone·iPad 150개의 `Test Case` 노드를 보고했다. 단위 결과의 파서가 이 형식과 앱의 `extract.actionsdata` 파일명을 인식하지 못해 필수 검사 실패였다. App Intents metadata 파일은 실제 앱 bundle에서 확인했다.
+
+같은 실행에서 UI 검사도 수행했지만 Mac의 필수 요소 접근·오류 문구와 iPhone·iPad의 앱 종료/연결 끊김으로 실패했다. native 전체 통과로 기록하지 않는다. 실제 관측 형식에 맞춘 파서 수정, 정리 버튼 hit 영역·오류 AX 라벨과 비동기 UI 대기/진단을 다음 검증에 포함한다.
+
+native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 단위 단계 20분·UI 15분 제한과 실패 로그 진단은 중단 원인을 드러내며 성공 판정을 대신하지 않는다.
+
+실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다. 개발용 AppIcon과 unsigned CI packaging 결과도 Apple 등록·배포 준비 완료를 뜻하지 않는다.

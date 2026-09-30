@@ -466,7 +466,7 @@ struct StoreIntegrationTests {
         #expect(await reopened.cloudStoreIdentifiers().isEmpty)
     }
 
-    @Test("다른 SQLite store의 원본 알림 뒤 snapshot에 저장한 작업이 나타난다")
+    @Test("다른 SQLite store의 원본 알림 뒤 snapshot에 저장한 작업이 나타난다", .timeLimit(.minutes(1)))
     func canonicalChangeObservationAcrossInstances() async throws {
         let configuration = temporaryConfiguration()
         defer { try? FileManager.default.removeItem(at: configuration.directory) }
@@ -481,7 +481,7 @@ struct StoreIntegrationTests {
         #expect(changed.records.count == 1)
     }
 
-    @Test("투영과 영수증 저장은 원본 변경 stream의 refresh 반복을 만들지 않는다")
+    @Test("투영과 영수증 저장은 원본 변경 stream의 refresh 반복을 만들지 않는다", .timeLimit(.minutes(1)))
     func localProjectionDoesNotPublishCanonicalChange() async throws {
         let configuration = temporaryConfiguration()
         defer { try? FileManager.default.removeItem(at: configuration.directory) }
@@ -494,7 +494,7 @@ struct StoreIntegrationTests {
         #expect(try await reader.snapshot().tasks.isEmpty)
     }
 
-    @Test("소비자 취소와 suspend는 변경 구독을 종료하며 원본을 남긴다")
+    @Test("소비자 취소와 suspend는 변경 구독을 종료하며 원본을 남긴다", .timeLimit(.minutes(1)))
     func canonicalObservationTermination() async throws {
         let configuration = temporaryConfiguration()
         defer { try? FileManager.default.removeItem(at: configuration.directory) }

@@ -399,18 +399,22 @@ final class AppModel {
                          success: deadline == nil ? "실제 마감을 지웠어요. 계획은 유지했어요." : "실제 마감을 저장했어요. 계획은 유지했어요.")
     }
 
-    func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil) {
+    func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil,
+                    reviewSession: AppReviewSession? = nil) {
         guard let context, (1...20).contains(taskIDs.count) else { return }
+        if reviewCard != nil {
+            guard let reviewSession, review?.id == reviewSession.id else { return }
+        }
         let fixedTasks = taskIDs.compactMap { id in tasks.first { $0.taskID == id } }
         guard fixedTasks.count == taskIDs.count else { return }
         let items = fixedTasks.map { task in
             PlanCommandItem(taskID: task.taskID, expected: reviewCard?.expected ?? ExpectedVersions(task))
         }
         let decision = reviewCard.flatMap { card in
-            review.map { ReviewDecisionContext(cycleID: $0.cycleID, sessionID: $0.id, cardID: card.id, taskID: card.taskID) }
+            reviewSession.map { ReviewDecisionContext(cycleID: $0.cycleID, sessionID: $0.id, cardID: card.id, taskID: card.taskID) }
         }
         picker = PlanPickerRequest(taskIDs: taskIDs, expected: items,
-                                   displayedContext: reviewCard == nil ? context : (review?.context ?? context),
+                                   displayedContext: reviewCard == nil ? context : (reviewSession?.context ?? context),
                                    token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week)
     }
 
@@ -428,8 +432,8 @@ final class AppModel {
         if await execute(envelope, success: "\(planLabel(target))로 보냈어요.") { picker = nil }
     }
 
-    func decide(_ target: PlanTarget) async {
-        guard let card = currentCard, let session = review else { return }
+    func decide(_ target: PlanTarget, card: ReviewCard, session: AppReviewSession) async {
+        guard review?.id == session.id else { return }
         let item = PlanCommandItem(taskID: card.taskID, expected: card.expected)
         let decision = ReviewDecisionContext(cycleID: session.cycleID, sessionID: session.id, cardID: card.id, taskID: card.taskID)
         guard let envelope = makeEnvelope(.setPlan(item: item, target: target, review: decision),
@@ -714,7 +718,7 @@ final class AppModel {
                 return false
             }
             feedback = success
-            advanceReview(envelope)
+            advanceReview(envelope, result: result)
             recordUndo(envelope, result: result)
             if case .capture = envelope.payload { lastCaptureCommittedToken = envelope.idempotencyKey }
             return true
@@ -735,9 +739,11 @@ final class AppModel {
         }
     }
 
-    private func advanceReview(_ envelope: CommandEnvelope) {
+    private func advanceReview(_ envelope: CommandEnvelope, result: CommandResult) {
         guard case let .setPlan(item, target, decision) = envelope.payload,
               let decision, review?.id == decision.sessionID,
+              review?.cards.first?.id == decision.cardID,
+              Set(result.affectedTaskIDs) == Set([item.taskID]),
               review?.cards.first?.taskID == item.taskID else { return }
         review?.cards.removeFirst()
         if target == .day(envelope.context.planningDay) { review?.decidedToday += 1 }
@@ -857,7 +863,8 @@ final class AppModel {
     func handleURL(_ url: URL) async {
         do {
             let route = try MirrorDeepLink.parse(url)
-            var trustedCards: [UUID: UUID] = Dictionary(uniqueKeysWithValues: (review?.cards ?? []).compactMap { card in
+            let displayedReview = review
+            var trustedCards: [UUID: UUID] = Dictionary(uniqueKeysWithValues: (displayedReview?.cards ?? []).compactMap { card in
                 UUID(uuidString: card.id).map { ($0, card.taskID) }
             })
             var widgetState: WidgetReviewState?
@@ -887,8 +894,8 @@ final class AppModel {
                                                widgetState: widgetState)
                     return
                 }
-                let card = review?.cards.first { UUID(uuidString: $0.id) == cardID && $0.taskID == id }
-                makePicker(taskIDs: [id], reviewCard: card)
+                let card = displayedReview?.cards.first { UUID(uuidString: $0.id) == cardID && $0.taskID == id }
+                makePicker(taskIDs: [id], reviewCard: card, reviewSession: card == nil ? nil : displayedReview)
             }
         } catch { problem = "이 공간의 작업을 찾을 수 없거나 링크가 오래되었어요. 데이터는 바뀌지 않았어요." }
     }
@@ -1033,9 +1040,9 @@ final class AppModel {
         guard let cloud else { return }
         let status = await cloud.cloudDeletionStatus(confirmedTwice: true)
         switch status {
-        case .configurationRequired: cloudDeletionMessage = "실제 iCloud container와 앱 그룹 연결을 먼저 설정해야 해요. 데이터를 삭제하지 않았어요."
+        case .configurationRequired: cloudDeletionMessage = "현재 앱에서 iCloud 전체 삭제를 사용할 수 없어요. 데이터를 지우지 않았어요. 이 기기에서 지우기와 내보내기는 사용할 수 있어요."
         case .requiresDoubleConfirmation: cloudDeletionMessage = "개인 공간 전체 삭제를 두 번 확인해야 해요. 데이터를 삭제하지 않았어요."
-        case .blocked: cloudDeletionMessage = "오프라인 기기의 재연결과 권위 있는 개인 공간 세대 전환을 검증해야 해요. 모든 기기에서 완전히 삭제됐다고 안내할 수 없어 삭제를 실행하지 않았어요."
+        case .blocked: cloudDeletionMessage = "다른 기기와 iCloud에 남은 데이터까지 지우는 기능은 아직 준비 중이에요. 데이터를 지우지 않았어요. 이 기기에서 지우기와 내보내기는 사용할 수 있어요."
         }
     }
     func exportDiagnostics(consentGiven: Bool) async {
@@ -1103,7 +1110,7 @@ func cloudStatusLabel(_ status: CloudSyncStatus) -> String {
     switch status {
     case .localOnly: "기기 전용 저장"
     case let .configurationRequired(missing): "설정 필요: " + missing.map { item in
-        switch item { case .cloudContainerIdentifier: "iCloud container"; case .appGroupIdentifier: "앱 그룹"; case .signedAppGroupAccess: "서명된 앱 그룹 접근"; case .stableWorkspaceEpoch: "개인 공간 세대" }
+        switch item { case .cloudContainerIdentifier: "iCloud 연결"; case .appGroupIdentifier: "앱과 위젯 연결"; case .signedAppGroupAccess: "앱 연결 권한"; case .stableWorkspaceEpoch: "개인 공간 설정" }
     }.joined(separator: ", ")
     case .checkingAccount: "선택한 iCloud 계정 확인 중"
     case .accountUnavailable: "iCloud 계정을 사용할 수 없어요. 기기 전용 저장은 계속 사용할 수 있어요."

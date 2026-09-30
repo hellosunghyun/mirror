@@ -67,7 +67,7 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(value(of: field), original)
         try activate("capture.save", in: app)
         let problem = try requireElement("state.error", in: app)
-        XCTAssertTrue(problem.label.contains("500"))
+        try waitForLabelContaining("500", element: problem)
         XCTAssertEqual(value(of: field), original, "Q-003: 잘라 저장하거나 입력 원문을 지우면 안 된다.")
 
         try activate("capture.close", in: app)
@@ -218,10 +218,15 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func requireElement(_ identifier: String, in app: XCUIApplication, timeout: TimeInterval = 15) throws -> XCUIElement {
+    private func requireElement(_ identifier: String, in app: XCUIApplication, timeout: TimeInterval = 15,
+                                file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+        guard app.state != .notRunning else {
+            XCTFail("앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다: \(identifier). appState=\(app.state.rawValue)", file: file, line: line)
+            throw UIHarnessError.applicationNotRunning
+        }
         let found = element(identifier, in: app)
         guard found.waitForExistence(timeout: timeout) else {
-            XCTFail("필수 UI 요소가 없다: \(identifier)")
+            XCTFail("필수 UI 요소가 없다: \(identifier). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.missingElement(identifier)
         }
         return found
@@ -253,24 +258,35 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func activate(_ identifier: String, in app: XCUIApplication) throws {
-        try interact(with: requireElement(identifier, in: app), in: app)
+    private func activate(_ identifier: String, in app: XCUIApplication,
+                          file: StaticString = #filePath, line: UInt = #line) throws {
+        try interact(with: requireElement(identifier, in: app, file: file, line: line), in: app, file: file, line: line)
     }
 
     @MainActor
-    private func interact(with element: XCUIElement, in app: XCUIApplication) throws {
+    private func interact(with element: XCUIElement, in app: XCUIApplication,
+                          file: StaticString = #filePath, line: UInt = #line) throws {
+        // 원본 저장·projection 갱신 직후에는 action의 enabled/hittable 반영도 기다린다.
+        // 숨은 요소를 좌표로 누르거나 disabled 행동을 통과시키지 않는다.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true AND enabled == true"), object: element)
+        _ = XCTWaiter.wait(for: [ready], timeout: 3)
         // Form 아래쪽의 완료/Undo도 실제 스크롤로 도달한다. 숨겨진 요소의 좌표를 강제로 누르지 않는다.
         for _ in 0..<8 where !element.isHittable {
-            let scroll = app.scrollViews.firstMatch
-            let surface = scroll.exists ? scroll : app
+            let surfaces = app.scrollViews.allElementsBoundByIndex
+                + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
+            let identifier = element.identifier
+            // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
+            let surface = surfaces.first { candidate in
+                candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+            } ?? app
             #if os(macOS)
             surface.scroll(byDeltaX: 0, deltaY: -250)
             #else
             surface.swipeUp()
             #endif
         }
-        guard element.isHittable else {
-            XCTFail("UI 요소에 도달할 수 없다: \(element.identifier)")
+        guard element.isHittable && element.isEnabled else {
+            XCTFail("UI 요소에 도달할 수 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.unhittable(element.identifier)
         }
         #if os(macOS)
@@ -315,7 +331,7 @@ final class MirrorUITests: XCTestCase {
         } else { predicate = NSPredicate(format: "value == %@", expected) }
         let changed = XCTNSPredicateExpectation(predicate: predicate, object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
-            XCTFail("입력 값이 기대 상태로 바뀌지 않았다: \(element.identifier)")
+            XCTFail("입력 값이 기대 상태로 바뀌지 않았다: \(describe(element))")
             throw UIHarnessError.unexpectedValue(element.identifier)
         }
     }
@@ -324,13 +340,71 @@ final class MirrorUITests: XCTestCase {
     private func waitForLabel(_ expected: String, element: XCUIElement) throws {
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", expected), object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
-            XCTFail("표시된 원본 상태가 기대값과 다르다: \(element.identifier)")
+            XCTFail("표시된 원본 상태가 기대값과 다르다: \(describe(element))")
             throw UIHarnessError.unexpectedValue(element.identifier)
         }
+    }
+
+    @MainActor
+    private func waitForLabelContaining(_ expected: String, element: XCUIElement) throws {
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", expected), object: element)
+        guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
+            XCTFail("검증 오류가 기대 내용으로 표시되지 않았다: \(describe(element))")
+            throw UIHarnessError.unexpectedValue(element.identifier)
+        }
+    }
+
+    @MainActor
+    private func describe(_ element: XCUIElement) -> String {
+        guard element.exists else { return "exists=false" }
+        return "id=\(element.identifier), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), hittable=\(element.isHittable), frame=\(element.frame)"
+    }
+
+    @MainActor
+    private func diagnostics(in app: XCUIApplication) -> String {
+        let state = app.state
+        guard state != .notRunning else {
+            return "appState=\(state.rawValue), 앱 프로세스 종료: hierarchy 조회를 수행하지 않음"
+        }
+        // UI 테스트는 이 launch에서 직접 입력한 dummy만 사용한다. 앱 데이터나 로그 파일은 읽지 않는다.
+        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state."]
+        let nodes = app.descendants(matching: .any).allElementsBoundByIndex.filter { candidate in
+            prefixes.contains { candidate.identifier.hasPrefix($0) }
+        }
+        let sheetNodes = app.sheets.allElementsBoundByIndex.flatMap {
+            $0.descendants(matching: .any).allElementsBoundByIndex
+        }.filter { candidate in prefixes.contains { candidate.identifier.hasPrefix($0) } }
+        let errors = nodes.filter { $0.identifier == "state.error" }.sorted { $0.isHittable && !$1.isHittable }
+        let modalNodes = nodes.filter { candidate in
+            candidate.identifier.hasPrefix("review.") || candidate.identifier.hasPrefix("plan.")
+                || candidate.identifier.hasPrefix("detail.")
+                || (candidate.identifier.hasPrefix("capture.") && candidate.identifier != "capture.open")
+        }.sorted { $0.isHittable && !$1.isHittable }
+        var seen: Set<String> = []
+        var lines: [String] = []
+        @MainActor
+        func append(_ candidates: [XCUIElement], limit: Int) {
+            var added = 0
+            for node in candidates where node.exists && added < limit {
+                let key = node.identifier + "|" + node.label
+                guard seen.insert(key).inserted else { continue }
+                let label = node.label.replacingOccurrences(of: "\n", with: " ").prefix(50)
+                let current = value(of: node).replacingOccurrences(of: "\n", with: " ").prefix(35)
+                lines.append("\(node.identifier): label=\(label), value=\(current), e=\(node.isEnabled), h=\(node.isHittable)")
+                added += 1
+            }
+        }
+        // 오류와 실제 modal을 먼저 기록한다. sidebar가 annotation 길이 제한을 먼저 소진하지 않는다.
+        append(errors, limit: 2)
+        append(sheetNodes + modalNodes, limit: 7)
+        append(nodes, limit: 5)
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), sheets=\(app.sheets.count); "
+        return header + String(lines.joined(separator: "; ").prefix(1400))
     }
 }
 
 private enum UIHarnessError: Error {
+    case applicationNotRunning
     case missingElement(String)
     case unexpectedElement(String)
     case unhittable(String)

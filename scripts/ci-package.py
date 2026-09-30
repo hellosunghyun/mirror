@@ -97,7 +97,8 @@ def inspect_app_intents(app):
                 report['format'] = 'unrecognized'
                 continue
         report.update(structure_summary(value))
-        if path.name.lower() in ('actions.data', 'actions.json', 'actions.plist'):
+        # Xcode 27의 실제 run 36763990118은 extract.actionsdata JSON과 $.actions를 생성했다.
+        if path.name.lower() in ('extract.actionsdata', 'actions.data', 'actions.json', 'actions.plist'):
             try:
                 containers = action_containers(value)
                 report['actionContainers'] = containers

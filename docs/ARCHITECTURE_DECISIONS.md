@@ -30,6 +30,41 @@ CI 테스트는 실제 SQLite를 주입된 임시 공통 경로에서 사용한�
 
 UI·Widget·Intent는 같은 명령 서비스를 사용하며 원본 저장 후에 성공을 표시한다. 로컬 성공은 CloudKit 완료가 아니다. committedProjectionPending은 새 결정 키로 재생성하지 않고 복구·재조회한다. 같은 카드의 다섯 목적지는 같은 결정 토큰을 사용한다.
 
+## D-SYNC: 선택 활성화와 계정 공간
+
+`CloudSyncService`는 사용자 opt-in 뒤 실제 `CKContainer.accountStatus`와 사용자 record ID를 확인한다. 원문 계정 ID를 로그나 UI에 내보내지 않고 fingerprint별 App Group 하위 디렉터리에 CloudKit 원본 저장소를 연다. 기존 로컬 자료와 클라우드 자료의 미리 보기를 제공하고 별도 병합 확인 뒤 `exportAndSuspend`가 잡은 최신 원본을 가져온다. 미리 보기 이후 입력을 오래된 export로 누락시키지 않는다.
+
+확정한 active pointer를 같은 기기의 App Intent·Widget·Share가 읽는다. 계정이 확인된 시점의 opaque OS identity token을 기기 로컬로 바인딩하며 핵심 쓰기 경로는 이 token과 전환 latch를 검사한다. 오프라인 명령에 계정 네트워크 조회를 강제하지 않는다. token 확인 불가·계정 변경·전환 중이면 기존 공간을 추측해 열지 않는다. `suspend`와 writer generation은 기존 프로세스의 새 쓰기를 차단하고 Core Data store를 detach한다.
+
+원본만 `NSPersistentCloudKitContainer`에 연결한다. 로컬 projection·receipt·session·widget presentation·캘린더 원문·알림 설정은 미러링하지 않는다. 실제 미러링 이벤트의 진행·오류·종료 상태는 앱에 별도 상태 스트림으로 전달하고 원본 변경 스트림과 구분한다. 한 이벤트 종료나 로컬 저장 성공을 모든 기기의 동기화 완료로 표시하지 않는다.
+
+이 구현은 Apple container/App Group/서명 설정이나 G-SYNC 통과를 뜻하지 않는다. iCloud-only entitlement 구성의 identity token 제공·secure coding, 잠금 상태, 계정 전환 중 importer/exporter 중지, 용량 오류, 실제 두 기기의 offline 수렴은 실기기 근거가 필요하다. 특히 기기 로컬 writer generation은 다음 절의 계정 전체 epoch 권위를 대신하지 않는다.
+
+## D-DELETE: 개인 공간 전체 삭제와 구세대 차단
+
+현재 **개인 공간 전체 CloudKit purge는 configurationRequired/blocked**다. Apple container/group 값이 없으면 `cloudDeletionStatus`는 configurationRequired를 반환한다. 설정이 있더라도 이중 확인과 계정 확인 뒤 권위 있는 epoch 미구성과 오프라인 재업로드 미검증을 차단 사유로 반환한다. CloudKit zone purge나 “모든 기기에서 완전히 삭제됨” 성공은 실행·보고하지 않는다. `deleteLocalData`의 기기 로컬 원본·캐시 삭제, 휴지통 이동, 명시적 평문 export와 이 전체 삭제를 구분한다.
+
+현재 불변 기록에는 workspaceEpoch가 있고 로컬 저장소 identity에는 writer generation·전환 상태가 있다. 이 값으로 해당 기기의 오래된 actor를 막고 구세대 원본을 읽기에서 격리할 수 있다. 그러나 다른 오프라인 기기가 권위 있는 새 세대를 아직 받지 못했을 때의 전송까지 자동으로 막지는 못한다. `NSPersistentCloudKitContainer` importer/exporter는 앱의 advisory lock에 참여하지 않으며 자동 미러링이 매 전송 직전 앱의 epoch 검사를 실행한다는 보장도 없다. zone purge 뒤 오래된 미러링 store가 재접속하면 payload를 다시 올리거나 zone을 재생성하는지를 검증해야 한다. 화면에서 구세대를 숨기는 것과 클라우드에 민감 원본이 다시 저장되지 않는 것은 별도의 조건이다.
+
+결정해야 할 핵심은 삭제 후에도 남는 최소 제어 메타데이터의 소유권, 현재 epoch를 누가 변경하는지, 각 업로드가 그 권위를 어떻게 강제하는지다. 계정 전환 시 확인하는 로컬 identity token이나 `epoch` 문자열 하나를 추가하는 것으로 이 문제를 완료 처리하지 않는다.
+
+| 검토안 | 효과와 필요한 검증 | 영향·현재 판단 |
+|---|---|---|
+| 자동 미러링 유지 + 별도 계정 epoch 제어 기록 | 삭제 후에도 title/note 없이 세대·삭제 사건을 남기고 앱 writer를 중지하는 설계. 모든 기기가 제어를 받기 전 기존 자동 exporter가 payload를 재업로드하지 못한다는 실제 메커니즘을 추가로 증명해야 함 | 기존 Core Data 경로를 유지할 수 있으나 제어 기록을 조회한 뒤 store를 바꾸는 것만으로 전송 경쟁을 해결했다고 주장할 수 없음. zone/store 세대 분리와 재생성 차단은 실제 SDK·두 기기 실험이 필요하며 아직 채택·검증하지 않음 |
+| Core Data 로컬 원본 + 명시적 CloudKit 전송 제어 | Apple `CKSyncEngine` 등으로 OperationRecord 전송을 직접 소유하고 세대 검증과 업로드의 경쟁을 설계. 예를 들어 같은 custom zone의 최소 제어 record와 payload batch를 조건부·원자 저장해 오래된 제어 revision의 쓰기를 거부하는 경로를 검토 | 자동 미러링을 대체하므로 전송·재시도·history·계정 전환·zone 관리·migration 책임이 늘어남. 원자성이 zone 경계를 넘는다고 가정하지 않으며 제어 기록 보존과 payload 삭제 방식·실제 SDK 제약을 검증해야 함. 현재 코드에 도입하지 않음 |
+| 현재 전송 구현 유지, 전체 purge 차단과 공개 출시 보류 | 로컬 기능과 실제 opt-in 서비스 제작·unsigned CI는 계속하고 D-DELETE 설계·G-DELETE를 끝낸 뒤 전체 삭제를 연결 | 현재 선택. FR-020/024/026/030과 G-DELETE 범위를 제거하거나 로컬 삭제를 전체 삭제로 바꾸지 않음. 미결정 상태를 사용자에게 정확히 표시 |
+
+명시적 전송 대안도 서버에서 구세대 쓰기를 거부하는 조건이 실제로 성립해야 한다. 앱이 새 epoch를 먼저 읽고 나중에 독립 payload 쓰기를 실행하는 두 단계만으로는 그 사이의 삭제 경쟁을 차단할 수 없다. 제어 record를 별도 zone에 두고 같은 batch가 원자적으로 검사된다고 가정해서도 안 된다. zone 전체 purge가 제어 기록까지 지운다면 삭제 후 남는 권위를 다른 검증된 경로로 보존해야 한다. 별도 서버는 현재 제품 범위와 개인정보 전송 경계를 바꾸므로 이 기록에서 채택하지 않는다.
+
+다음 변경에는 구체 설계와 사용자 확인이 필요하다.
+
+- 자동 미러링을 직접 전송 엔진으로 바꾸거나 새 제어 store/zone·payload 계약을 도입하는 아키텍처 변경.
+- 이미 동기화된 원본을 새 zone/store/세대로 이전하는 migration과 기존 zone 정리. 평문 export·복구 경로와 실패 시 원본 보존을 먼저 준비한다.
+- 실제 CloudKit purge·계정 자료 삭제 실행. 계정·삭제 범위·테스트용 자료·이중 확인·offline 기기 조치와 실패 후 복구를 검토할 수 있는 상태로 만든 뒤 승인된 범위에서 실행한다.
+- production schema 변경, 등록·서명·배포 설정과 공개 출시. 코드 제작 승인을 실제 사용자 자료 삭제나 배포 승인으로 확대하지 않는다.
+
+G-DELETE는 오래 오프라인인 두 번째 기기를 삭제 뒤 다시 연결하고 기존 앱·확장 writer, importer/exporter, 재설치, 오래된 export 복원을 검사해야 한다. 정상 완료 조건은 삭제 이후 구세대 payload 재업로드·자동 부활이 없고 명시적 복원은 별도 동의를 거치는 것이다. 최소 제어 메타데이터의 보존 목적·내용은 개인정보 문서에 설명하며 사용자 원문을 제어 메타데이터로 남기지 않는다. 이 조건이 미실행이거나 실패하면 완전 삭제 문구와 공개 출시를 차단한다.
+
 ## 동기화·삭제·등록의 남은 조건
 
 선택적 CloudKit은 원본만 미러링하며 로컬 session·presentation·캘린더 원문을 업로드하지 않는다. Apple Team·App Group·iCloud container와 개발/운영 설정은 현재 미제공이다. 후보 identifier를 실제 등록 완료로 기록하지 않는다.

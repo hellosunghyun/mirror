@@ -215,7 +215,7 @@ struct MirrorSettingsView: View {
                     Text("휴지통 작업은 복구할 수 있어요. 기기 데이터 삭제와 iCloud 개인 공간 전체 삭제는 달라요.").font(.caption)
                     Button("이 기기에서만 지우기", role: .destructive) { model.showDeleteConfirmation = true }
                     Button("iCloud 포함 개인 공간 전체 삭제 안내", role: .destructive) { cloudDeleteFirstConfirmation = true }
-                    Text("전체 삭제는 실제 CloudKit 공간·권위 있는 세대와 오프라인 기기의 재연결 검증이 필요해요. 아직 모든 기기의 완전 삭제로 안내하지 않아요.").font(.caption)
+                    Text("다른 기기와 iCloud에 남은 데이터까지 지우는 기능은 아직 준비 중이에요. 이 기기에서 지우기와 내보내기는 사용할 수 있어요.").font(.caption)
                 }
                 Section("미러") {
                     Button("SwiftPieces와 오픈소스 고지") { showLicenses = true }
@@ -251,13 +251,13 @@ struct MirrorSettingsView: View {
                 Button("취소", role: .cancel) {}
             } message: { Text("이 기기에서 복원하려면 내보낸 파일이 필요해요. 다른 기기와 iCloud는 삭제하지 않아요.") }
             .alert("개인 공간 전체 삭제", isPresented: $cloudDeleteFirstConfirmation) {
-                Button("전체 삭제 조건 확인", role: .destructive) { cloudDeleteSecondConfirmation = true }
+                Button("전체 삭제 안내 계속 보기", role: .destructive) { cloudDeleteSecondConfirmation = true }
                 Button("취소", role: .cancel) {}
-            } message: { Text("iCloud를 포함한 개인 공간의 원본 이력 삭제는 다른 기기와 복원 파일에도 영향을 줘요. 필요하면 먼저 내보내세요.") }
+            } message: { Text("iCloud와 다른 기기의 작업까지 함께 지우는 기능은 아직 준비 중이에요. 이 안내를 확인해도 데이터를 지우지 않아요.") }
             .alert("개인 공간 전체 삭제 재확인", isPresented: $cloudDeleteSecondConfirmation) {
-                Button("삭제 가능 조건 검사", role: .destructive) { Task { await model.inspectCloudDeletion() } }
+                Button("현재 지원 상태 확인", role: .destructive) { Task { await model.inspectCloudDeletion() } }
                 Button("취소", role: .cancel) {}
-            } message: { Text("인터넷·계정·개인 공간 세대와 오프라인 기기의 재연결 검증이 필요해요. 조건을 확인한 뒤 실제 삭제 결과를 구분해 안내해요.") }
+            } message: { Text("현재 전체 삭제를 사용할 수 있는지 확인해요. 다른 기기에 남은 데이터까지 삭제됐다고 보장할 수 없어 지금은 삭제를 실행하지 않아요.") }
             .alert("전체 삭제 상태", isPresented: Binding(get: { model.cloudDeletionMessage != nil }, set: { if !$0 { model.cloudDeletionMessage = nil } })) {
                 Button("확인", role: .cancel) { model.cloudDeletionMessage = nil }
             } message: { Text(model.cloudDeletionMessage ?? "") }
@@ -265,12 +265,12 @@ struct MirrorSettingsView: View {
                 Button("기기 전용 공간으로 돌아가기") { Task { await model.disableCloudConnection() } }
                 Button("취소", role: .cancel) {}
             } message: { Text("연결 전의 기기 전용 공간으로 돌아가요. iCloud 원본을 지우거나 현재 계정의 작업을 다른 로컬 공간으로 자동 복사하지 않아요. 필요하면 먼저 내보내세요.") }
-            .alert("다른 세대의 개인 공간 복원", isPresented: $confirmImport) {
+            .alert("다른 개인 공간의 백업 복원", isPresented: $confirmImport) {
                 Button("기기 작업을 교체하고 원래 공간 복원", role: .destructive) {
                     Task { await model.importArchive(confirmAccount: accountImportConfirmed, confirmWorkspace: true) }
                 }
                 Button("취소", role: .cancel) {}
-            } message: { Text("이 기기의 현재 작업을 교체해요. 필요하다면 먼저 내보내세요. 원본 기록의 ID와 이력은 그대로 보존하며 iCloud 전체 삭제나 다른 기기 변경을 뜻하지 않아요.") }
+            } message: { Text("이 기기의 현재 작업을 백업의 작업과 변경 이력으로 교체해요. 필요하다면 먼저 내보내세요. iCloud와 다른 기기의 작업은 바꾸지 않아요.") }
             .sheet(isPresented: $showLicenses) {
                 NavigationStack {
                     ScrollView { Text(MirrorOpenSourceNotice.text).font(.body).textSelection(.enabled).padding() }

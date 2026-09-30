@@ -6,6 +6,21 @@ import MirrorData
 
 private let fixedInstant = ISO8601DateFormatter().date(from: "2026-09-30T03:15:00Z")!
 
+/// 경로·식별자·테스트 데이터 대신 공개 host 구조의 존재 여부만 한 번 기록한다.
+private let systemHostStructureNotice: Void = {
+    let bundle = Bundle.main
+    let info = bundle.infoDictionary ?? [:]
+    let pathExtension = bundle.bundleURL.pathExtension.lowercased()
+    let publicExtension = ["app", "appex", "xctest"].contains(pathExtension) ? pathExtension : "other"
+    let hasGroupMarker = info["MirrorAppGroupIdentifier"] != nil
+    let hasCloudMarker = info["MirrorCloudContainerIdentifier"] != nil
+    let hasExtensionMarker = info["NSExtension"] != nil
+    let hasRunnerMarker = bundle.bundleIdentifier?.hasSuffix(".xctrunner") == true
+    let types = info["CFBundleURLTypes"] as? [[String: Any]] ?? []
+    let hasProductURLScheme = types.contains { ($0["CFBundleURLSchemes"] as? [String] ?? []).contains("mirror") }
+    print("[MirrorSystemHost] bundleExtension=\(publicExtension) runtimeAllowsOS=\(SystemAppleRuntimeHost.isApplicationOrExtension) groupMarker=\(hasGroupMarker) cloudMarker=\(hasCloudMarker) extensionMarker=\(hasExtensionMarker) runnerMarker=\(hasRunnerMarker) productURLScheme=\(hasProductURLScheme)")
+}()
+
 private struct WidgetHarness {
     let directory: URL
     let store: MirrorStore
@@ -15,6 +30,7 @@ private struct WidgetHarness {
     let second: UUID
 }
 private func harness(twoTasks: Bool = true) async throws -> WidgetHarness {
+    _ = systemHostStructureNotice
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorSystemTests-\(UUID().uuidString)", isDirectory: true)
     let configuration = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
     let store = try await MirrorStore(configuration: configuration)
@@ -58,7 +74,7 @@ struct SystemContractTests {
         #expect(try MirrorDeepLink.validate(route, ownedTaskIDs: [owned], trustedCards: [card: owned]) == route)
     }
 
-    @Test("동일 설정 위젯 두 서비스는 같은 카드·토큰을 받고 서로 다른 빠른 탭도 한 작업만 바꾼다")
+    @Test("동일 설정 위젯 두 서비스는 같은 카드·토큰을 받고 서로 다른 빠른 탭도 한 작업만 바꾼다", .timeLimit(.minutes(1)))
     func duplicateWidgetDecisions() async throws {
         let h = try await harness()
         let other = WidgetReviewService(store: h.store, directory: h.directory, workspaceEpoch: "local-v1")
@@ -78,7 +94,7 @@ struct SystemContractTests {
         #expect(snapshot.records.filter { $0.idempotencyKey == card.decisionToken }.count == 1)
     }
 
-    @Test("과거 토큰을 다음 작업에 붙인 재시도도 원본 영수증의 대상만 처리한다")
+    @Test("과거 토큰을 다음 작업에 붙인 재시도도 원본 영수증의 대상만 처리한다", .timeLimit(.minutes(1)))
     func receiptCannotAdvanceAnotherCard() async throws {
         let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
         let original = try #require(state.card)
@@ -126,7 +142,7 @@ struct SystemContractTests {
         #expect(!after.queue.contains(id))
     }
 
-    @Test("자정 후 상대 버튼은 새 날짜로 다시 해석하지 않는다")
+    @Test("자정 후 상대 버튼은 새 날짜로 다시 해석하지 않는다", .timeLimit(.minutes(1)))
     func midnightRejectsOriginalCard() async throws {
         let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
         let card = try #require(state.card)
@@ -136,7 +152,7 @@ struct SystemContractTests {
         #expect(try await h.store.snapshot().tasks.allSatisfy { $0.plan.target == .unassigned })
     }
 
-    @Test("부분 종료는 미검토를 보존한 채 오늘 표시로 전환한다")
+    @Test("부분 종료는 미검토를 보존한 채 오늘 표시로 전환한다", .timeLimit(.minutes(1)))
     func finishDoesNotPolluteToday() async throws {
         let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
         let result = try await h.widget.finish(scopeKey: state.scopeKey, sessionID: state.sessionID, at: fixedInstant)
@@ -159,7 +175,7 @@ struct SystemContractTests {
         #expect(after.card?.decisionToken != visible.card?.decisionToken)
     }
 
-    @Test("위젯 오늘 다시 정리는 종료한 주기에서 Today만 다시 카드로 만든다")
+    @Test("위젯 오늘 다시 정리는 종료한 주기에서 Today만 다시 카드로 만든다", .timeLimit(.minutes(1)))
     func reopenOnlyExplicitToday() async throws {
         let h = try await harness(), initial = try await h.widget.snapshot(at: fixedInstant)
         let card = try #require(initial.card)
@@ -200,7 +216,7 @@ struct SystemContractTests {
         #expect(try await services.todayTasks(on: h.context.planningDay, at: fixedInstant).map(\.taskID) == [h.first, h.second])
     }
 
-    @Test("위젯 Undo는 원본 결정 버전에 고정하고 후속 제목 수정은 보존한다")
+    @Test("위젯 Undo는 원본 결정 버전에 고정하고 후속 제목 수정은 보존한다", .timeLimit(.minutes(1)))
     func undoKeepsNewContent() async throws {
         let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
         let card = try #require(state.card)
@@ -229,7 +245,7 @@ struct SystemContractTests {
         #expect(!FinishReviewIntent.isDiscoverable)
     }
 
-    @Test("OS host가 없는 실행도 실제 저장 성공과 시스템 후처리 실패를 분리한다")
+    @Test("OS host가 없는 실행도 실제 저장 성공과 시스템 후처리 실패를 분리한다", .timeLimit(.minutes(1)))
     func canonicalCommitWithRuntimeBoundary() async throws {
         let h = try await harness(twoTasks: false), state = try await h.widget.snapshot(at: fixedInstant)
         let card = try #require(state.card)
@@ -276,7 +292,7 @@ struct NotificationContractTests {
         #expect(plan.requests.isEmpty)
     }
 
-    @Test("위젯에서 실제 정리를 닫은 뒤 공통 예약 계획은 당일 알림만 제거한다")
+    @Test("위젯에서 실제 정리를 닫은 뒤 공통 예약 계획은 당일 알림만 제거한다", .timeLimit(.minutes(1)))
     func widgetClosureCancelsTodayReminder() async throws {
         let h = try await harness()
         var preferences = SystemPreferences()

@@ -52,6 +52,13 @@ def record(count, unit_count=None, ui_count=None):
 
 def xcode_count(path):
     summary = json.loads(Path(path).read_text())
+    print('::notice::Xcode test summary: ' + json.dumps({
+        'file': Path(path).name,
+        'totalTestCount': summary.get('totalTestCount'),
+        'passedTests': summary.get('passedTests'),
+        'failedTests': summary.get('failedTests'),
+        'skippedTests': summary.get('skippedTests'),
+    }))
     total = summary['totalTestCount']
     if not isinstance(total, int) or isinstance(total, bool) or total <= 0:
         raise ValueError(f'{path}: 실제 테스트 수가 양수여야 합니다.')
@@ -106,9 +113,10 @@ def main():
                 if isinstance(node_type, str):
                     node_types[node_type] = node_types.get(node_type, 0) + 1
                 name = node.get('name')
-                if isinstance(name, str) and any(b in name for b in additional_paths) and len(named_nodes) < 12:
+                if isinstance(name, str) and name in additional_paths and len(named_nodes) < 12:
                     named_nodes.append({'name': name[:120], 'nodeType': node_type, 'keys': list(node)[:12]})
-                if node.get('nodeType') == 'Test Bundle':
+                # Xcode 27 run 36763990118의 실제 tests.json에서 관측한 형식.
+                if node.get('nodeType') in ('Test Bundle', 'Unit test bundle'):
                     bundles[node.get('name')] = cases(node)
                 for value in node.values():
                     visit(value)

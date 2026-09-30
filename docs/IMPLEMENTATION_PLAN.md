@@ -4,13 +4,25 @@
 
 이 문서와 [요구사항 추적표](REQUIREMENTS_TRACEABILITY.md)는 파생 개발 문서다. `postpone-app-docs/`와 통합 원본 명세는 수정하지 않는다. 실제 결과는 원본의 미실행 보고서를 덮어쓰지 않고 commit·run·기기별로 추가한다.
 
-## 1. 현재 출발점과 완료의 의미
+## 1. 현재 구현과 완료의 의미
 
 확정 기준은 미러/Mirror, private 저장소, iOS·iPadOS·macOS 27.0, SwiftUI와 SwiftPieces다. 원본의 Postpone 가칭과 이전 최소 OS보다 [개발 기준](../development-baseline.json)과 [README](../README.md)가 우선한다. 식별자 접두사는 `com.baserize`이며 개발 Bundle ID 적용과 Apple 등록·서명 완료는 별개다.
 
-현재 앱은 이름을 표시하는 SwiftUI 골격이다. `MirrorIOS`, `MirrorMac`, 공유 `MirrorDomain`, `MirrorDomainTests` 및 Actions 네 경로가 있다. `LocalDate`, `PlanTarget`, `PlanningContext`, Today/Review/마감 확인/stale context의 순수 판정은 구현되어 있다. 작업 엔티티, 명령 append, durable receipt, 저장, 투영, UI, 확장, 동기화는 미구현이다.
+최초 계획의 출발점은 이름을 표시하는 앱 골격과 날짜 도메인이었다. 이는 과거 이력이다. 코드 `74d02286d396c59e860394cdc660d72f5ea6dfa2`와 Simulator 준비를 보완한 `fa783ae`의 [Actions 36747271079](https://github.com/hellosunghyun/mirror/actions/runs/36747271079)에서 SwiftPM·Mac·iPhone·iPad 각각 도메인 테스트 37개가 통과했다. 현재 구현이나 전체 수용 결과를 이 초기 실행으로 대신하지 않는다.
 
-검증된 기준은 코드 commit `74d02286d396c59e860394cdc660d72f5ea6dfa2`와 Simulator 준비를 보완한 `fa783ae`다. [Actions 36747271079](https://github.com/hellosunghyun/mirror/actions/runs/36747271079)에서 SwiftPM·Mac·iPhone·iPad 각각 도메인 테스트 37개가 통과했다. fixture 36개는 매개변수 사례이며 148개 독립 테스트나 QA 87개 통과로 합산하지 않는다. 세부 근거는 [Swift 개발 안내](SWIFT_DEVELOPMENT.md)에 있다.
+현재 저장소에는 앱 기능과 공통 명령·실제 영속 저장·시스템 어댑터·확장이 있다. [Package.swift](../Package.swift)의 라이브러리는 `MirrorDomain`, `MirrorData`, `MirrorSystem`, `MirrorDesign` 4개이며 단위·통합 테스트 bundle은 `MirrorDomainTests`, `MirrorDataTests`, `MirrorSystemTests` 3개다. `MirrorIOS`와 `MirrorMac` 앱에 플랫폼별 Widget/Share 타깃이 있고, `MirrorIOSUI`와 `MirrorMacUI` scheme은 같은 UI 시나리오 6개를 실행하도록 구성되어 있다.
+
+| 생산 코드 | 현재 구현 | 남은 수용 조건 |
+|---|---|---|
+| Domain | 날짜/context·Today/Review·마감 확인, 명령 봉투·그룹별 head digest, 불변 OperationRecord, 결정적 reducer·충돌·pending/격리, 최대 20개 배치와 조건부 Undo | 전체 FR/QA 시나리오와 표면별 같은 의미를 확인. 순수 테스트만으로 실기기·저장·동기화 수용을 대체하지 않음 |
+| Data | 실제 Core Data Canonical/LocalProjection SQLite, 프로세스 advisory lock, 원본 우선 저장·receipt 복구, persistent history와 변경 스트림, export/import·명시적 로컬 교체·종료 경계 복구, writer 중지와 기기 로컬 삭제 | 독립 프로세스 강제 종료, protected data, 실제 계정/확장 공유, 배포용 migration과 장기 이력 안전성 검증 |
+| App/Design | 입력·Today·일정·정리/주 패널·보관함 검색·상세/편집·완료/휴지통·Undo·설정, iPad/Mac 탐색·키보드/배치, SwiftPieces 3개 컴포넌트와 라이선스·출처 보존 | 6개 UI smoke의 실제 실행 결과, 접근성·가장 큰 글자·좁은 창·키보드·원문 입력·오류 상태 수용 |
+| System/확장 | 공통 composition root와 App Intents/Shortcuts, Widget 카드·패널·token·snapshot, Share 텍스트/URL, EventKit 읽기·알림 계획/취소·Spotlight·동의한 로컬 진단 | 실제 App Group/서명, 앱 미실행·잠금·위젯/Siri/Share·권한 철회와 OS 실행 정책 검증 |
+| Cloud opt-in | 실제 CKContainer 계정 확인·fingerprint별 공간, 최신 로컬 원본 병합 확인, 공유 active pointer와 오프라인 identity 바인딩, 계정 변경 writer/importer 중지, 원본만 NSPersistentCloudKitContainer로 미러링, 상태 스트림 | Apple container/group 설정과 2기기 G-SYNC. 전체 CloudKit 삭제는 권위 있는 epoch와 구세대 업로드 차단 미결정으로 blocked |
+
+확인된 통합 체크포인트는 `c0ef782`의 [Actions 36761176290](https://github.com/hellosunghyun/mirror/actions/runs/36761176290)다. SwiftPM 테스트 141개는 통과했다. 네이티브 앱·단위 테스트의 `xcodebuild` 명령은 성공했지만 후속 bundle별 JSON 결과 해석이 실패하여 해당 Actions 검사가 실패했고 UI 단계는 실행되지 않았다. 이를 플랫폼 통합 통과나 UI 통과로 기록하지 않는다. `760ba58`의 후속 실행은 아직 진행 중이므로 성공·실행 수를 선기록하지 않는다. 최신 확정 근거는 [Swift 개발 안내](SWIFT_DEVELOPMENT.md)와 [테스트 전략](../TESTING.md)에 commit/run별로 추가한다.
+
+fixture 36개는 매개변수 사례이며 SwiftPM 실행 수, 세 플랫폼에서 같은 테스트를 실행한 수, QA 87개 전체 시나리오를 서로 합산하지 않는다.
 
 | 상태 | 의미 |
 |---|---|
@@ -21,7 +33,7 @@
 | 수용 완료 | FR·QA·NFR와 필요한 실기기/사용자 게이트의 근거가 있음 |
 | blocked / not_run | 필요한 결정·환경이 없거나 실행하지 않음. 성공으로 표현하지 않음 |
 
-D-01은 타깃/도구체인까지 부분 구현이고 등록·서명은 남았다. D-02는 날짜와 순수 판정 단위 증거가 있다. D-03 이후와 QA 87개 전체 시나리오는 미완료다. 일부 판정 테스트는 QA의 관련 부분을 지원하지만 해당 QA의 `pass`를 뜻하지 않는다.
+D-01~D-15의 여러 생산 경로와 D-16의 로컬 계측 코드가 구현되어 있다. 단계별 전체 수용은 별개이며 현재 SwiftPM 증거만으로 QA 87개, NFR 12개 또는 네 게이트를 완료 처리하지 않는다. D-03 이후가 모두 미구현이라는 초기 상태는 더 이상 현재 상태가 아니다. 실제 등록·서명, UI 실행, 독립 프로세스·두 기기·사용자 검증과 전체 CloudKit 삭제는 남은 조건으로 유지한다.
 
 ## 2. 명세를 구현으로 옮기는 기준
 
@@ -44,6 +56,8 @@ D-01은 타깃/도구체인까지 부분 구현이고 등록·서명은 남았�
 ## 3. 단계와 선행 조건
 
 핵심 순서는 D-01 → D-02 → D-03 → D-04 → D-05 → D-06 → D-07 → D-08이다. D-09는 D-06 이후, D-10은 D-04/05 이후 병행하여 동기화를 늦추지 않는다. D-11은 D-06~10의 공통 규칙 위에서 완성한다. D-12/13/14는 앞선 결과를 사용하며 D-15는 D-07 후, D-16은 D-06부터 병행한다.
+
+아래 표는 최초 계획부터 유지한 목표 산출물·의존성·최종 완료 증거다. 현재의 미구현 목록이나 통과표가 아니다. 이미 있는 생산 코드는 1절과 요구사항 추적표에서 확인하며, 각 단계의 남은 통합·실기기·사용자 조건을 계속 검사한다.
 
 | 단계 | 생산 산출물과 남은 작업 | 선행 조건 | 완료 증거 |
 |---|---|---|---|
@@ -75,7 +89,7 @@ D-01은 타깃/도구체인까지 부분 구현이고 등록·서명은 남았�
 
 ### D-04~05의 복구·동시성 체크리스트
 
-Core Data + SQLite와 `NSPersistentCloudKitContainer`는 원본 기술 제안이며 D-STORE 결정 후 구현한다. 새 저장 기술을 편의상 확정하거나 단순 자동 미러링으로 충돌 계약을 낮추지 않는다. 원본과 투영은 별도 store이며 문자열 ID로 연결한다. 두 store를 한 원자 트랜잭션으로 표시하지 않는다.
+첫 구현은 D-STORE에 기록한 원본 권고 Core Data + SQLite를 사용한다. Canonical/LocalProjection은 실제 별도 store이고 문자열 ID로 연결한다. `MirrorStore`의 원본 우선 저장·재시도/receipt 복구·history 재생·로컬 교체/복구와 POSIX gate 코드가 있다. 새 저장 기술로 변경하거나 자동 미러링으로 충돌 계약을 낮춘 사실은 없다. 두 store를 한 원자 트랜잭션으로 표시하지 않는다. 아래 체크리스트의 독립 프로세스·강제 종료·실기기 조건은 코드와 단위 결과만으로 완료 처리하지 않는다.
 
 원본 저장 전 / 원본 후 투영 전 / 투영 후 receipt 전 / receipt 후 snapshot 전 / snapshot 후 reload 전에 독립 프로세스를 종료한다. 재시작·같은 키 재시도에서 입력 유실·중복이 없어야 한다. 원본 성공/투영 실패는 committedProjectionPending으로 표시하며 캐시가 없어도 원본에서 receipt를 복구한다.
 
@@ -113,7 +127,7 @@ App Intents는 앱 실행 전 초기화, 안정 taskID의 Query, 동명 작업 �
 | 실제 시스템/성능 | 등록·서명된 별도 기기 환경, 가능한 자동화는 Actions에 연결 | Siri 한국어, 홈 위젯/timeline, 잠금·VoiceOver, CloudKit 2기기·계정·p95 |
 | 사용자 | 동의한 참여자, D-16 프로토콜 | G-UX/H-01~07, 능동 시간·의도 불일치·재등장 신뢰, 로컬 요약 |
 
-현재 명령은 `bash scripts/ci-swift-package.sh`, `bash scripts/ci-apple-platform.sh macos|iphone|ipad`다. 새 통합/UI 타깃과 명령은 도입 단계에서 workflow 및 TESTING 문서에 추가한다. 없는 테스트 타깃의 실행을 미리 성공으로 기록하지 않는다.
+현재 명령은 `bash scripts/ci-swift-package.sh`, `bash scripts/ci-apple-platform.sh macos|iphone|ipad`다. SwiftPM은 Domain/Data/System 테스트를 실행하고 네이티브 경로는 앱·내장 확장 빌드, 3개 단위·통합 bundle, 플랫폼별 UI scheme을 차례로 검사하도록 workflow에 연결되어 있다. UI 소스는 [6개 시나리오](../Tests/MirrorUITests/README.md)이며 작성·연결과 실제 실행 통과를 구별한다. 필수 bundle 분류나 JSON 실행 수 검증이 실패하면 후속 UI를 성공으로 기록하지 않는다.
 
 각 QA와 NFR 결과에는 아래 필드를 남긴다. 동일 테스트 소스의 네 플랫폼 실행 수를 독립 사례 수로 합산하지 않는다. 0-test·skip·실패가 있는 필수 suite는 완료로 처리하지 않는다. 장애 주입이나 양성/음성 기대값을 구현에 맞춰 약화하지 않는다.
 
@@ -141,8 +155,8 @@ NFR 성능 데이터는 열린 작업 10,000개·기록 100,000개·조회 일�
 |---|---|---|
 | D-STORE | 원본 ADR-004는 Core Data + 불변 OperationRecord + 로컬 projection 제안. 첫 구현은 원본 권고인 Core Data를 기본으로 진행. SwiftData/직접 CloudKit 대안과 영향은 [결정 기록](ARCHITECTURE_DECISIONS.md)에 남김. 별도 사용자 기술 확정으로 주장하지 않음 | D-04 전. persistence 모듈·migration·process gate·실제 통합 테스트가 달라짐 |
 | D-CAPABILITY | prefix만 확정. iOS/Mac 최종 Bundle ID 공유 여부, Widget/Share ID, App Group, iCloud container, Team/배포 경로 미정 | D-01 확장·D-07/08 실제 실행·D-10 cloud 전. 실제 계정 등록/서명과 unsigned 설정을 구별 |
-| D-SYNC | 선택 iCloud·계정별 물리 store·로컬 우선은 제품 계약. 초기 merge/재구성·권위 있는 epoch 제어 경로는 설계 필요 | D-10 전. 계정 혼합 금지, writer/importer 중지와 실제 계정 전환 실험 |
-| D-DELETE | 기기 삭제와 공간 전체 삭제를 구별. 삭제 이후에도 필요한 제어 메타데이터/epoch 권위·offline writer 차단 미결정 | D-13 전. 실제 삭제는 테스트용 데이터와 명시 실행 범위 확인; G-DELETE 없이 완전 삭제 주장 불가 |
+| D-SYNC | opt-in 계정 확인·계정별 물리 store·최신 원본 merge 동의·shared pointer·오프라인 identity 검사·실제 미러링 서비스는 구현. Apple 설정과 G-SYNC 미확인; 권위 있는 epoch 제어는 D-DELETE 미결정 | D-10 전. 계정 혼합 금지, writer/importer 중지와 실제 계정 전환 실험 |
+| D-DELETE | 기기 로컬 삭제는 구현. 전체 CloudKit purge는 configurationRequired/blocked 상태만 제공하며 실행하지 않음. 자동 미러링의 구세대 업로드까지 차단할 epoch 권위·제어 경계는 [결정 기록](ARCHITECTURE_DECISIONS.md#d-delete-개인-공간-전체-삭제와-구세대-차단)의 선택·검증 필요 | D-13 전. 실제 삭제는 테스트용 데이터와 명시 실행 범위 확인; G-DELETE 없이 완전 삭제 주장 불가 |
 | D-UI | SwiftUI/SwiftPieces 채택은 확정. S-01~12의 실제 시안·기기별 레이아웃/포커스·모션을 기록하고 UX 영향 선택 확인 | D-06~11. SwiftPieces 도입 고지와 플랫폼 수정, 주 위젯 fallback은 별도 제품 결정 |
 | D-POLICY | 월요일 주 시작, 최초 시간대 고정, 주간 월요일·알림 09:00·28일/48개·14일 진단은 원본 권고. 사용자 선택 가능 값과 상수 구분 | 관련 D-03/09/12/16. 변경이 계획 의미를 바꾸면 ADR/회귀·세션 무효화 |
 | D-DEVICE | 서명된 iPhone/iPad/Mac, 개발용 iCloud 2기기·Siri/잠금/VoiceOver 측정 환경 미제공 | D-08/10/13/14. 테스트 코드와 CI 빌드는 독립 진행; 없으면 실제 게이트는 blocked |

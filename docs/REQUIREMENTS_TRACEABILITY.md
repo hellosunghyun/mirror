@@ -4,7 +4,9 @@
 
 ## 1. 현재 증거와 상태
 
-이전 통과 기록은 앱 시작 골격과 날짜/판정 단위 테스트다. 현재 전체 통합 코드는 `67d69e9`에 추가됐으며 [첫 Actions 36756014070](https://github.com/hellosunghyun/mirror/actions/runs/36756014070)에서 모듈 접근/동시성 컴파일 오류를 수정 중이다. 작성한 생산 코드와 실제 통과 근거를 구별한다. 코드 기준 `74d02286d396c59e860394cdc660d72f5ea6dfa2` 및 Simulator 보완 `fa783ae`, [Actions 36747271079](https://github.com/hellosunghyun/mirror/actions/runs/36747271079)의 SwiftPM·Mac·iPhone·iPad 각각 37개 통과를 참조한다. 아래 U는 이 단위 증거의 범위를 뜻한다. 생산 저장·전체 명령·실제 UI·확장·동기화·QA 87개 수용 결과를 뜻하지 않는다.
+전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. `c94a3522fef4515644a721b1fed8000dba23b5e9`의 [Actions 36763990118](https://github.com/hellosunghyun/mirror/actions/runs/36763990118)에서 SwiftPM의 필수 세 target이 실제 통과했다: Domain 94, Data 24, System 33, 합계 151개다. Xcode 27의 독립 worker 완료 보고 세 개를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다. native 앱·확장 빌드와 unit 명령은 성공했지만 bundle/metadata 결과 형식 검사와 실제 UI 오류로 전체 실행은 실패했다. 후속 수정은 다시 실제 Actions 결과를 확인해야 한다.
+
+이전 날짜 기반 증거는 `74d02286d396c59e860394cdc660d72f5ea6dfa2` 및 Simulator 보완 `fa783ae`, [Actions 36747271079](https://github.com/hellosunghyun/mirror/actions/runs/36747271079)의 네 경로 각각 37개다. 아래 U는 이 순수 날짜 판정의 범위이며 새 저장·UI·확장·동기화나 QA 87개 전체 통과로 확장하지 않는다.
 
 | 증거 | 실제 코드/테스트와 범위 |
 |---|---|
@@ -13,6 +15,12 @@
 | U3 | F-021~025와 deadlineDateProjection/deadlineAcknowledgmentBinding: 마감 환산/확인 조건·task/revision/target 바인딩 |
 | U4 | F-034~036와 changedPolicyReceiptFirst: receipt 존재를 주입한 context 순서·같은 날짜의 정책 변경; durable 조회 아님 |
 | U5 | storedDatesSurvivePolicyChange/sameInstantDifferentPlanningDay: 저장 날짜 문자열·주와 명시 계획 시간대 보존; 실제 설정·세션/알림 아님 |
+
+| 새 부분 증거 | 실제 실행 범위와 남은 조건 |
+|---|---|
+| V1 명령·reducer | `CommandValidationTests`/`ReducerTests`와 기존 날짜 tests, Domain 94개. 원본 digest·그룹별 head·멱등성·충돌·pending·조건부 Undo·20개 원자 배치의 생산 API. 실제 CloudKit 전송은 검사하지 않음 |
+| V2 실제 영속화 | `StoreIntegrationTests`, Data 24개. 실제 SQLite 재시작·원본 후 장애 복구·경쟁 인스턴스·export/import·로컬 삭제·복원·구독 알림. Mac 별도 OS 프로세스 lock 회귀 포함. 두 실제 Core Data writer 프로세스·물리 보호 데이터·migration/대용량 성능은 별도 검증 |
+| V3 시스템 계약 | `SystemContractTests`/`CloudBoundaryTests`, System 33개. 실제 임시 SQLite의 frozen 카드·receipt/토큰·Today 순서·재정리, 알림 planner·안전 딥링크·로컬 계측·Cloud 상태 구독. unhosted OS adapter의 typed 실패를 확인하며 실제 Widget/Siri/권한/CloudKit 성공으로 대신하지 않음 |
 
 아래 FR 행의 `코드 추가`는 생산 경로가 작성됐다는 뜻이며 새 통합 코드의 빌드·수용 통과를 뜻하지 않는다. 이전 U 근거는 위 순수 함수에 한정한다. 모든 FR의 앱 수용은 아직 미완료이고, 모든 Q 행의 전체 시나리오는 `not_run`이다. 향후 결과는 실제 full SHA/run/OS/기기/고정 시각/expected/actual/증거/남은 범위와 함께 이 파생 추적표에 갱신한다.
 
@@ -66,7 +74,7 @@
 | NFR-007 | 민감 원문 분석 로그 제외 | D-07/12/13/16 | Q-045/082/083; 오류·sync·share·export·로컬 계측·제목 숨김/노출 검사 | not_run |
 | NFR-008 | 큰 글자·비제스처 대체 경로 | D-06/08/11/14, G-WIDGET/G-UX | Q-075~079; VoiceOver/VoiceControl·대비·Reduce Transparency·키보드 | not_run |
 | NFR-009 | 무한 폴링·초 reload·가짜 background 없음 | D-08/12/14 | 날짜 경계 timeline·예약 범위/보충·백그라운드 자원/에너지 측정 | not_run |
-| NFR-010 | Foundation 순수 도메인 테스트 가능 | D-02/03 | fixture 36개·불변식·명령/reducer property; UI/Apple framework 의존 방지 | 날짜/판정 부분 U1~U5, 전체 명령 미완료 |
+| NFR-010 | Foundation 순수 도메인 테스트 가능 | D-02/03 | fixture 36개·불변식·명령/reducer property; UI/Apple framework 의존 방지 | U1~U5 및 V1 Domain 94개 통과; 전체 앱 수용과 구별 |
 | NFR-011 | 원본 보존·재구축·migration 복구 | D-04/10/13 | Q-051~054/060/063/064/085; backup·token 무효·손상·미지원 payload 격리 | not_run |
 | NFR-012 | 권고/마감/미정 상태 구분 | D-06/09/12/16, G-UX | Q-013/014/019/025~028/068~074; week≠Monday, plan≠deadline·알림/3분 보장 문구 검사 | not_run |
 
