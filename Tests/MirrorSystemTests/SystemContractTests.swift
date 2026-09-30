@@ -78,6 +78,26 @@ struct SystemContractTests {
         #expect(snapshot.records.filter { $0.idempotencyKey == card.decisionToken }.count == 1)
     }
 
+    @Test("과거 토큰을 다음 작업에 붙인 재시도도 원본 영수증의 대상만 처리한다")
+    func receiptCannotAdvanceAnotherCard() async throws {
+        let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
+        let original = try #require(state.card)
+        _ = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: original,
+                                      target: .day(try h.context.planningDay.addingDays(1)), at: fixedInstant)
+        let next = try await h.widget.snapshot(at: fixedInstant), visible = try #require(next.card)
+        let forged = WidgetCard(cardID: visible.cardID, taskID: visible.taskID, title: visible.title,
+                                deadlineSummary: visible.deadlineSummary, expected: visible.expected,
+                                decisionToken: original.decisionToken, context: original.context)
+        let result = try await h.widget.commit(scopeKey: next.scopeKey, sessionID: next.sessionID,
+                                               card: forged, target: .day(h.context.planningDay), at: fixedInstant)
+        #expect(result.state == .alreadyDecided)
+        #expect(result.affectedTaskIDs == [original.taskID])
+        let after = try await h.widget.snapshot(at: fixedInstant)
+        #expect(after.card == visible)
+        #expect(after.queue.contains(visible.taskID))
+        #expect(try await h.store.snapshot().tasks.first { $0.taskID == visible.taskID }?.plan.target == .unassigned)
+    }
+
     @Test("패널 재로드와 같은 패널 중복 입력은 계획과 카드 토큰을 바꾸지 않는다")
     func panelReloadKeepsCard() async throws {
         let h = try await harness(), initial = try await h.widget.snapshot(at: fixedInstant)

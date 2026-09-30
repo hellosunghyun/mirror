@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 public enum LocalMetricKind: String, Codable, Sendable {
-    case captureAttempt, captureSaved, reviewOpened, reviewClosed, decisionCommitted, decisionRejected
+    case captureAttempt, captureSaved, captureRejected, reviewOpened, reviewClosed, decisionCommitted, decisionRejected
     case undoRequested, undoResult, calendarPermissionChanged, syncStateChanged, widgetInteractionFinished
 }
 public enum MetricSurface: String, Codable, Sendable { case app, widget, shortcut, siri, share, spotlight }
@@ -15,11 +15,14 @@ public struct LocalMetric: Codable, Sendable {
     public let outcome: MetricOutcome?
     public let destination: MetricDestination?
     public let processingMilliseconds: Int?
+    public let activeReviewMilliseconds: Int?
     public let countBucket: Int?
     public init(kind: LocalMetricKind, at: Date, surface: MetricSurface, outcome: MetricOutcome? = nil,
-                destination: MetricDestination? = nil, processingMilliseconds: Int? = nil, countBucket: Int? = nil) {
+                destination: MetricDestination? = nil, processingMilliseconds: Int? = nil,
+                activeReviewMilliseconds: Int? = nil, countBucket: Int? = nil) {
         self.kind = kind; self.at = at; self.surface = surface; self.outcome = outcome; self.destination = destination
-        self.processingMilliseconds = processingMilliseconds; self.countBucket = countBucket
+        self.processingMilliseconds = processingMilliseconds; self.activeReviewMilliseconds = activeReviewMilliseconds
+        self.countBucket = countBucket
     }
 }
 
@@ -28,6 +31,9 @@ public actor LocalMetrics {
     private let fileURL: URL
     public init(directory: URL) { fileURL = directory.appendingPathComponent("diagnostics-v1.json") }
     public func record(_ event: LocalMetric) throws {
+        guard (event.processingMilliseconds ?? 0) >= 0, (event.activeReviewMilliseconds ?? 0) >= 0 else {
+            throw SystemServiceError.invalidInput
+        }
         let lock = try acquire()
         defer { flock(lock, LOCK_UN); Darwin.close(lock) }
         var events = try read()
@@ -50,6 +56,12 @@ public actor LocalMetrics {
         let events = try read()
         var counts: [String: Int] = [:]
         for event in events { counts[event.kind.rawValue, default: 0] += 1 }
+        let active = try events.compactMap(\.activeReviewMilliseconds).reduce(0) { sum, value in
+            let next = sum.addingReportingOverflow(value)
+            guard !next.overflow else { throw SystemServiceError.invalidInput }
+            return next.partialValue
+        }
+        if active > 0 { counts["activeReviewMilliseconds"] = active }
         return try JSONEncoder().encode(counts)
     }
     private func read() throws -> [LocalMetric] {

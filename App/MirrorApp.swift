@@ -33,13 +33,15 @@ struct MirrorMenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @State private var title = ""
     @FocusState private var focused: Bool
+    @State private var captureFlowStarted = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("일단 넣고, 나중에 정하세요").font(.headline)
             TextField("할 일 제목", text: $title, axis: .vertical).focused($focused)
                 .accessibilityIdentifier("menuBar.title")
             Button("보관함에 넣기") {
-                Task { if await model.capture(title: title, note: "", sourceURL: "") { title = ""; focused = true } }
+                startCaptureFlow()
+                Task { if await model.capture(title: title, note: "", sourceURL: "") { title = ""; focused = true; captureFlowStarted = false } }
             }.disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("menuBar.save")
             if let problem = model.problem { Text(problem).foregroundStyle(.red) }
             if let feedback = model.feedback { Text(feedback).font(.caption) }
@@ -50,7 +52,13 @@ struct MirrorMenuBarContent: View {
         }.padding().frame(width: 320)
             .task { await model.start() }
             .onChange(of: focused) { _, value in model.isTextEditing = value }
+            .onChange(of: title) { _, value in if !value.isEmpty { startCaptureFlow() } }
             .onDisappear { model.isTextEditing = false }
+    }
+    private func startCaptureFlow() {
+        guard !captureFlowStarted else { return }
+        captureFlowStarted = true
+        Task { await model.recordCaptureFlowStarted() }
     }
 }
 #endif

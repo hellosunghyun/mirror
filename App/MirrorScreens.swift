@@ -90,6 +90,7 @@ struct MirrorCaptureView: View {
     @State private var requestToken = UUID().uuidString
     @State private var pendingLine: String?
     @State private var pendingSingle = false
+    @State private var captureFlowStarted = false
     private enum InputField: Hashable { case title, note, url }
     @FocusState private var focusedField: InputField?
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
@@ -126,12 +127,13 @@ struct MirrorCaptureView: View {
             }
             .navigationTitle("일단 넣기")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.accessibilityIdentifier("capture.close") } }
-            .onAppear { focusedField = .title }
+            .onAppear { focusedField = .title; startCaptureFlow() }
+            .onChange(of: title) { _, value in if !value.isEmpty { startCaptureFlow() } }
             .onChange(of: focusedField) { _, focused in model.isTextEditing = focused != nil }
             .onDisappear { model.isTextEditing = false }
             .onChange(of: model.lastCaptureCommittedToken) { _, token in
                 guard token == requestToken else { return }
-                if pendingSingle { title = ""; note = ""; sourceURL = ""; pendingSingle = false; requestToken = UUID().uuidString }
+                if pendingSingle { title = ""; note = ""; sourceURL = ""; pendingSingle = false; requestToken = UUID().uuidString; captureFlowStarted = false }
                 else if let pendingLine {
                     var remaining = title.components(separatedBy: .newlines)
                     if remaining.first == pendingLine { remaining.removeFirst(); title = remaining.joined(separator: "\n") }
@@ -166,13 +168,20 @@ struct MirrorCaptureView: View {
         }.frame(minWidth: 300, idealWidth: 480, minHeight: 340)
     }
     private func save() {
+        startCaptureFlow()
         Task {
             requestToken = UUID().uuidString
             if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken) {
                 title = ""; note = ""; sourceURL = ""; focusedField = .title
                 requestToken = UUID().uuidString
+                captureFlowStarted = false
             } else if model.projectionPending { pendingSingle = true }
         }
+    }
+    private func startCaptureFlow() {
+        guard !captureFlowStarted else { return }
+        captureFlowStarted = true
+        Task { await model.recordCaptureFlowStarted() }
     }
 }
 
@@ -264,6 +273,7 @@ struct MirrorReviewView: View {
     @AccessibilityFocusState private var cardFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var exposureID = UUID()
     var body: some View {
         @Bindable var model = model
         NavigationStack {
@@ -333,6 +343,8 @@ struct MirrorReviewView: View {
         }
         .disabled(model.isSaving)
         .frame(minWidth: 300, idealWidth: 580, minHeight: 460)
+        .onAppear { model.setReviewVisible(exposureID, visible: true) }
+        .onDisappear { model.setReviewVisible(exposureID, visible: false) }
     }
     private func todayButton(_ day: LocalDate) -> some View {
         Button("오늘") { Task { await model.decide(.day(day)) } }

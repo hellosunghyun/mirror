@@ -426,6 +426,8 @@ struct StoreIntegrationTests {
         #expect(await first.execute(try capture(context: context), at: context.capturedAt).state == .locallyCommitted)
         try await first.suspend()
         await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.snapshot() }
+        try await oldWriter.suspend() // 다른 인스턴스가 revoke해도 자신의 store를 닫는다.
+        try await oldWriter.suspend() // 종료 호출은 멱등적이다.
         let reopened = try await MirrorStore(configuration: configuration)
         #expect(try await reopened.snapshot().tasks.count == 1)
         #expect(try await reopened.snapshot().records.count == 1)
@@ -453,4 +455,64 @@ struct StoreIntegrationTests {
         #expect(try await target.snapshot().tasks.count == 2)
         await #expect(throws: StoreError.obsoleteEpoch) { try await anotherWriter.snapshot() }
     }
+
+    #if os(macOS)
+    @Test("별도 OS 프로세스의 잠금 중 원본은 늘지 않고 종료 뒤 같은 요청을 한 번 저장한다")
+    func separateProcessWriteGateAndTerminationRelease() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        let envelope = try capture(key: "process-boundary-decision", context: context)
+        let lockURL = configuration.directory.appendingPathComponent("Writer.lock")
+        let readyURL = configuration.directory.appendingPathComponent("HelperReady")
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        helper.arguments = ["-u", "-c", """
+        import fcntl, pathlib, signal, sys
+        with open(sys.argv[1], "a+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            pathlib.Path(sys.argv[2]).write_text("locked", encoding="utf-8")
+            signal.pause()
+        """, lockURL.path, readyURL.path]
+        helper.standardOutput = Pipe()
+        helper.standardError = Pipe()
+        try helper.run()
+        defer {
+            if helper.isRunning { helper.terminate() }
+            helper.waitUntilExit()
+        }
+        let clock = ContinuousClock()
+        let readyDeadline = clock.now.advanced(by: .seconds(5))
+        while helper.isRunning, !FileManager.default.fileExists(atPath: readyURL.path), clock.now < readyDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(helper.isRunning, "잠금 helper가 실제 별도 프로세스에서 실행되어야 합니다.")
+        try #require(FileManager.default.fileExists(atPath: readyURL.path), "helper의 잠금 획득을 확인해야 합니다.")
+        #expect(helper.processIdentifier != ProcessInfo.processInfo.processIdentifier)
+
+        let blocked = await store.execute(envelope, at: context.capturedAt)
+        #expect(blocked.state == .unavailable)
+        #expect(blocked.operationID == nil)
+        let beforeExit = try await store.snapshot()
+        #expect(beforeExit.tasks.isEmpty)
+        #expect(beforeExit.records.isEmpty)
+
+        helper.terminate() // 명시 flock 해제 없이 프로세스 종료 시 OS가 잠금을 해제한다.
+        let exitDeadline = clock.now.advanced(by: .seconds(5))
+        while helper.isRunning, clock.now < exitDeadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(!helper.isRunning, "helper 종료 후에만 생산 명령을 재시도합니다.")
+        helper.waitUntilExit()
+        #expect(helper.terminationReason == .uncaughtSignal)
+
+        let committed = await store.execute(envelope, at: context.capturedAt)
+        #expect(committed.state == .locallyCommitted)
+        let retry = await store.execute(envelope, at: context.capturedAt)
+        #expect(retry.state == .alreadyApplied)
+        #expect(retry.operationID == committed.operationID)
+        let final = try await store.snapshot()
+        #expect(final.tasks.count == 1)
+        #expect(final.records.count == 1)
+    }
+    #endif
 }

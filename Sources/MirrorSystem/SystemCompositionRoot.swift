@@ -189,11 +189,14 @@ public actor SystemServices {
         case .persistenceFailed: outcome = .failure
         }
         let surface = MetricSurface(rawValue: source.rawValue) ?? .app
-        let kind: LocalMetricKind = payload.kind == .capture ? .captureSaved : payload.kind == .undo ? .undoResult :
+        let committed = [.locallyCommitted, .alreadyApplied, .committedProjectionPending].contains(result.state)
+        let kind: LocalMetricKind = payload.kind == .capture ? (committed ? .captureSaved : .captureRejected) : payload.kind == .undo ? .undoResult :
             [.locallyCommitted, .alreadyApplied, .committedProjectionPending].contains(result.state) ? .decisionCommitted : .decisionRejected
         // 진단 저장 실패가 이미 저장한 원본 명령의 성공을 실패로 바꾸지 않는다.
-        try? await metrics.record(.init(kind: kind, at: current.capturedAt, surface: surface,
-                                        outcome: outcome, processingMilliseconds: Int(milliseconds)))
+        if payload.kind != .capture || ![.alreadyApplied, .alreadyDecided].contains(result.state) {
+            try? await metrics.record(.init(kind: kind, at: current.capturedAt, surface: surface,
+                                            outcome: outcome, processingMilliseconds: Int(milliseconds)))
+        }
         WidgetReload.request()
         return result
     }
@@ -207,11 +210,19 @@ public actor SystemServices {
 
     public func capture(title: String, note: String? = nil, sourceURL: String? = nil,
                         source: CommandSource, key: String = UUID().uuidString) async throws -> TaskProjection {
+        let surface = MetricSurface(rawValue: source.rawValue) ?? .app
+        try? await metrics.record(.init(kind: .captureAttempt, at: Date(), surface: surface))
+        let content: TaskContent
+        do { content = try TaskContent(title: title, note: note, sourceURL: sourceURL) }
+        catch {
+            try? await metrics.record(.init(kind: .captureRejected, at: Date(), surface: surface, outcome: .failure))
+            throw SystemServiceError.invalidInput
+        }
         let digest = try CanonicalDigest.hash([workspaceEpoch, key])
         let hex = Array(digest.prefix(32))
         let uuid = [String(hex[0..<8]), String(hex[8..<12]), String(hex[12..<16]), String(hex[16..<20]), String(hex[20..<32])].joined(separator: "-")
         guard let id = UUID(uuidString: uuid) else { throw SystemServiceError.invalidInput }
-        let result = try await execute(.capture(taskID: id, content: TaskContent(title: title, note: note, sourceURL: sourceURL)),
+        let result = try await execute(.capture(taskID: id, content: content),
                                        source: source, key: key)
         try requireCommitted(result)
         guard let actualID = result.affectedTaskIDs.first else { throw SystemServiceError.unavailable }
@@ -238,7 +249,7 @@ public actor SystemServices {
 
 enum SystemStoreBoundary {
     static func validate(_ store: MirrorStore) async throws {
-        let configuration = store.configuration
+        let configuration = await store.configuration
         guard let sync = configuration.cloudSync else { return }
         let group = (Bundle.main.object(forInfoDictionaryKey: "MirrorAppGroupIdentifier") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)

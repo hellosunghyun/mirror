@@ -2,7 +2,7 @@
 
 > 잘 미루면, 지금 할 일이 남는다.
 
-미루기와 재결정 최소화를 중심으로 하는 iPhone / iPad / Mac 앱이다. 개발 명세·계약과 함께 SwiftUI 앱의 초기 타깃, 날짜 도메인, Swift 테스트 및 GitHub Actions 검증을 포함한다. 현재 화면은 앱 이름을 표시하는 시작 골격이며 작업 저장·명령·동기화·전체 UI 구현은 다음 단계다.
+미루기와 재결정 최소화를 중심으로 하는 iPhone / iPad / Mac 앱이다. SwiftUI의 실제 입력·정리·Today·검색·상세·설정 화면, 불변 원본 기반 Core Data 저장, Widget/Share/App Intents 및 선택 CloudKit 코드를 통합했다. 전체 구현의 Actions 컴파일·통합/UI 검증을 진행 중이며 실제 서명·두 기기 동기화·사용자 검증은 남아 있다.
 
 ## 이름 설명
 
@@ -26,7 +26,7 @@
 
 ## UI 구성요소
 
-미러 UI는 **SwiftUI + SwiftPieces**를 기준으로 제작한다. SwiftPieces 채택은 사용자 지정 결정이다. 앱 프로젝트의 시작 골격을 구성했으며 실제 화면과 SwiftPieces 컴포넌트 소스 도입은 다음 UI 작업이다.
+미러 UI는 **SwiftUI + SwiftPieces**를 기준으로 제작한다. SwiftPieces 채택은 사용자 지정 결정이다. TaskRow·ExpandableText·StatusMorph 소스를 한국어·MainActor·Mac 대응과 함께 실제 화면에 도입했다. 고정 출처·변경·라이선스는 [도입 기록](Sources/MirrorDesign/SwiftPieces/PROVENANCE.md)을 따른다.
 
 - 초기 확인 기준: [`15e4a68ce09a58f7c93a8043f88fca9ea224af75`](https://github.com/Saivion/SwiftPieces/tree/15e4a68ce09a58f7c93a8043f88fca9ea224af75).
 - [공식 사용 방식](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/README.md): 필요한 `registry/swift/` 소스를 UI / Design 계층에 가져와 사용한다. 셰이더를 쓰는 구성요소는 필요한 `.metal` 파일도 포함한다. 각 도입 파일의 원본 경로·커밋·수정 내역을 기록한다.
@@ -79,9 +79,9 @@ App Group은 같은 개발팀의 앱·확장이 같은 기기의 저장 공간�
 
 ## 검증 실행
 
-테스트는 **GitHub Actions 러너에서 실행**한다. [Swift workflow](.github/workflows/swift.yml)는 Xcode 27에서 SwiftPM 도메인 테스트와 macOS·iPhone·iPad 앱 빌드/Swift 테스트를 실행하고 실제 테스트 수와 현재 실행의 로그·xcresult를 보존한다. 기존 [문서 workflow](.github/workflows/validation.yml)는 Python 준비 검증을 계속 수행한다.
+테스트는 **GitHub Actions 러너에서 실행**한다. [Swift workflow](.github/workflows/swift.yml)는 Xcode 27에서 SwiftPM 도메인·SQLite·시스템 테스트와 macOS·iPhone·iPad 앱/확장 빌드 및 실제 UI 테스트를 실행하고 실제 테스트 수와 현재 실행의 로그·xcresult를 보존한다. 기존 [문서 workflow](.github/workflows/validation.yml)는 Python 준비 검증을 계속 수행한다.
 
-`Mirror.xcodeproj`의 공유 scheme은 `MirrorIOS`와 `MirrorMac`이다. iPhone·iPad는 하나의 iOS 앱 타깃을 사용하고 Mac은 네이티브 타깃을 사용한다. 두 앱과 테스트는 `MirrorDomain`의 같은 소스를 사용한다. 개발 빌드의 Bundle ID는 후보 `com.baserize.mirror`, `com.baserize.mirror.mac`이며 Apple 등록·서명·App Group·iCloud 설정 완료를 뜻하지 않는다.
+`Mirror.xcodeproj`의 공유 scheme은 `MirrorIOS`와 `MirrorMac`이다. iPhone·iPad는 하나의 iOS 앱 타깃을 사용하고 Mac은 네이티브 타깃을 사용한다. 두 앱·확장은 `MirrorDomain`/`MirrorData`/`MirrorSystem`의 공통 경로를 사용하며 `MirrorIOSUI`/`MirrorMacUI` scheme에서 실제 입력·저장·Undo UI를 검사한다. 개발 빌드의 Bundle ID는 후보 `com.baserize.mirror`, `com.baserize.mirror.mac`이며 Apple 등록·서명·App Group·iCloud 설정 완료를 뜻하지 않는다.
 
 타깃 구성, 날짜 규칙, CI 명령과 검증 범위는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다. macOS 27/Xcode 27에서 앱을 실행하려면 `./script/build_and_run.sh` 또는 Codex의 Run 동작을 사용할 수 있다. 테스트 실행은 Actions를 사용한다.
 
@@ -98,10 +98,10 @@ python3.12 -m venv .venv
 
 `scripts/check.py`는 원본 파일의 무결성을 확인한 뒤 임시 복사본에서 기존 문서 검증을 실행한다. 원본 검증기는 보고서를 덮어쓰므로 보존본에서 직접 실행하지 않는다. 회귀 테스트는 정상 번들과 오류를 주입한 복사본을 검사한다. GitHub Actions도 같은 두 명령을 push / pull request마다 실행한다.
 
-문서 검증, Swift 날짜 도메인 테스트, 앱 빌드, 실제 UI·위젯·Siri·CloudKit 동기화 검증은 각각 다른 증거다. 원본 QA 명세의 미실행 상태는 보존하며 실제 코드의 실행 결과는 [검증 기록](docs/SWIFT_DEVELOPMENT.md#검증-기록)에 별도로 남긴다.
+문서 검증, Swift 날짜 도메인 테스트, 앱 빌드, 실제 UI·위젯·Siri·CloudKit 동기화 검증은 각각 다른 증거다. 원본 QA 명세의 미실행 상태는 보존하며 실제 코드의 실행 결과는 [요구사항별 검증 기록](docs/REQUIREMENTS_TRACEABILITY.md)에 별도로 남긴다.
 
 ## 개발 착수
 
 최종 목표는 전체 명세의 앱 제작이다. [전체 구현 계획](docs/IMPLEMENTATION_PLAN.md)은 D-01~D-16의 산출물·선행 조건·검증 게이트·외부 준비를, [요구사항 추적표](docs/REQUIREMENTS_TRACEABILITY.md)는 FR 30개·NFR 12개·QA 87개의 구현과 증거를 관리한다. 중간 단계의 골격이나 단위 테스트 통과를 전체 제품 완성으로 기록하지 않는다.
 
-먼저 [개발 지침](AGENTS.md), 원본 문서 01·03·04·06, [테스트 전략](TESTING.md)을 읽는다. 타깃 골격과 날짜 판정은 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)에 기록한다. D-01의 서명·등록 결정과 D-03 이후 저장·명령·시스템 통합은 원본의 검증 게이트에 따라 이어간다.
+먼저 [개발 지침](AGENTS.md), 원본 문서 01·03·04·06, [테스트 전략](TESTING.md)을 읽는다. 타깃 골격과 날짜 판정은 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)에 기록한다. 타깃·도메인·저장·명령·시스템 통합의 실제 코드와 원격 실행을 확인한 뒤, 서명·등록·실기기·사용자 검증 게이트를 충족한다.

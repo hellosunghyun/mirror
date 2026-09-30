@@ -119,6 +119,10 @@ final class AppModel {
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let preferenceKey = "Mirror.preferences.v1"
     @ObservationIgnored private let sessionKey = "Mirror.review.session.v1"
+    @ObservationIgnored private var reviewExposures: Set<UUID> = []
+    @ObservationIgnored private var activeScenes: Set<UUID> = []
+    @ObservationIgnored private var reviewExposureStart: ContinuousClock.Instant?
+    @ObservationIgnored private var activeReviewMilliseconds = 0
 
     init() {
         if let bytes = defaults.data(forKey: preferenceKey),
@@ -217,15 +221,16 @@ final class AppModel {
         isLoading = false
     }
 
-    func refresh() async {
-        guard let store else { return }
+    @discardableResult
+    func refresh() async -> Bool {
+        guard let store else { return false }
         do {
             if configuration?.cloudSync != nil, let cloud {
                 _ = await cloud.validateLocalIdentity()
                 cloudSyncStatus = await cloud.status()
                 if cloudSyncStatus == .accountTransitionRequired {
                     problem = "iCloud 계정이 바뀌었어요. 이전 계정의 자료를 새 계정에 자동으로 업로드하지 않아요. 동기화 설정을 확인해 주세요."
-                    return
+                    return false
                 }
             }
             let snapshot = try await store.snapshot()
@@ -246,7 +251,8 @@ final class AppModel {
             selectedTaskIDs.formIntersection(Set(tasks.filter { $0.status == .open }.map(\.taskID)))
             if retryEnvelope == nil { projectionPending = false }
             await reconcileSystemServices()
-        } catch { problem = "저장된 화면을 불러오지 못했어요. 원본을 유지한 채 다시 시도해 주세요." }
+            return true
+        } catch { problem = "저장된 화면을 불러오지 못했어요. 원본을 유지한 채 다시 시도해 주세요."; return false }
     }
 
     func savePreferences() {
@@ -263,7 +269,11 @@ final class AppModel {
                                           sourceURL: sourceURL.isEmpty ? nil : sourceURL)
             guard let context, let envelope = makeEnvelope(.capture(taskID: UUID(), content: content), context: context, token: requestToken) else { return false }
             return await execute(envelope, success: "보관함에 넣었어요.")
-        } catch { problem = "제목은 1~500자, 메모는 20,000자 이하여야 해요. 링크는 http 또는 https 주소를 확인해 주세요."; return false }
+        } catch {
+            problem = "제목은 1~500자, 메모는 20,000자 이하여야 해요. 링크는 http 또는 https 주소를 확인해 주세요."
+            await recordMetric(kind: .captureRejected, outcome: .failure)
+            return false
+        }
     }
 
     func edit(_ task: TaskProjection, title: String, note: String, sourceURL: String) async -> Bool {
@@ -341,6 +351,8 @@ final class AppModel {
         selectedTaskID = nil
         if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty { showReview = true; return }
         let cycleID = ReviewCycle.id(workspaceEpoch: configuration.workspaceEpoch, context: context)
+        activeReviewMilliseconds = 0
+        reviewExposureStart = nil
         let report = TaskReducer.reduce(records, workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch)
         let closed = report.isCycleClosed(cycleID)
         let cards = tasks.filter {
@@ -462,7 +474,9 @@ final class AppModel {
             problem = "현재 기기의 작업을 교체하고 원래 자료의 공간을 복원할지 확인해 주세요."; return
         }
         do {
+            let oldServices = services
             let report: ImportReport
+            var replacedWorkspace = false
             if store == nil, let configuration, configuration.cloudSync == nil {
                 let restoration = try await MirrorStore.recoverInterruptedLocalRestoration(from: bytes, directory: configuration.directory,
                                                                                             deviceID: configuration.deviceID, confirmed: confirmWorkspace)
@@ -471,6 +485,7 @@ final class AppModel {
                 services = SystemServices(store: next, directory: restoration.newConfiguration.directory,
                                           workspaceEpoch: restoration.newConfiguration.workspaceEpoch)
                 report = restoration.importReport
+                replacedWorkspace = true
             } else if let store, archivePreview?.requiresWorkspaceConfirmation == true {
                 let restoration = try await store.restoreArchiveAsLocalWorkspace(bytes, confirmed: confirmWorkspace)
                 let next = try await MirrorStore(configuration: restoration.newConfiguration)
@@ -480,8 +495,14 @@ final class AppModel {
                 review = nil; lastUndo = nil; records = []; tasks = []
                 defaults.removeObject(forKey: sessionKey)
                 report = restoration.importReport
+                replacedWorkspace = true
             } else if let store { report = try await store.importArchive(bytes, consent: ArchiveImportConsent(accountChangeConfirmed: confirmAccount)) }
             else { problem = "저장소 설정을 먼저 확인해 주세요. 원본은 지우지 않았어요."; return }
+            if replacedWorkspace {
+                if let oldServices { await reportCleanup(await oldServices.eraseLocalSurfaceData()) }
+                clearTransientData()
+                preferences.deadlineAlarmDates = [:]
+            }
             if let configuration, configuration.cloudSync == nil { resetCloudService(localConfiguration: configuration) }
             feedback = "복원했어요. 새 기록 \(report.inserted)개, 중복 \(report.duplicates)개, 격리 \(report.quarantined)개."
             importData = nil; importPreview = nil; archivePreview = nil; await refresh()
@@ -489,19 +510,31 @@ final class AppModel {
     }
     func deleteLocalData() async {
         guard let store else { return }
+        var sourceDeleted = false
         do {
+            let oldServices = services
             let report = try await store.deleteLocalData()
             guard report.deleted, let config = report.newConfiguration else { problem = report.safeUserMessage; return }
+            sourceDeleted = true
+            self.store = nil; services = nil
             configuration = config
-            self.store = try await MirrorStore(configuration: config)
-            services = SystemServices(store: self.store!, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
+            clearTransientData()
+            preferences.deadlineAlarmDates = [:]
+            preferences.reviewNotifications = false; preferences.deadlineNotifications = false
+            preferences.spotlightEnabled = false; preferences.selectedCalendars = []; preferences.calendarEnabled = false
+            if let oldServices { await reportCleanup(await oldServices.eraseLocalSurfaceData()) }
+            let next = try await MirrorStore(configuration: config)
+            self.store = next
+            services = SystemServices(store: next, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
             resetCloudService(localConfiguration: config)
             defaults.set(config.workspaceEpoch, forKey: "Mirror.workspaceEpoch.v1")
             tasks = []; records = []; review = nil; lastUndo = nil
             defaults.removeObject(forKey: sessionKey)
             feedback = "이 기기의 데이터를 지웠어요. iCloud 자료와 다른 기기는 삭제하지 않았어요."
             await refresh()
-        } catch { problem = "기기 데이터를 지우지 못했어요. 삭제 상태를 다시 확인해 주세요." }
+        } catch {
+            problem = sourceDeleted ? "이 기기의 원본은 지웠어요. 새 저장소를 열지 못해 다시 확인해야 해요. iCloud 자료는 지우지 않았어요." : "기기 데이터를 지우지 못했어요. 삭제 상태를 다시 확인해 주세요."
+        }
     }
 
     func retry() async {
@@ -544,13 +577,14 @@ final class AppModel {
         if envelope.source == .app, result.state != .alreadyApplied, let services {
             let committed = result.state == .locallyCommitted || result.state == .committedProjectionPending
             let kind: LocalMetricKind
-            if case .capture = envelope.payload { kind = committed ? .captureSaved : .captureAttempt }
+            if case .capture = envelope.payload { kind = committed ? .captureSaved : .captureRejected }
             else if case .reviewClose = envelope.payload { kind = .reviewClosed }
             else if case .undo = envelope.payload { kind = .undoResult }
             else { kind = committed ? .decisionCommitted : .decisionRejected }
             let outcome: MetricOutcome
             switch result.state {
-            case .locallyCommitted, .committedProjectionPending: outcome = .success
+            case .locallyCommitted: outcome = .success
+            case .committedProjectionPending: outcome = .projectionPending
             case .requiresConfirmation: outcome = .confirmation
             case .staleContext, .staleSnapshot, .alreadyDecided: outcome = .stale
             case .notFound, .unavailable: outcome = .unavailable
@@ -558,14 +592,25 @@ final class AppModel {
             case .persistenceFailed: outcome = .failure
             }
             let metrics = await services.metrics
+            let activeTime: Int?
+            if case .reviewClose = envelope.payload, committed {
+                endReviewExposureSegment()
+                activeTime = activeReviewMilliseconds
+                activeReviewMilliseconds = 0
+            } else { activeTime = nil }
             try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome,
+                                                  activeReviewMilliseconds: activeTime,
                                                   countBucket: result.affectedTaskIDs.isEmpty ? 0 : result.affectedTaskIDs.count == 1 ? 1 : result.affectedTaskIDs.count <= 5 ? 5 : 20))
         }
         switch result.state {
         case .locallyCommitted, .alreadyApplied:
             retryEnvelope = nil
             projectionPending = false
-            await refresh()
+            guard await refresh() else {
+                projectionPending = true; retryEnvelope = envelope
+                feedback = "저장했어요. 화면을 갱신하고 있어요."
+                return false
+            }
             feedback = success
             advanceReview(envelope)
             recordUndo(envelope, result: result)
@@ -872,6 +917,34 @@ final class AppModel {
         guard let services else { return }
         do { let metrics = await services.metrics; try await metrics.erase(); feedback = "이 기기의 진단 기록을 지웠어요." }
         catch { problem = "이 기기의 진단 기록을 지우지 못했어요." }
+    }
+    func setSceneActive(_ id: UUID, active: Bool) {
+        if active { activeScenes.insert(id) } else { activeScenes.remove(id) }
+        updateReviewExposure()
+    }
+    func setReviewVisible(_ id: UUID, visible: Bool) {
+        if visible { reviewExposures.insert(id) } else { reviewExposures.remove(id) }
+        updateReviewExposure()
+    }
+    private func updateReviewExposure() {
+        if !activeScenes.isEmpty && !reviewExposures.isEmpty {
+            if reviewExposureStart == nil { reviewExposureStart = .now }
+        } else { endReviewExposureSegment() }
+    }
+    private func endReviewExposureSegment() {
+        guard let start = reviewExposureStart else { return }
+        let duration = start.duration(to: .now).components
+        let milliseconds = max(0, Double(duration.seconds) * 1_000 + Double(duration.attoseconds) / 1_000_000_000_000_000)
+        let elapsed = milliseconds < Double(Int.max) ? Int(milliseconds) : Int.max
+        let (sum, overflow) = activeReviewMilliseconds.addingReportingOverflow(elapsed)
+        activeReviewMilliseconds = overflow ? Int.max : sum
+        reviewExposureStart = nil
+    }
+    func recordCaptureFlowStarted() async { await recordMetric(kind: .captureAttempt) }
+    private func recordMetric(kind: LocalMetricKind, outcome: MetricOutcome? = nil) async {
+        guard let services else { return }
+        let metrics = await services.metrics
+        try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome))
     }
 }
 

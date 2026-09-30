@@ -438,16 +438,35 @@ public actor MirrorStore {
 
     /// 계정 전환 전에 이 container를 detach한다. 다른 프로세스도 자신의 계정 경계를 확인해야 한다.
     public func suspend() async throws {
-        let lease = try await gate.acquire()
+        if deleted {
+            try await persistence.close()
+            return
+        }
+        let lease: ProcessWriteLease
+        do { lease = try await gate.acquire() }
+        catch {
+            deleted = true
+            try await persistence.close()
+            throw error
+        }
         defer { lease.release() }
-        try assertIdentity()
-        let previous = try storedIdentity()
-        let rotated = StorageIdentity(workspaceKey: previous.workspaceKey, workspaceEpoch: previous.workspaceEpoch,
-            accountScope: previous.accountScope, bootstrapPolicy: previous.bootstrapPolicy,
-            writerGeneration: UUID().uuidString, originAccountScopeFingerprints: previous.originAccountScopeFingerprints)
-        try CanonicalDigest.data(rotated).write(to: configuration.directory.appendingPathComponent("StorageIdentity.json"), options: .atomic)
+        var boundaryError: StoreError?
+        do {
+            let previous = try storedIdentity()
+            // 다른 프로세스가 이미 revoke했다면 그 세대를 다시 회전시키지 않는다.
+            if previous.workspaceKey == identity.workspaceKey, previous.workspaceEpoch == identity.workspaceEpoch,
+               previous.accountScope == identity.accountScope, previous.writerGeneration == identity.writerGeneration,
+               previous.isTransitioning != true {
+                let rotated = StorageIdentity(workspaceKey: previous.workspaceKey, workspaceEpoch: previous.workspaceEpoch,
+                    accountScope: previous.accountScope, bootstrapPolicy: previous.bootstrapPolicy,
+                    writerGeneration: UUID().uuidString, originAccountScopeFingerprints: previous.originAccountScopeFingerprints)
+                try CanonicalDigest.data(rotated).write(to: configuration.directory.appendingPathComponent("StorageIdentity.json"), options: .atomic)
+            }
+        } catch { boundaryError = StoreError.classify(error) }
+        // identity가 달라지거나 접근이 막혀도 자신의 importer/context는 반드시 detach한다.
         deleted = true
         try await persistence.close()
+        if let boundaryError { throw boundaryError }
     }
 
     public func cloudStoreIdentifiers() -> Set<String> {

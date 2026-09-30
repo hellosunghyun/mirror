@@ -120,8 +120,10 @@ public actor WidgetReviewService {
             } else { state = try await loadAndRefresh(scopeKey: scopeKey, now: now) }
             if [.locallyCommitted, .alreadyApplied, .alreadyDecided].contains(result.state) {
                 if state.sessionID == sessionID {
-                    state.queue.removeAll { $0 == card.taskID }
-                    if state.card?.taskID == card.taskID {
+                    // 재시도는 원본 영수증의 대상으로 제한한다. 변조된 payload로 다음 카드를 진행시키지 않는다.
+                    let affected = Set(result.affectedTaskIDs)
+                    state.queue.removeAll { affected.contains($0) }
+                    if let visible = state.card, affected.contains(visible.taskID) {
                         state.card = nil; state.panel = .card; state.panelVersion += 1
                     }
                     if let operationID = result.operationID,

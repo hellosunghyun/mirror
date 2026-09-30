@@ -7,6 +7,7 @@ struct MirrorRootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var sceneExposureID = UUID()
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -67,7 +68,11 @@ struct MirrorRootView: View {
         }
         .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
         .task { await model.start() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await model.refresh() } } }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            model.setSceneActive(sceneExposureID, active: phase == .active)
+            if phase == .active { Task { await model.refresh() } }
+        }
+        .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
         .onOpenURL { url in Task { await model.handleURL(url) } }
         .frame(minWidth: isCompact ? 0 : 720, minHeight: isCompact ? 0 : 480)
     }

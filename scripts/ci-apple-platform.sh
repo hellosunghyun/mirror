@@ -38,12 +38,6 @@ PY
     )
     read -r device_id device_state <<< "$device_info"
     destination="platform=iOS Simulator,id=$device_id"
-    if test "$device_state" != Booted; then
-      ci_phase='Simulator 시작'
-      xcrun simctl boot "$device_id"
-    fi
-    ci_phase='Simulator 준비 완료 확인'
-    xcrun simctl bootstatus "$device_id" -b
     ;;
   *)
     echo '지원하지 않는 플랫폼입니다.' >&2
@@ -59,10 +53,34 @@ if test -e "$result_dir/Tests.xcresult" || test -e "$result_dir/UI.xcresult"; th
   exit 2
 fi
 
+
+test_actions=(build test)
+if test "$platform" != macos; then
+  # 컴파일 오류는 Simulator를 시작하기 전에 확인한다. build-for-testing은 테스트를 실행하지 않는다.
+  ci_phase='Simulator 시작 전 앱·확장·테스트 빌드'
+  if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
+    -sdk "$sdk" -destination "$destination" -jobs 2 \
+    -derivedDataPath "$result_dir/DerivedData" CODE_SIGNING_ALLOWED=NO build-for-testing \
+    2>&1 | tee "$result_dir/test.log"; then
+    if test "$device_state" != Booted; then
+      ci_phase='Simulator 시작'
+      xcrun simctl boot "$device_id"
+    fi
+    ci_phase='Simulator 준비 완료 확인'
+    xcrun simctl bootstatus "$device_id" -b
+  else
+    build_status=$?
+    python3 scripts/ci_results.py diagnostics "$result_dir/test.log" || true
+    exit "$build_status"
+  fi
+  test_actions=(test-without-building)
+fi
+ci_phase='단위·저장·시스템 테스트'
+
 if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/Tests.xcresult" \
-  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO build test 2>&1 | tee "$result_dir/test.log"; then
+  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${test_actions[@]}" 2>&1 | tee -a "$result_dir/test.log"; then
   ci_phase='Xcode 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/Tests.xcresult" > "$result_dir/summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/Tests.xcresult" > "$result_dir/tests.json"
