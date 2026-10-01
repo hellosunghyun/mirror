@@ -23,6 +23,8 @@
 
 새 전체 실행에서 Mac 단위 검사의 별도 Python 잠금 helper가 5초 안에 준비 신호를 보내지 못한 사례도 있었다. 원인 구분을 위해 실제 `/usr/bin/python3` 의존성 준비와 진입·잠금 직전의 고정 marker 진단을 추가했다. 원래 5초 획득·종료·회수 계약과 PID·SIGTERM·원본·멱등성 assertions는 유지한다. 모바일 UI 직전에는 단위 검사와 같은 runtime·Simulator의 준비 상태를 다시 확인하며 공유 기기를 강제로 재부팅하지 않는다.
 
+[실행 36890839642](https://github.com/hellosunghyun/mirror/actions/runs/36890839642)의 Mac 단위159/UI6·iPad 단위156/UI6와 guard·PNG 준비는 성공했지만 iPhone은 기존 20분 제한에서 첫 다섯 사례 통과 후 마지막 주 패널 사례를 완료하지 못했다. 세 플랫폼 전체 성공·앱샷 시각 수용·새 배포로 계산하지 않는다. 실제 입력·hittable/enabled/스크롤·행 중심 경계·실패 시 상세 진단과 모든 assertions는 유지하고, 성공마다 반복하던 상세 진단 조회 및 검증에서 쓰지 않는 캡처 viewport/JSON 조회를 제거했다. 캡처는 실제 PNG와 고정 stage의 소요시간만 남긴다. iPad의 실제 회전 확인을 위한 경계 조회와 Mac 완료 버튼 크기 assertions는 그대로다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |

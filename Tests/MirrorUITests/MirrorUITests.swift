@@ -259,10 +259,12 @@ final class MirrorUITests: XCTestCase {
         try requireNoElement("capture.title", in: app)
     }
 
-    /// 합성 작업의 실제 앱 화면을 남긴다. 기능 검사의 AX 조회를 캡처마다 반복하지 않는다.
+    /// 합성 작업의 실제 앱 화면만 남긴다. 추가 AX 경계·진단 JSON은 조회하지 않는다.
     /// 화면 합격 기준은 baseline 검토 뒤 추가하며 기존 기능 assertions는 그대로 유지한다.
     @MainActor
-    private func recordUI(_ stage: String, in app: XCUIApplication, identifiers: [String]) throws {
+    private func recordUI(_ stage: String, in app: XCUIApplication, identifiers _: [String]) throws {
+        let clock = ContinuousClock()
+        let started = clock.now
         evidenceSequence += 1
         let method = name.replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-")).lowercased()
@@ -272,21 +274,9 @@ final class MirrorUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
 
-        func frame(_ value: CGRect) -> [String: Double] {
-            // 접근성 경계를 제공하지 않는 요소도 baseline에서 살펴볼 수 있게 0으로 기록한다.
-            func finite(_ number: CGFloat) -> Double { number.isFinite ? Double(number) : 0 }
-            return ["x": finite(value.origin.x), "y": finite(value.origin.y),
-                    "width": finite(value.width), "height": finite(value.height)]
-        }
-        // 버튼 활성 여부·원문·배치는 각 흐름의 기존 assertions/실제 조작에서 검사한다.
-        // 추가 AX snapshot은 iPad 실행 시간을 크게 늘려, 캡처 진단은 viewport로 한정한다.
-        let metadata: [String: Any] = ["formatVersion": 1, "screenshotName": screenshotName,
-                                       "appFrame": frame(app.frame), "expectedIdentifiers": identifiers]
-        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
-                                       uniformTypeIdentifier: "public.json")
-        attachment.name = "mirror-ui-metadata-\(stage)-\(method)-\(evidenceSequence)"
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        let elapsed = started.duration(to: clock.now).components
+        let milliseconds = Int(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
+        print("UI screenshot timing: stage=\(stage),milliseconds=\(milliseconds)")
     }
 
     @MainActor
@@ -438,20 +428,21 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func activate(_ identifier: String, in app: XCUIApplication,
                           file: StaticString = #filePath, line: UInt = #line) throws {
+        lastActionDescription = "activate id=\(identifier)"
         let target = try requireElement(identifier, in: app, preferButtons: true, file: file, line: line)
-        lastActionDescription = describe(target)
         try interact(with: target, in: app, file: file, line: line)
     }
 
     @MainActor
     private func interact(with element: XCUIElement, in app: XCUIApplication,
                           file: StaticString = #filePath, line: UInt = #line) throws {
-        lastActionDescription = describe(element)
+        lastActionDescription = "interact"
         // 원본 저장·projection 갱신 직후에는 action의 enabled/hittable 반영도 기다린다.
         // 숨은 요소를 좌표로 누르거나 disabled 행동을 통과시키지 않는다.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true AND enabled == true"), object: element)
         _ = XCTWaiter.wait(for: [ready], timeout: 3)
         let identifier = element.identifier
+        lastActionDescription = "interact id=\(identifier)"
         // 38d7849 iPhone 실제 AX: 행 중심 y=434, 목록 하단 y=403인데 hittable=true였다.
         // 작업 행은 소유 목록의 표시 영역 안으로 실제 스크롤한 뒤 일반 tap을 수행한다.
         let rowSurface = identifier.hasPrefix("task.row.")
@@ -486,7 +477,6 @@ final class MirrorUITests: XCTestCase {
             XCTFail("UI 요소에 도달할 수 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.unhittable(element.identifier)
         }
-        if rowSurface != nil { lastActionDescription = describe(element) }
         #if os(macOS)
         element.click()
         #else
