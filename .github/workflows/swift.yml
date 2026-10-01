@@ -86,15 +86,20 @@ jobs:
         id: unit
         timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh macos unit
+      - name: Mac UI 앱과 runner 빌드 준비
+        id: ui_build
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        timeout-minutes: 10
+        run: bash scripts/ci-apple-platform.sh macos ui-build
       - name: Mac 실제 UI 테스트
         id: test
-        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
         timeout-minutes: 15
         run: bash scripts/ci-apple-platform.sh macos ui
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
         run: |
-          for log in .build/ci-macos/test.log .build/ci-macos/ui.log; do
+          for log in .build/ci-macos/test.log .build/ci-macos/ui-build.log .build/ci-macos/ui.log; do
             if test -f "$log"; then
               python3 scripts/ci_results.py diagnostics "$log"
             fi
@@ -115,6 +120,8 @@ jobs:
             .build/ci-macos/summary.json
             .build/ci-macos/tests.json
             .build/ci-macos/unit-context.json
+            .build/ci-macos/ui-build.log
+            .build/ci-macos/ui-build-receipt.json
             .build/ci-macos/ui-summary.json
             .build/ci-macos/ui-tests.json
             .build/ci-macos/crash-summary.json
@@ -152,15 +159,20 @@ jobs:
         id: unit
         timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh iphone unit
+      - name: iPhone UI 앱과 runner 빌드 준비
+        id: ui_build
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        timeout-minutes: 10
+        run: bash scripts/ci-apple-platform.sh iphone ui-build
       - name: iPhone 실제 UI 테스트
         id: test
-        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
         timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh iphone ui
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
         run: |
-          for log in .build/ci-iphone/test.log .build/ci-iphone/ui.log; do
+          for log in .build/ci-iphone/test.log .build/ci-iphone/ui-build.log .build/ci-iphone/ui.log; do
             if test -f "$log"; then
               python3 scripts/ci_results.py diagnostics "$log"
             fi
@@ -181,6 +193,8 @@ jobs:
             .build/ci-iphone/summary.json
             .build/ci-iphone/tests.json
             .build/ci-iphone/unit-context.json
+            .build/ci-iphone/ui-build.log
+            .build/ci-iphone/ui-build-receipt.json
             .build/ci-iphone/ui-summary.json
             .build/ci-iphone/ui-tests.json
             .build/ci-iphone/crash-summary.json
@@ -218,15 +232,20 @@ jobs:
         id: unit
         timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh ipad unit
+      - name: iPad UI 앱과 runner 빌드 준비
+        id: ui_build
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        timeout-minutes: 10
+        run: bash scripts/ci-apple-platform.sh ipad ui-build
       - name: iPad 실제 UI 테스트
         id: test
-        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
         timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh ipad ui
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
         run: |
-          for log in .build/ci-ipad/test.log .build/ci-ipad/ui.log; do
+          for log in .build/ci-ipad/test.log .build/ci-ipad/ui-build.log .build/ci-ipad/ui.log; do
             if test -f "$log"; then
               python3 scripts/ci_results.py diagnostics "$log"
             fi
@@ -247,6 +266,8 @@ jobs:
             .build/ci-ipad/summary.json
             .build/ci-ipad/tests.json
             .build/ci-ipad/unit-context.json
+            .build/ci-ipad/ui-build.log
+            .build/ci-ipad/ui-build-receipt.json
             .build/ci-ipad/ui-summary.json
             .build/ci-ipad/ui-tests.json
             .build/ci-ipad/crash-summary.json

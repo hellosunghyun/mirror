@@ -8,8 +8,8 @@ platform="${1:?macos, iphone 또는 ipad를 지정하세요}"
 mode="${2:-all}"
 build_number="${GITHUB_RUN_NUMBER:-1}"
 case "$mode" in
-  unit|ui|all) ;;
-  *) echo '지원하지 않는 실행 단계입니다: unit, ui 또는 all을 지정하세요.' >&2; exit 2 ;;
+  unit|ui-build|ui|all) ;;
+  *) echo '지원하지 않는 실행 단계입니다: unit, ui-build, ui 또는 all을 지정하세요.' >&2; exit 2 ;;
 esac
 case "$platform" in
   macos)
@@ -20,7 +20,7 @@ case "$platform" in
   iphone|ipad)
     scheme=MirrorIOS
     sdk=iphonesimulator
-    if test "$mode" != ui; then
+    if test "$mode" = unit || test "$mode" = all; then
       ci_phase='Simulator 선택'
       device_info=$(python3 - "$platform" <<'PY'
 import json
@@ -58,7 +58,7 @@ result_dir=".build/ci-$platform"
 mkdir -p "$result_dir"
 bundle_status=0
 package_status=0
-if test "$mode" != ui; then
+if test "$mode" = unit || test "$mode" = all; then
   if test -e "$result_dir/Tests.xcresult" || test -e "$result_dir/UI.xcresult"; then
     echo '이전 xcresult가 있으므로 새 결과 디렉터리에서 실행해야 합니다.' >&2
     exit 2
@@ -221,7 +221,7 @@ help_text = Path(sys.argv[1]).read_text(errors='replace')
 if re.search(r'^\s*-enableCodeCoverage(?:\s|$)', help_text, re.MULTILINE) is None:
     print('::error::실제 xcodebuild 도움말에서 -enableCodeCoverage 지원을 확인하지 못했습니다.', file=sys.stderr)
     raise SystemExit(2)
-print('::notice::현재 xcodebuild -help에서 -enableCodeCoverage 지원을 확인했습니다. UI 실행에만 NO를 적용합니다.')
+print('::notice::현재 xcodebuild -help에서 -enableCodeCoverage 지원을 확인했습니다. UI 빌드와 실행에만 NO를 적용합니다.')
 PY
 else
   help_status=$?
@@ -229,13 +229,155 @@ else
   exit 2
 fi
 
+ui_build_receipt() {
+  python3 - "$1" "$result_dir" "$platform" "$scheme" "$sdk" "$destination" "$build_number" <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+import plistlib
+import subprocess
+import sys
+
+action, directory, platform, scheme, sdk, destination, build = sys.argv[1:]
+directory = Path(directory).resolve()
+products = (directory / 'DerivedData/Build/Products').resolve()
+receipt_path = directory / 'ui-build-receipt.json'
+
+def fail(message):
+    raise SystemExit('::error::' + message)
+
+def file_record(path):
+    resolved = path.resolve(strict=True)
+    if not path.is_relative_to(products) or not resolved.is_relative_to(products) or not resolved.is_file():
+        fail('UI 빌드 산출물 파일이 현재 Products 범위 밖이거나 사용할 수 없습니다.')
+    digest = hashlib.sha256()
+    with resolved.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return {'path': path.relative_to(products).as_posix(),
+            'resolved_path': resolved.relative_to(products).as_posix(), 'sha256': digest.hexdigest()}
+
+def bundle_record(bundle):
+    resolved = bundle.resolve(strict=True)
+    if not bundle.is_relative_to(products) or not resolved.is_relative_to(products) or not resolved.is_dir():
+        fail('UI 앱 또는 테스트 bundle이 현재 Products 범위 밖이거나 사용할 수 없습니다.')
+    infos = [path for path in (bundle / 'Info.plist', bundle / 'Contents/Info.plist') if path.is_file()]
+    if len(infos) != 1:
+        fail('실제 UI 앱 또는 테스트 bundle의 Info.plist 경로를 확인할 수 없습니다.')
+    info_record = file_record(infos[0])
+    info = plistlib.loads(infos[0].read_bytes())
+    executable = info.get('CFBundleExecutable')
+    if not isinstance(executable, str) or not executable or Path(executable).name != executable or executable in ('.', '..'):
+        fail('실제 UI 앱 또는 테스트 bundle의 실행파일 정보를 확인할 수 없습니다.')
+    if str(info.get('CFBundleVersion')) != build:
+        fail('실제 UI 앱 또는 테스트 bundle의 build가 현재 실행 build와 다릅니다.')
+    executables = [path for path in (bundle / executable, bundle / 'Contents/MacOS' / executable) if path.is_file()]
+    if len(executables) != 1:
+        fail('실제 UI 앱 또는 테스트 bundle의 실행파일 경로를 확인할 수 없습니다.')
+    return {'path': bundle.relative_to(products).as_posix(),
+            'resolved_path': resolved.relative_to(products).as_posix(), 'info': info_record,
+            'executable': file_record(executables[0]), 'build_number': build}
+
+def current_state():
+    if not products.is_relative_to(directory) or not products.is_dir():
+        fail('현재 UI 빌드의 Products 디렉터리를 확인할 수 없습니다.')
+    unit_path = directory / 'unit-context.json'
+    unit_bytes = unit_path.read_bytes()
+    context = json.loads(unit_bytes)
+    expected_context = {'platform': platform, 'scheme': scheme, 'sdk': sdk, 'destination': destination,
+                        'run_id': os.environ.get('GITHUB_RUN_ID', ''),
+                        'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
+                        'commit': os.environ.get('GITHUB_SHA', ''), 'build_number': build}
+    if context != expected_context:
+        fail('UI 빌드 receipt의 단위 결과와 현재 실행 context가 다릅니다.')
+    checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL).strip()
+    if checkout != context['commit']:
+        fail('UI 빌드 receipt의 checkout SHA가 현재 실행과 다릅니다.')
+    if subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL).returncode != 0:
+        fail('UI 빌드 receipt 확인 중 현재 checkout의 추적 파일 변경을 발견했습니다.')
+    if subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--',
+                                'App', 'Sources', 'Extensions', 'Tests']):
+        fail('UI 빌드 receipt 확인 중 현재 checkout에 없는 앱·테스트 원본을 발견했습니다.')
+    xctestruns = sorted(path for path in products.rglob('*.xctestrun') if path.is_file())
+    if not xctestruns:
+        fail('현재 UI build-for-testing의 xctestrun 산출물이 없습니다.')
+    # SDK 내부 schema와 파일 이름을 추정하지 않고 실제 생성된 파일 전체를 고정한다.
+    xctestrun_records = [file_record(path) for path in xctestruns]
+    product_configuration = 'Debug' if platform == 'macos' else 'Debug-iphonesimulator'
+    app = bundle_record(products / product_configuration / 'Mirror.app')
+    ui_bundles = sorted(path for path in products.rglob(scheme + 'UITests.xctest') if path.is_dir())
+    if not ui_bundles:
+        fail('현재 UI build-for-testing의 필수 테스트 bundle 산출물이 없습니다.')
+    # Products 루트와 Runner 안의 복사본이 함께 존재해도 실제 경로·내용을 모두 검증한다.
+    return {'format_version': 1, 'context': context, 'ui_scheme': scheme + 'UI',
+            'configuration': 'Debug', 'code_coverage': False, 'code_signing_allowed': False,
+            'unit_context_sha256': hashlib.sha256(unit_bytes).hexdigest(),
+            'xctestruns': xctestrun_records, 'app': app,
+            'ui_bundles': [bundle_record(path) for path in ui_bundles]}
+
+try:
+    if action == 'record':
+        if receipt_path.exists() or receipt_path.is_symlink():
+            fail('이전 UI 빌드 receipt가 있으므로 현재 실행의 새 결과 디렉터리가 필요합니다.')
+        state = current_state()
+        # 이미 있는 파일·끊어진 symlink를 덮어쓰지 않고 현재 실행에서만 만든다.
+        with receipt_path.open('x', encoding='utf-8') as stream:
+            stream.write(json.dumps(state, ensure_ascii=False, sort_keys=True) + '\n')
+    elif action == 'verify':
+        if receipt_path.is_symlink() or not receipt_path.is_file():
+            fail('현재 UI 빌드 receipt가 없거나 직접 생성한 일반 파일이 아닙니다.')
+        if json.loads(receipt_path.read_bytes()) != current_state():
+            fail('UI 빌드 receipt의 현재 실행·파일 경로 또는 내용 hash가 달라 실행하지 않습니다.')
+    else:
+        fail('지원하지 않는 UI 빌드 receipt 작업입니다.')
+except (OSError, ValueError, TypeError, AttributeError, KeyError, plistlib.InvalidFileException,
+        subprocess.SubprocessError):
+    fail('UI 빌드 receipt의 산출물 또는 현재 실행 정보를 확인하지 못했습니다.')
+PY
+}
+
+if test "$mode" = ui-build || test "$mode" = all; then
+  ci_phase='현재 실행의 UI 빌드 준비'
+  if test -e "$result_dir/ui-build-receipt.json"; then
+    echo '이전 UI 빌드 receipt가 있으므로 현재 실행의 새 결과 디렉터리가 필요합니다.' >&2
+    exit 2
+  fi
+  ui_build_started_seconds=$SECONDS
+  touch "$result_dir/ui-build-start.marker"
+  if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
+    -sdk "$sdk" -destination "$destination" -jobs 2 \
+    -derivedDataPath "$result_dir/DerivedData" -parallel-testing-enabled NO \
+    -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO build-for-testing \
+    2>&1 | tee "$result_dir/ui-build.log"; then
+    ci_phase='현재 실행의 UI 빌드 산출물 receipt 기록'
+    ui_build_receipt record
+    printf '::notice::UI compile status=verified elapsed_seconds=%s\n' "$((SECONDS - ui_build_started_seconds))"
+    if test -n "${GITHUB_OUTPUT:-}"; then
+      printf 'ui_build_ready=true\n' >> "$GITHUB_OUTPUT"
+    fi
+  else
+    ui_build_status=$?
+    printf '::notice::UI compile status=failed exit_code=%s elapsed_seconds=%s\n' "$ui_build_status" "$((SECONDS - ui_build_started_seconds))"
+    python3 scripts/ci_results.py diagnostics "$result_dir/ui-build.log" || true
+    exit "$ui_build_status"
+  fi
+  if test "$mode" = ui-build; then exit 0; fi
+fi
+
+ci_phase='현재 실행의 UI 빌드 receipt와 실제 앱 재검증'
+ui_build_receipt verify
+echo '::notice::UI build receipt status=verified'
 ci_phase='UI 시작시각 기록'
 touch "$result_dir/ui-start.marker"
+ui_execution_started_seconds=$SECONDS
 ci_phase='실제 UI 테스트'
 if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
-  -parallel-testing-enabled NO -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
+  -parallel-testing-enabled NO -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO test-without-building 2>&1 | tee "$result_dir/ui.log"; then
+  printf '::notice::UI execution status=xcode_complete elapsed_seconds=%s\n' "$((SECONDS - ui_execution_started_seconds))"
   ci_phase='UI 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"
@@ -295,6 +437,7 @@ PY
   fi
 else
   test_status=$?
+  printf '::notice::UI execution status=failed exit_code=%s elapsed_seconds=%s\n' "$test_status" "$((SECONDS - ui_execution_started_seconds))"
   python3 scripts/ci_results.py diagnostics "$result_dir/ui.log" || true
   python3 scripts/ci-crash.py "$platform" "$result_dir" || true
   # 실패한 UI 실행도 실제 수와 실패/skip을 남긴다. underlying xcodebuild 실패는 그대로 반환한다.

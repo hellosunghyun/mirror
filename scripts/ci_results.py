@@ -2,9 +2,11 @@
 """CI의 실제 테스트 결과를 검사하고 Actions 출력과 오류 annotation을 만든다."""
 
 import json
+import math
 import os
 import re
 import sys
+from collections import deque
 from pathlib import Path
 
 
@@ -16,6 +18,18 @@ UI_BASELINE_METHODS = {
     'testExplicitCompletionAndUndoPreserveEditedTitleAndPlan',
     'testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday',
 }
+UI_SCREENSHOT_STAGES = frozenset({
+    'initial-today', 'calendar', 'settings', 'capture-form', 'review-card', 'week-picker',
+    'today-populated', 'library', 'library-search', 'detail', 'detail-edit', 'completion',
+    'undo', 'validation-error', 'ipad-landscape',
+})
+UI_CASE_EVENT_PATTERN = re.compile(
+    r"Test Case '[-+]\[[^\s\]\r\n]+\.MirrorUITests (test[A-Za-z0-9_]+)\]' (started|passed|failed)(?=[\s.]|$)")
+UI_CASE_TIMING_PATTERN = re.compile(
+    r"Test Case '[-+]\[[^\s\]\r\n]+\.MirrorUITests (test[A-Za-z0-9_]+)\]' "
+    r'(passed|failed) \(([0-9]{1,6}(?:\.[0-9]{1,9})?) seconds\)\.?\s*$')
+UI_SCREENSHOT_TIMING_PATTERN = re.compile(
+    r'UI screenshot timing: stage=([a-z-]{1,32}),milliseconds=([0-9]{1,7})\s*$')
 
 
 def annotation(message):
@@ -34,6 +48,61 @@ def report_runs(log):
         print('::notice::Swift Testing completion reports: ' + json.dumps(reports))
 
 
+def valid_ui_duration(value):
+    # bool과 범위 밖 정수는 float 변환 전에 제외한다. 진단 수치를 통과 게이트로 쓰지 않는다.
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and 0 <= value <= 1200 and math.isfinite(value))
+
+
+def report_ui_timing_diagnostics(lines):
+    cases = {}
+    captures = deque(maxlen=15)
+    for line in lines:
+        case = UI_CASE_TIMING_PATTERN.search(line)
+        if case and case[1] in UI_BASELINE_METHODS:
+            seconds = float(case[3])
+            if valid_ui_duration(seconds):
+                cases.pop(case[1], None)
+                cases[case[1]] = {'scope': 'stdoutOnly', 'method': case[1],
+                                  'event': case[2], 'seconds': seconds}
+        capture = UI_SCREENSHOT_TIMING_PATTERN.search(line)
+        if capture and capture[1] in UI_SCREENSHOT_STAGES:
+            milliseconds = int(capture[2])
+            if milliseconds <= 1_200_000:
+                captures.append({'scope': 'stdoutOnly', 'stage': capture[1],
+                                 'milliseconds': milliseconds})
+    # 사례마다 별도 notice로 남겨 긴 이름 때문에 뒤쪽 사례가 잘리지 않게 한다.
+    for case in cases.values():
+        print('::notice::UI case timing: ' + json.dumps(case))
+    for capture in captures:
+        print('::notice::UI screenshot timing: ' + json.dumps(capture))
+
+
+def report_ui_tree_timings(nodes):
+    cases = {}
+
+    def visit(node):
+        if isinstance(node, dict):
+            name = node.get('name')
+            method = re.search(r'\b(test[A-Za-z0-9_]+)\b', name) if isinstance(name, str) else None
+            duration = node.get('durationInSeconds')
+            if (node.get('nodeType') == 'Test Case' and method
+                    and method[1] in UI_BASELINE_METHODS
+                    and node.get('result') in ('Passed', 'Failed') and valid_ui_duration(duration)):
+                cases.pop(method[1], None)
+                cases[method[1]] = {'scope': 'xcresult', 'method': method[1],
+                                    'event': node['result'].lower(), 'seconds': duration}
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(nodes)
+    for case in cases.values():
+        print('::notice::UI case timing: ' + json.dumps(case))
+
+
 def diagnostics(path):
     log = Path(path).read_text(errors='replace')
     lines = log.splitlines()
@@ -41,8 +110,8 @@ def diagnostics(path):
     # 중단된 xcresult와 stdout의 사례 진행을 구별한다. 게이트 통과 판정에는 사용하지 않는다.
     case_events = []
     for line in lines:
-        match = re.search(r"Test Case '[-+]\[[^ ]+\.MirrorUITests (test\w+)\]' (started|passed|failed)", line)
-        if match:
+        match = UI_CASE_EVENT_PATTERN.search(line)
+        if match and match[1] in UI_BASELINE_METHODS:
             case_events.append({'method': match[1], 'event': match[2]})
     if case_events:
         summaries = list(dict.fromkeys(line.strip() for line in lines
@@ -52,13 +121,18 @@ def diagnostics(path):
             'suiteSummaries': summaries[-3:],
             'xcodeCompletionReported': bool(re.search(r'\*\* TEST(?: EXECUTE)? (?:SUCCEEDED|FAILED) \*\*', log)),
         }, ensure_ascii=False))
+    report_ui_timing_diagnostics(lines)
     owners = list(dict.fromkeys(line.strip() for line in lines if 'UI row scroll owner:' in line))
     if owners:
         print('::notice::UI row scroll owners: ' + json.dumps(owners[-8:], ensure_ascii=False))
-    relevant = [line for line in lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)
+    # UI 구조화 원문은 안전한 이름·수치만 위에서 출력한다. 알 수 없는 이름이나
+    # 잘못된 timing payload를 일반 오류/마지막 줄 fallback에서 다시 공개하지 않는다.
+    error_lines = [line for line in lines if 'UI screenshot timing:' not in line
+                   and not (re.search(r'\bTest\s+Case\b', line) and 'MirrorUITests' in line)]
+    relevant = [line for line in error_lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)
                 and not re.match(r'^\s*[|`~-]', line)]
     unique = list(dict.fromkeys(relevant))
-    for line in unique[:40] or lines[-8:]:
+    for line in unique[:40] or error_lines[-8:]:
         annotation(line[:1800])
 
 
@@ -196,6 +270,7 @@ def main():
                     visit_ui(value)
 
         visit_ui(nodes)
+        report_ui_tree_timings(nodes)
         print('::notice::UI test structure: ' + json.dumps({
             'rootKeys': list(nodes)[:16] if isinstance(nodes, dict) else [],
             'nodeTypes': node_types, 'methods': methods,

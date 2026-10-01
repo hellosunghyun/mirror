@@ -363,20 +363,24 @@ final class MirrorUITests: XCTestCase {
         // Mac에서는 Button의 ID가 Row/Label에도 전달될 수 있으므로 실제 Button role을 우선한다.
         if preferButtons {
             let sheetButtons = app.sheets.firstMatch.buttons.matching(identifier: identifier)
-            if sheetButtons.firstMatch.exists {
-                return sheetButtons.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? sheetButtons.firstMatch
-            }
+            if let first = firstHittableMatch(in: sheetButtons) { return first }
             let buttons = app.buttons.matching(identifier: identifier)
-            if buttons.firstMatch.exists {
-                return buttons.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? buttons.firstMatch
-            }
+            if let first = firstHittableMatch(in: buttons) { return first }
         }
         let sheetMatches = app.sheets.firstMatch.descendants(matching: .any).matching(identifier: identifier)
-        if sheetMatches.firstMatch.exists {
-            return sheetMatches.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? sheetMatches.firstMatch
-        }
+        if let first = firstHittableMatch(in: sheetMatches) { return first }
         let matches = app.descendants(matching: .any).matching(identifier: identifier)
-        return matches.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? matches.firstMatch
+        // 아직 나타나지 않은 요소는 requireElement의 기존 15초 대기에 맡긴다.
+        return firstHittableMatch(in: matches) ?? matches.firstMatch
+    }
+
+    @MainActor
+    private func firstHittableMatch(in query: XCUIElementQuery) -> XCUIElement? {
+        let first = query.firstMatch
+        guard first.exists else { return nil }
+        // 보통의 고유 ID는 열거하지 않고, modal·배경 ID가 중복될 때 기존 검색을 유지한다.
+        if first.isHittable { return first }
+        return query.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? first
     }
 
     @MainActor
@@ -505,7 +509,8 @@ final class MirrorUITests: XCTestCase {
             let visible = !frame.isEmpty && windowFrames.contains { $0.intersects(frame) }
             // 다중 열의 다른 스크롤 영역을 배제한다. 세로 화면 밖 행은 계속 실제 스크롤로 찾는다.
             let sameColumn = frame.minX <= rowCenterX && rowCenterX <= frame.maxX
-            let probe = "id=\(candidate.identifier), type=\(candidate.elementType.rawValue), frame=\(frame), containsTarget=\(containsTarget), inWindow=\(visible), rowCenterX=\(rowCenterX), sameColumn=\(sameColumn)"
+            // 실제 소유·창·열 검증에서 이미 읽은 값만 진단한다.
+            let probe = "frame=\(frame), containsTarget=\(containsTarget), inWindow=\(visible), rowCenterX=\(rowCenterX), sameColumn=\(sameColumn)"
             probes.append(probe)
             if containsTarget && visible && sameColumn {
                 print("UI row scroll owner: \(probe)")
@@ -555,7 +560,8 @@ final class MirrorUITests: XCTestCase {
     private func displayedText(of element: XCUIElement) -> String {
         // b0c2fa4 Mac 실제 AX: StaticText는 label="", value=표시 문장으로 노출됐다.
         // nonempty label을 우선하고 빈 label일 때만 실제 value를 사용한다.
-        element.label.isEmpty ? value(of: element) : element.label
+        let label = element.label
+        return label.isEmpty ? value(of: element) : label
     }
 
     @MainActor
