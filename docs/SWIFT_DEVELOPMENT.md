@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `a7ef8a2` 검증은 모바일 UI가 진행 중이며 Mac 완료 Undo 시나리오의 라벨 대기가 실패했다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `68c4c9d` 검증은 모바일 UI가 진행 중이며 Mac 완료 Undo의 최초 라벨 대기가 실패했다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -157,9 +157,11 @@ Mac의 실패는 완료 Undo 시나리오에서 Undo 전 `detail.title`의 enabl
 
 같은 커밋의 [준비 검사 36800188766](https://github.com/hellosunghyun/mirror/actions/runs/36800188766)은 Python 40개 검사를 통과했다. 준비 검사와 Mac의 부분 결과를 모바일 최종 수용이나 실제 IPA 배포 성공으로 기록하지 않는다.
 
-최신 커밋 `a7ef8a2df18a92e1146fde9b1b6c0ad451cc9a41`의 [Ad Hoc 실행 36801483055](https://github.com/hellosunghyun/mirror/actions/runs/36801483055)은 중간 결과다. Mac job `110176589692`는 단위 151개 통과, UI 5개 통과·1개 실패·skip 0개를 보고했다. 이전 `detail.title` 접근은 통과했지만 완료 Undo 시나리오는 `waitForLabel`에서 실패했다. 실제 `task.complete` 라벨은 `완료`, enabled/hittable=true, frame=(463,645,47,24)였다. 기대 라벨과 직전 입력 정보가 기록되지 않아 완료 click 미실행과 명령 거절을 구별할 수 없다. 나머지 다섯 시나리오는 Passed이며 모바일 UI는 진행 중이다. UI 게이트가 통과하지 않아 archive/export·키 일치·Release 게시 성공은 미검증이다.
+이전 커밋 `a7ef8a2df18a92e1146fde9b1b6c0ad451cc9a41`의 [Ad Hoc 실행 36801483055](https://github.com/hellosunghyun/mirror/actions/runs/36801483055)은 최종 실패다. Mac job `110176589692`는 단위 151개 통과, UI 5개 통과·1개 실패·skip 0개였다. `detail.title` 접근 후 완료 Undo의 라벨 대기가 실패했지만 기대값·직전 입력 진단이 없어 원인을 특정하지 못했다. 모바일 UI는 두 플랫폼 모두 20분 제한으로 중단됐고 최종 summary/tree가 없어 case 수를 확정하지 못했다. iPad는 CI 로그 01:58:32.600에 suite failed를 보고했고 weekPanel case는 129.757초 뒤 `review.finish.isHittable`의 invalid activation point로 실패했다. archive·publish는 skipped로 실제 서명은 미실행이다. 같은 SHA의 standalone은 concurrency로 cancelled됐으며 Mac 단위 151개/UI 5개 통과·1개 실패와 SwiftPM 151개만 확보했다. 모바일 결과를 판정하지 않는다.
 
-후속 수정은 regular 화면의 상태 footer를 기존 Group과 VStack 형제로 배치해 높이를 나눈다. compact와 시작 오류 화면의 기존 배치를 유지한다. `waitForLabel`에는 기대값·앱 오류·직전 입력 진단을 추가하고, 최종 xcresult가 없을 때 stdout의 UI case events와 suite 요약을 진단 자료로 남긴다. stdout 진단은 통과 판정을 대체하지 않으며 이 수정의 해결 여부는 다음 SHA의 Actions에서 확인한다.
+최신 커밋 `68c4c9d08d63667c4b26d4c2f52052a53fe91fdf`의 [Ad Hoc 실행 36803345968](https://github.com/hellosunghyun/mirror/actions/runs/36803345968)은 중간 결과다. Mac job `110182335962`는 단위 151개 통과·UI 5개 통과/1개 실패·skip 0개다. stdoutOnly 진단과 실제 xcresult의 5/6 결과가 일치하며 xcodeCompletion=true다. regular 화면 높이 수정 후에도 완료 Undo의 최초 `waitForLabel` 실패가 남았다. 기대 라벨은 `완료 취소` 또는 `다시 열기`, 실제 `task.complete`는 `완료`, enabled/hittable=true, frame=(463,645,47,24)다. 편집 제목과 내용 저장 피드백은 정상이며 state.error는 없고 lastAction은 task.complete였다. 클릭 미전달과 projection/receipt guard 판정은 아직 구별하지 못한다. content/edit와 status/complete는 별도 그룹이며 stale을 확정하는 증거도 없다. 모바일 UI는 진행 중이고 실제 서명·archive/export는 미실행이다.
+
+후속 수정은 상세 Form 하단 상태 section의 완료 primary를 기존 Undo footer로 옮겨 44pt 라벨의 borderedProminent 고정 영역에 배치한다. 삭제된 작업에는 완료 버튼을 제공하지 않으며 기존 명령·task.complete ID·isSaving guard·receipt 조건과 휴지통 복원/이력을 보존한다. 기존 여섯 assertions와 통과 판정도 유지한다. 실제 해결 여부는 다음 SHA의 Actions에서 확인하며 stdout 진단을 수용 통과로 대신하지 않는다.
 
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 기록한 `179428d` 실행은 단위 단계 20분·UI 15분 제한이었다. 후속 UI 20분 제한과 종료 정리 변경은 다음 Actions에서 확인하며 시간 제한과 실패 진단은 성공 판정을 대신하지 않는다.
 

@@ -444,15 +444,20 @@ final class MirrorUITests: XCTestCase {
         }
         // 오류와 실제 modal을 먼저 기록한다. sidebar가 annotation 길이 제한을 먼저 소진하지 않는다.
         append(errors, limit: 2)
+        append(nodes.filter { $0.identifier == "state.feedback" }, limit: 1)
         append(sheetNodes + modalNodes, limit: 7)
         append(nodes, limit: 5)
         let windowFrames = app.windows.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
         let sheetFrames = app.sheets.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
         let keyboardFrames = app.keyboards.allElementsBoundByIndex.prefix(1).map { String(describing: $0.frame) }.joined(separator: ", ")
+        let actionFrames = nodes.filter {
+            $0.elementType == .button && ($0.identifier == "task.complete" || $0.identifier == "task.undo")
+        }.prefix(4).map { "\($0.identifier): \($0.frame)" }.joined(separator: ", ")
+        let scrollFrames = app.scrollViews.allElementsBoundByIndex.prefix(4).map { String(describing: $0.frame) }.joined(separator: ", ")
         let tabs = app.tabBars.buttons.allElementsBoundByIndex.prefix(3).map {
             "\($0.label.prefix(30)): selected=\($0.isSelected), frame=\($0.frame)"
         }.joined(separator: ", ")
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], actionFrames=[\(actionFrames)], scrollFrames=[\(scrollFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
         return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }

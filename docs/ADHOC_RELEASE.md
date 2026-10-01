@@ -86,3 +86,7 @@ Release 태그는 adhoc-실행ID다. 실행을 재시도하면 같은 태그의 
 `a7ef8a2df18a92e1146fde9b1b6c0ad451cc9a41`의 [자동 배포 36801483055](https://github.com/hellosunghyun/mirror/actions/runs/36801483055)는 Mac 단위 151개와 UI 5개를 통과했지만 완료·Undo 사례 하나가 실패했다. 제목 입력란에는 접근한 뒤 `task.complete`의 기대 상태가 표시되지 않았고 실제 버튼은 label=완료, enabled/hittable=true였다. 기존 진단에는 기대값·직전 입력·현재 오류가 없어 클릭 미실행과 명령 거절을 구분할 수 없다. 모바일 UI는 이 기록 시점 진행 중이며 archive 게이트는 차단됐다.
 
 후속 수정은 regular 화면의 상태 패널을 화면 내용과 VStack 형제로 배치해 높이를 나누고, 시작·온보딩 오류와 compact 탭 배치를 유지한다. UI 상태 대기 실패에는 기대값·직전 입력·현재 오류를 기록하며 중단 진단에는 stdout의 사례 진행과 suite 요약을 별도로 남긴다. stdout 진단을 최종 결과 파일·strict guard 통과로 대신하지 않으며 실제 서명·IPA·Release 성공은 계속 미검증이다.
+
+`a7ef8a2`의 모바일 두 UI도 각각 20분 제한으로 중단돼 최종 UI 결과를 확보하지 못했고 archive·publish는 skipped였다. `68c4c9d08d63667c4b26d4c2f52052a53fe91fdf`의 [자동 배포 36803345968](https://github.com/hellosunghyun/mirror/actions/runs/36803345968)는 준비·SwiftPM과 Mac 단위 151개를 통과했지만 Mac UI는 5개 통과·1개 실패·skip 0이었다. 추가 진단에서 최초 완료 상태 대기 실패, 직전 입력 `task.complete`, 편집 제목 정상 반영, 피드백 `내용을 저장했어요.`, 오류 메시지 없음이 확인됐다. stdoutOnly와 실제 xcresult의 5/6 결과가 일치했다. 해당 시점 모바일 UI는 진행 중이며 서명은 실행되지 않았다.
+
+후속 수정은 상세 완료 버튼을 Form의 상태 행에서 Undo와 같은 고정 하단 영역으로 옮기고 실제 버튼 라벨에 44pt 높이를 확보한다. 기존 완료 명령·ID·저장 중 비활성화와 삭제 작업/Undo receipt 조건, 휴지통·복구·이력은 유지한다. 클릭 미전달과 모델 guard 거절의 원인을 확정하지 않으며 기존 여섯 실제 UI 사례로 새 배치를 검증한다.

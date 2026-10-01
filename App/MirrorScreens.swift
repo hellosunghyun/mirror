@@ -574,8 +574,6 @@ struct MirrorTaskDetail: View {
                         Button("휴지통에서 복구") { Task { await model.restore(task) } }
                         Text("개별 작업의 이력은 영구 삭제하지 않아요.").font(.caption)
                     } else {
-                        Button(task.status == .completed ? "완료 취소 · 다시 열기" : "완료") { Task { await model.setCompleted(task, completed: task.status != .completed) } }
-                            .accessibilityIdentifier("task.complete")
                         Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }
                     }
                     if !task.conflictGroups.isEmpty { Label("다른 변경과 충돌한 이력이 있어요. 최신 상태를 확인해 주세요.", systemImage: "exclamationmark.triangle") }
@@ -591,11 +589,24 @@ struct MirrorTaskDetail: View {
             .formStyle(.grouped)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             #endif
-            if model.lastUndo?.taskID == task.taskID {
-                Button("직전 변경 되돌리기") { Task { await model.undo() } }
-                    .buttonStyle(.bordered).frame(minHeight: 44)
-                    .accessibilityIdentifier("task.undo")
-                    .padding(12).frame(maxWidth: .infinity).background(.bar)
+            if task.status != .deleted || model.lastUndo?.taskID == task.taskID {
+                VStack(spacing: 8) {
+                    if task.status != .deleted {
+                        Button {
+                            Task { await model.setCompleted(task, completed: task.status != .completed) }
+                        } label: {
+                            Text(task.status == .completed ? "완료 취소 · 다시 열기" : "완료")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("task.complete")
+                    }
+                    if model.lastUndo?.taskID == task.taskID {
+                        Button("직전 변경 되돌리기") { Task { await model.undo() } }
+                            .buttonStyle(.bordered).frame(minHeight: 44)
+                            .accessibilityIdentifier("task.undo")
+                    }
+                }.padding(12).frame(maxWidth: .infinity).background(.bar)
             }
         }
         .navigationTitle("작업 상세")
