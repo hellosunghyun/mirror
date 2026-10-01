@@ -105,6 +105,22 @@ class AdHocProfileTests(unittest.TestCase):
                 profile[key] = value
                 with self.assertRaisesRegex(helper.ValidationError, '^' + code + '$'):
                     self.prepare(profile=profile)
+
+    def test_profile_uuid_original_case_is_preserved_for_xcode_selection_and_export(self):
+        for identifier in ('abcdef01-2345-6789-abcd-ef0123456789',
+                           'ABCDEF01-2345-6789-ABCD-EF0123456789',
+                           'AbCdEf01-2345-6789-aBcD-eF0123456789'):
+            with self.subTest(identifier=identifier):
+                profile = dict(self.profile, UUID=identifier)
+                context, manifest, options = self.prepare(profile=profile)
+                patched = helper.patch(self.project, context)
+                self.assertEqual(context['profileUUID'], identifier)
+                self.assertEqual(set(options['provisioningProfiles'].values()), {identifier})
+                for target in ('app', 'widgets', 'share'):
+                    settings = patched['objects'][target + 'Release']['buildSettings']
+                    self.assertEqual(settings['PROVISIONING_PROFILE'], identifier)
+                    self.assertEqual(settings['PROVISIONING_PROFILE_SPECIFIER'], profile['Name'])
+                self.assertNotIn(identifier, json.dumps(manifest))
         for value in (True, 0, 'false'):
             profile = copy.deepcopy(self.profile)
             profile['Entitlements']['get-task-allow'] = value

@@ -117,7 +117,8 @@ def profile_identity(profile, certificate, bundle_ids, now=None):
     profile_uuid = profile.get('UUID')
     require(isinstance(profile_uuid, str) and re.fullmatch(r'[A-Fa-f0-9-]{36}', profile_uuid) is not None, 'PROFILE_UUID')
     try:
-        profile_uuid = str(uuid.UUID(profile_uuid)).upper()
+        # UUID 유효성만 검사한다. Xcode의 선택/export에는 원본의 대소문자를 보존한다.
+        require(str(uuid.UUID(profile_uuid)) == profile_uuid.lower(), 'PROFILE_UUID')
     except (ValueError, AttributeError):
         raise ValidationError('PROFILE_UUID') from None
     name = profile.get('Name')
@@ -271,7 +272,7 @@ def patch(project, context):
     require(type(context.get('schemaVersion')) is int and context['schemaVersion'] == 1 and context.get('distribution') == 'ad-hoc', 'CONTEXT_SCHEMA')
     require(re.fullmatch(r'[A-Z0-9]{10}', str(context.get('teamID', ''))) is not None, 'CONTEXT_TEAM')
     require(re.fullmatch(r'[A-F0-9]{40}', str(context.get('identitySHA1', ''))) is not None, 'CONTEXT_IDENTITY')
-    require(isinstance(context.get('profileUUID'), str) and re.fullmatch(r'[A-F0-9-]{36}', context['profileUUID']) is not None, 'CONTEXT_PROFILE')
+    require(isinstance(context.get('profileUUID'), str) and re.fullmatch(r'[A-Fa-f0-9-]{36}', context['profileUUID']) is not None, 'CONTEXT_PROFILE')
     require(isinstance(context.get('profileName'), str) and 0 < len(context['profileName']) <= 256 and context['profileName'].isprintable(), 'CONTEXT_PROFILE_NAME')
     require(context.get('sourceProjectSHA256') == project_digest(project), 'CONTEXT_PROJECT_CHANGED')
     stored = context.get('targets')
