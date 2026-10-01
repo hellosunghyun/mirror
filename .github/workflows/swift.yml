@@ -118,6 +118,7 @@ jobs:
             .build/ci-macos/ui-tests.json
             .build/ci-macos/crash-summary.json
             .build/ci-macos/ui.log
+            .build/ci-macos/ui-xcodebuild-help.txt
             .build/ci-macos/Tests.xcresult
             .build/ci-macos/UI.xcresult
           include-hidden-files: true
@@ -170,6 +171,7 @@ jobs:
             .build/ci-iphone/ui-tests.json
             .build/ci-iphone/crash-summary.json
             .build/ci-iphone/ui.log
+            .build/ci-iphone/ui-xcodebuild-help.txt
             .build/ci-iphone/Tests.xcresult
             .build/ci-iphone/UI.xcresult
           include-hidden-files: true
@@ -222,6 +224,7 @@ jobs:
             .build/ci-ipad/ui-tests.json
             .build/ci-ipad/crash-summary.json
             .build/ci-ipad/ui.log
+            .build/ci-ipad/ui-xcodebuild-help.txt
             .build/ci-ipad/Tests.xcresult
             .build/ci-ipad/UI.xcresult
           include-hidden-files: true

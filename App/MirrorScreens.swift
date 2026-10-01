@@ -528,15 +528,6 @@ struct MirrorTaskDetail: View {
                         if let problem = model.problem {
                             Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
                         }
-                        Button("내용 저장") {
-                            Task {
-                                guard let original = editingSnapshot, original.taskID == task.taskID else { return }
-                                if await model.edit(original, title: title, note: note, sourceURL: link) {
-                                    editing = false; editingSnapshot = nil
-                                }
-                            }
-                        }.disabled(editingSnapshot?.taskID != task.taskID).accessibilityIdentifier("detail.save")
-                        Button("편집 취소") { editing = false; editingSnapshot = nil }
                     } else {
                         Text(task.title).font(.title2).textSelection(.enabled).accessibilityIdentifier("detail.contentTitle")
                         if let note = task.content.note { ExpandableText(note).textSelection(.enabled) }
@@ -589,7 +580,25 @@ struct MirrorTaskDetail: View {
             .formStyle(.grouped)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             #endif
-            if task.status != .deleted || model.lastUndo?.taskID == task.taskID {
+            if editing {
+                VStack(spacing: 8) {
+                    Button {
+                        Task {
+                            guard let original = editingSnapshot, original.taskID == task.taskID else { return }
+                            if await model.edit(original, title: title, note: note, sourceURL: link) {
+                                editing = false; editingSnapshot = nil
+                            }
+                        }
+                    } label: {
+                        Text("내용 저장").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(editingSnapshot?.taskID != task.taskID)
+                    .accessibilityIdentifier("detail.save")
+                    Button("편집 취소") { editing = false; editingSnapshot = nil }
+                        .buttonStyle(.bordered).frame(minHeight: 44)
+                }.padding(12).frame(maxWidth: .infinity).background(.bar)
+            } else if task.status != .deleted || model.lastUndo?.taskID == task.taskID {
                 VStack(spacing: 8) {
                     if task.status != .deleted {
                         Button {

@@ -252,11 +252,13 @@ final class MirrorUITests: XCTestCase {
                                 preferButtons: Bool = false,
                                 file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
         guard app.state != .notRunning else {
+            printFailurePrefix("앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다: \(identifier)")
             XCTFail("앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다: \(identifier). appState=\(app.state.rawValue)", file: file, line: line)
             throw UIHarnessError.applicationNotRunning
         }
         let found = element(identifier, in: app, preferButtons: preferButtons)
         guard found.waitForExistence(timeout: timeout) else {
+            printFailurePrefix("필수 UI 요소가 없다: \(identifier)")
             XCTFail("필수 UI 요소가 없다: \(identifier). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.missingElement(identifier)
         }
@@ -268,6 +270,7 @@ final class MirrorUITests: XCTestCase {
         let found = element(identifier, in: app)
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: found)
         guard XCTWaiter.wait(for: [gone], timeout: 15) == .completed else {
+            printFailurePrefix("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
             XCTFail("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
             throw UIHarnessError.unexpectedElement(identifier)
         }
@@ -282,6 +285,7 @@ final class MirrorUITests: XCTestCase {
     private func requireRow(_ title: String, in app: XCUIApplication) throws -> XCUIElement {
         let row = taskRow(title, in: app)
         guard row.waitForExistence(timeout: 15) else {
+            printFailurePrefix("저장된 작업 행을 찾지 못했다: \(title)")
             XCTFail("저장된 작업 행을 찾지 못했다: \(title)")
             throw UIHarnessError.missingElement(title)
         }
@@ -313,6 +317,7 @@ final class MirrorUITests: XCTestCase {
             guard let surface = surfaces.first(where: { candidate in
                 candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
             }) else {
+                printFailurePrefix("대상 UI를 포함하는 스크롤 컨테이너가 없다")
                 XCTFail("대상 UI를 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
                 throw UIHarnessError.unhittable(identifier)
             }
@@ -325,6 +330,7 @@ final class MirrorUITests: XCTestCase {
             #endif
         }
         guard element.isHittable && element.isEnabled else {
+            printFailurePrefix("UI 요소에 도달할 수 없다")
             XCTFail("UI 요소에 도달할 수 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.unhittable(element.identifier)
         }
@@ -348,6 +354,7 @@ final class MirrorUITests: XCTestCase {
             field.press(forDuration: 1.2)
             let selectAll = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@ OR label == %@", "전체 선택", "Select All")).firstMatch
             guard selectAll.waitForExistence(timeout: 5) else {
+                printFailurePrefix("편집할 원문 전체를 선택할 수 없다")
                 XCTFail("편집할 원문 전체를 선택할 수 없다.")
                 throw UIHarnessError.missingElement("Select All")
             }
@@ -377,6 +384,7 @@ final class MirrorUITests: XCTestCase {
         } else { predicate = NSPredicate(format: "value == %@", expected) }
         let changed = XCTNSPredicateExpectation(predicate: predicate, object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
+            printFailurePrefix("입력 값이 기대 상태로 바뀌지 않았다: expected=\(expected)")
             XCTFail("입력 값이 기대 상태로 바뀌지 않았다: \(describe(element))")
             throw UIHarnessError.unexpectedValue(element.identifier)
         }
@@ -386,6 +394,7 @@ final class MirrorUITests: XCTestCase {
     private func waitForLabel(_ expected: String, element: XCUIElement, in app: XCUIApplication) throws {
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ OR (label == '' AND value == %@)", expected, expected), object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
+            printFailurePrefix("표시된 원본 상태가 기대값과 다르다: expected=\(expected)")
             XCTFail("표시된 원본 상태가 기대값과 다르다: expected=\(expected), \(describe(element)). \(diagnostics(in: app))")
             throw UIHarnessError.unexpectedValue(element.identifier)
         }
@@ -395,15 +404,22 @@ final class MirrorUITests: XCTestCase {
     private func waitForLabelContaining(_ expected: String, element: XCUIElement) throws {
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@ OR (label == '' AND value CONTAINS %@)", expected, expected), object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
+            printFailurePrefix("검증 오류가 기대 내용으로 표시되지 않았다: expected=\(expected)")
             XCTFail("검증 오류가 기대 내용으로 표시되지 않았다: \(describe(element))")
             throw UIHarnessError.unexpectedValue(element.identifier)
         }
     }
 
     @MainActor
+    private func printFailurePrefix(_ message: String) {
+        let prefix = "UI error: \(message). lastAction={\(lastActionDescription)}"
+        print(prefix.replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\r", with: "\\r"))
+    }
+
+    @MainActor
     private func describe(_ element: XCUIElement) -> String {
         guard element.exists else { return "exists=false" }
-        return "id=\(element.identifier), type=\(element.elementType.rawValue), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), hittable=\(element.isHittable), selected=\(element.isSelected), frame=\(element.frame)"
+        return "id=\(element.identifier), type=\(element.elementType.rawValue), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), selected=\(element.isSelected), frame=\(element.frame)"
     }
 
     @MainActor
@@ -422,12 +438,12 @@ final class MirrorUITests: XCTestCase {
         let sheetNodes = app.sheets.allElementsBoundByIndex.flatMap {
             $0.descendants(matching: .any).matching(appIDPredicate).allElementsBoundByIndex
         }
-        let errors = nodes.filter { $0.identifier == "state.error" }.sorted { $0.isHittable && !$1.isHittable }
+        let errors = nodes.filter { $0.identifier == "state.error" }
         let modalNodes = nodes.filter { candidate in
             candidate.identifier.hasPrefix("review.") || candidate.identifier.hasPrefix("plan.")
                 || candidate.identifier.hasPrefix("detail.")
                 || (candidate.identifier.hasPrefix("capture.") && candidate.identifier != "capture.open")
-        }.sorted { $0.isHittable && !$1.isHittable }
+        }
         var seen: Set<String> = []
         var lines: [String] = []
         @MainActor
@@ -438,7 +454,7 @@ final class MirrorUITests: XCTestCase {
                 guard seen.insert(key).inserted else { continue }
                 let label = node.label.replacingOccurrences(of: "\n", with: " ").prefix(50)
                 let current = value(of: node).replacingOccurrences(of: "\n", with: " ").prefix(35)
-                lines.append("\(node.identifier): type=\(node.elementType.rawValue), label=\(label), value=\(current), e=\(node.isEnabled), h=\(node.isHittable)")
+                lines.append("\(node.identifier): type=\(node.elementType.rawValue), label=\(label), value=\(current), e=\(node.isEnabled)")
                 added += 1
             }
         }
@@ -454,10 +470,11 @@ final class MirrorUITests: XCTestCase {
             $0.elementType == .button && ($0.identifier == "task.complete" || $0.identifier == "task.undo")
         }.prefix(4).map { "\($0.identifier): \($0.frame)" }.joined(separator: ", ")
         let scrollFrames = app.scrollViews.allElementsBoundByIndex.prefix(4).map { String(describing: $0.frame) }.joined(separator: ", ")
+        let collectionFrames = app.collectionViews.allElementsBoundByIndex.prefix(3).map { String(describing: $0.frame) }.joined(separator: ", ")
         let tabs = app.tabBars.buttons.allElementsBoundByIndex.prefix(3).map {
             "\($0.label.prefix(30)): selected=\($0.isSelected), frame=\($0.frame)"
         }.joined(separator: ", ")
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], actionFrames=[\(actionFrames)], scrollFrames=[\(scrollFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], actionFrames=[\(actionFrames)], scrollFrames=[\(scrollFrames)], collectionFrames=[\(collectionFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
         return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }

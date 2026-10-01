@@ -32,8 +32,10 @@ struct MirrorRootView: View {
                     TabView(selection: $model.destination) {
                         ForEach(MirrorDestination.allCases) { destination in
                             NavigationStack {
-                                content(destination).toolbar { commonToolbar }
-                                    .safeAreaInset(edge: .bottom) { statusBar }
+                                VStack(spacing: 0) {
+                                    content(destination).frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    statusBar
+                                }.toolbar { commonToolbar }
                             }
                                 .tabItem { Label(destination.title, systemImage: destination.symbol) }
                                 .tag(destination)

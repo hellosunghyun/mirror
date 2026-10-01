@@ -160,13 +160,33 @@ PY
 )
 IFS=$'\t' read -r scheme sdk destination <<< "$context_values"
 
+ci_phase='실제 Xcode UI coverage 옵션 지원 확인'
+help_path="$result_dir/ui-xcodebuild-help.txt"
+if xcodebuild -help > "$help_path" 2>&1; then
+  python3 - "$help_path" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+help_text = Path(sys.argv[1]).read_text(errors='replace')
+if re.search(r'^\s*-enableCodeCoverage(?:\s|$)', help_text, re.MULTILINE) is None:
+    print('::error::실제 xcodebuild 도움말에서 -enableCodeCoverage 지원을 확인하지 못했습니다.', file=sys.stderr)
+    raise SystemExit(2)
+print('::notice::현재 xcodebuild -help에서 -enableCodeCoverage 지원을 확인했습니다. UI 실행에만 NO를 적용합니다.')
+PY
+else
+  help_status=$?
+  printf '::error::실제 xcodebuild 도움말 실행이 실패했습니다(종료 코드 %s). UI 옵션을 추정하지 않습니다.\n' "$help_status" >&2
+  exit 2
+fi
+
 ci_phase='UI 시작시각 기록'
 touch "$result_dir/ui-start.marker"
 ci_phase='실제 UI 테스트'
 if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
-  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
+  -parallel-testing-enabled NO -enableCodeCoverage NO CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
   ci_phase='UI 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"

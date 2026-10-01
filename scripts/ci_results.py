@@ -46,7 +46,7 @@ def diagnostics(path):
             case_events.append({'method': match[1], 'event': match[2]})
     if case_events:
         summaries = list(dict.fromkeys(line.strip() for line in lines
-                        if re.match(r'\s*Executed \d+ tests, with \d+ failures', line)))
+                        if re.match(r'\s*Executed \d+ tests?, with \d+ failures?', line)))
         print('::notice::UI stdout diagnostics: ' + json.dumps({
             'scope': 'stdoutOnly', 'events': case_events[-18:],
             'suiteSummaries': summaries[-3:],
