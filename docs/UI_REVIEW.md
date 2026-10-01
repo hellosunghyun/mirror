@@ -27,6 +27,12 @@
 
 [실행 36896318693](https://github.com/hellosunghyun/mirror/actions/runs/36896318693)의 Mac 단위159/UI6·iPhone 단위156/UI6는 실패·skip 없이 통과했다. iPad는 단위156 통과 후 UI 첫 다섯 사례가 통과했고, 마지막 주 패널 사례 시작 뒤 기존 20분 제한으로 중단됐다. 세 플랫폼 화면 자료는 게시되지 않았다. 후속 수정은 고유 ID의 첫 hittable 요소를 우선하고, 중복 modal ID에서는 기존 전체 검색을 유지한다. 행 소유·창·열의 실제 검증과 실패 진단은 유지하며 같은 label·불필요한 후보 진단 속성의 반복 조회를 줄인다. UI runner의 첫 컴파일을 별도 준비 단계에서 끝내고 현재 실행의 SHA·build·destination·빌드 산출물을 확인한 뒤 UI를 실행한다. Mac15분·모바일20분의 실제 UI 검사 제한과 전체45분·단위20분 제한, 여섯 사례·최종 guard는 유지한다. 실제 사례·캡처 시간은 범위를 제한한 진단으로 남기며 통과 판정에 사용하지 않는다.
 
+[실행 36904124380](https://github.com/hellosunghyun/mirror/actions/runs/36904124380), `85d12c2`·build30은 세 플랫폼의 실제 UI 6개씩 모두 통과했다. UI 실행은 Mac427초·iPhone661초·iPad885초였고 같은 실행의 UI 컴파일 및 빌드 산출물 receipt 검증이 성공했다. [화면 Release](https://github.com/hellosunghyun/mirror/releases/tag/ui-review-36904124380)의 46개 자산·PNG43장과 [설치 Release](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36904124380)의 8개 자산을 공개 다운로드하여 SHA/build/run/attempt·파일 크기·SHA256을 확인했다. Mac 공증·staple·Gatekeeper와 iOS 서명·프로파일 게이트도 통과했다.
+
+**이 실행의 실제 PNG43장을 모두 직접 열어 검토했으며 시각 수용에는 실패했다.** 기본 밝은 화면에서 Mac 상세를 열 때 1024pt 화면 밖으로 창이 커져 왼쪽이 잘렸고, plain 입력·날짜 Form의 여백이 부족했다. iPad 선택행의 흰 글씨와 옅은 배경 대비, 범위를 넓힌 검색의 잘못된 섹션 제목, iPhone 긴 입력 후 키보드 위 오류·저장 표시, 모달 파란색과 본 화면 녹색의 혼용을 확인했다. iPad 가로 캡처는 회전한 내용과 검은 띠가 있어 정상 가로 증거로 사용할 수 없었고, 첫 iPhone 입력 캡처에는 시스템 키보드 안내가 남았다. 입력 원문·완료·Undo 기능의 실패로 확대 해석하지 않는다.
+
+후속 수정은 화면에 맞춘 Mac 새 창·Zoom과 inspector의 탐색 최소 폭, 명시적인 선택행 색, 검색 제목, grouped Form·모달 강조색, 키보드 위 고정 오류·저장 footer를 적용한다. 실제 Mac 창 경계·검색 제목·오류와 저장의 표시 회귀를 추가한다. iPad 회전은 기존15초 안에서 실제 창·열·날짜 제어의 안정된 배치를 확인하고, iPhone은 정확한 키보드 안내와 Continue가 함께 있을 때만 닫는다. 기존 여섯 사례와 모든 기능 assertions·guard·실행 제한·원본 앱샷43개를 유지하며 새 실제 PNG로 다시 확인한다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |

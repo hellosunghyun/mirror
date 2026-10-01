@@ -33,6 +33,7 @@ final class MirrorUITests: XCTestCase {
         let unassigned = try requireRow(title, in: app)
         XCTAssertTrue(value(of: unassigned).contains("아직 정하지 않음"))
         XCTAssertTrue(value(of: unassigned).contains("미완료"))
+        XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "정하지 않은 일")
         try recordUI("library", in: app, identifiers: ["library.list", "library.search", "library.batchPlan"])
 
         try showToday(in: app)
@@ -82,6 +83,8 @@ final class MirrorUITests: XCTestCase {
         let future = try requireRow(title, in: app)
         XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
         XCTAssertTrue(value(of: future).contains("미완료"))
+        XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "검색 결과",
+                       "범위를 넓힌 검색 결과를 날짜 미정 목록으로 표시하지 않는다.")
         try recordUI("library-search", in: app, identifiers: ["library.list", "library.search"])
         try interact(with: future, in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
@@ -104,6 +107,15 @@ final class MirrorUITests: XCTestCase {
         try activate("capture.save", in: app)
         let problem = try requireElement("state.error", in: app)
         try waitForLabelContaining("500", element: problem)
+        XCTAssertTrue(problem.isHittable, "저장 실패 설명은 추가 스크롤 없이 보여야 한다.")
+        XCTAssertTrue(try requireElement("capture.save", in: app).isHittable,
+                      "긴 입력 오류 뒤에도 저장 행동은 화면 안에 남는다.")
+        #if os(iOS)
+        let keyboard = app.keyboards.firstMatch
+        if keyboard.exists {
+            XCTAssertFalse(problem.frame.intersects(keyboard.frame), "오류 설명을 키보드가 가리지 않는다.")
+        }
+        #endif
         XCTAssertEqual(value(of: field), original, "Q-003: 잘라 저장하거나 입력 원문을 지우면 안 된다.")
         try recordUI("validation-error", in: app, identifiers: ["capture.title", "capture.save", "capture.close", "state.error"])
 
@@ -251,6 +263,9 @@ final class MirrorUITests: XCTestCase {
         let field = try requireElement("capture.title", in: app)
         try replaceText(in: field, with: title, app: app)
         if attachEvidence {
+            #if os(iOS)
+            try dismissKeyboardIntroduction(in: app)
+            #endif
             try recordUI("capture-form", in: app, identifiers: ["capture.title", "capture.note", "capture.url", "capture.save", "capture.close"])
         }
         try activate("capture.save", in: app)
@@ -269,7 +284,20 @@ final class MirrorUITests: XCTestCase {
         let method = name.replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-")).lowercased()
         let screenshotName = "mirror-ui-\(stage)-\(method)-\(evidenceSequence)"
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let appScreenshot = app.screenshot()
+        #if os(macOS)
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.exists, "앱 화면에는 실제 주 창이 있어야 한다.")
+        let frame = window.frame
+        let screenSize = appScreenshot.image.size
+        XCTAssertGreaterThan(frame.width, 0)
+        XCTAssertGreaterThan(frame.height, 0)
+        XCTAssertGreaterThanOrEqual(frame.minX, -1, "상세를 열어도 창 왼쪽이 화면 밖으로 잘리지 않는다.")
+        XCTAssertGreaterThanOrEqual(frame.minY, -1, "창 위쪽이 화면 안에 남는다.")
+        XCTAssertLessThanOrEqual(frame.maxX, screenSize.width + 1, "창 오른쪽이 화면 안에 남는다.")
+        XCTAssertLessThanOrEqual(frame.maxY, screenSize.height + 1, "창 아래쪽이 화면 안에 남는다.")
+        #endif
+        let screenshot = XCTAttachment(screenshot: appScreenshot)
         screenshot.name = screenshotName
         screenshot.lifetime = .keepAlways
         add(screenshot)
@@ -278,6 +306,30 @@ final class MirrorUITests: XCTestCase {
         let milliseconds = Int(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
         print("UI screenshot timing: stage=\(stage),milliseconds=\(milliseconds)")
     }
+
+    #if os(iOS)
+    @MainActor
+    private func dismissKeyboardIntroduction(in app: XCUIApplication) throws {
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 15), "입력 캡처에는 실제 키보드가 표시되어야 한다.")
+        let introduction = keyboard.staticTexts.matching(NSPredicate(
+            format: "label == %@",
+            "Speed up your typing by sliding your finger across the letters to compose a word."
+        )).firstMatch
+        if introduction.exists {
+            let next = keyboard.buttons["Continue"]
+            XCTAssertTrue(next.exists && next.isHittable,
+                          "확인된 시스템 키보드 안내의 Continue만 닫는다.")
+            XCTAssertTrue(keyboard.frame.contains(next.frame), "시스템 안내 버튼은 키보드 안에 있어야 한다.")
+            try interact(with: next, in: app)
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: introduction)
+            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed)
+        }
+        XCTAssertTrue(keyboard.keys.firstMatch.waitForExistence(timeout: 15),
+                      "시스템 안내가 아닌 실제 입력 키가 준비된 뒤 캡처한다.")
+        XCTAssertTrue(keyboard.keys.firstMatch.isHittable, "실제 입력 키를 시스템 안내가 가리지 않는다.")
+    }
+    #endif
 
     @MainActor
     private func captureSettings(in app: XCUIApplication) throws {
@@ -310,6 +362,7 @@ final class MirrorUITests: XCTestCase {
     #if os(iOS)
     @MainActor
     private func captureIPadLandscape(in app: XCUIApplication) async throws {
+        lastActionDescription = "iPad 가로 화면과 인접 일정의 실제 배치 안정 대기"
         XCUIDevice.shared.orientation = .landscapeLeft
         do {
             try await waitForViewport(in: app, landscape: true)
@@ -318,6 +371,7 @@ final class MirrorUITests: XCTestCase {
             XCUIDevice.shared.orientation = .portrait
             throw error
         }
+        lastActionDescription = "iPad 세로 화면의 실제 배치 복귀 대기"
         XCUIDevice.shared.orientation = .portrait
         try await waitForViewport(in: app, landscape: false)
     }
@@ -325,13 +379,82 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func waitForViewport(in app: XCUIApplication, landscape: Bool) async throws {
         let deadline = Date().addingTimeInterval(15)
+        let window = app.windows.firstMatch
+        let today = app.descendants(matching: .any).matching(identifier: "today.list").firstMatch
+        let review = app.buttons.matching(identifier: "today.review").firstMatch
+        let adjacent = app.descendants(matching: .any).matching(identifier: "ipad.adjacentCalendar").firstMatch
+        let calendarDate = app.descendants(matching: .any).matching(identifier: "calendar.date").firstMatch
+        var stableFrames: [CGRect]?
+        var stableSince: Date?
+        var stableSamples = 0
+
+        func isUsable(_ frame: CGRect) -> Bool {
+            !frame.isNull && !frame.isInfinite && frame.width > 0 && frame.height > 0
+        }
+        func contains(_ viewport: CGRect, _ frame: CGRect) -> Bool {
+            isUsable(frame) && viewport.insetBy(dx: -1, dy: -1).contains(frame)
+        }
+        func sameFrames(_ lhs: [CGRect], _ rhs: [CGRect]) -> Bool {
+            lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { pair in
+                abs(pair.0.minX - pair.1.minX) <= 1 && abs(pair.0.minY - pair.1.minY) <= 1
+                    && abs(pair.0.width - pair.1.width) <= 1 && abs(pair.0.height - pair.1.height) <= 1
+            }
+        }
+
         repeat {
             let bounds = app.frame
-            if bounds.width > 0, bounds.height > 0,
-               (landscape ? bounds.width > bounds.height : bounds.height > bounds.width) { return }
-            try await Task.sleep(for: .milliseconds(100))
+            var frames: [CGRect] = []
+            var ready = app.state == .runningForeground && isUsable(bounds)
+                && (landscape ? bounds.width > bounds.height : bounds.height > bounds.width)
+                && window.exists && today.exists && review.exists
+            if ready {
+                let windowBounds = window.frame
+                let todayBounds = today.frame
+                let reviewBounds = review.frame
+                ready = contains(bounds, windowBounds)
+                    && (landscape ? windowBounds.width > windowBounds.height : windowBounds.height > windowBounds.width)
+                    && contains(windowBounds, todayBounds) && contains(todayBounds, reviewBounds)
+                frames = [bounds, windowBounds, todayBounds, reviewBounds]
+                if landscape {
+                    ready = ready && adjacent.exists && calendarDate.exists
+                    if ready {
+                        let adjacentBounds = adjacent.frame
+                        let dateBounds = calendarDate.frame
+                        // 기기 frame만 먼저 회전한 상태는 통과시키지 않는다. 실제 두 열과
+                        // 일정 입력 제어가 같은 viewport 안에 겹치지 않고 배치되어야 한다.
+                        ready = contains(windowBounds, adjacentBounds) && contains(adjacentBounds, dateBounds)
+                            && adjacentBounds.minX >= todayBounds.maxX - 1
+                        frames += [adjacentBounds, dateBounds]
+                    }
+                } else {
+                    ready = ready && !adjacent.exists
+                }
+            }
+            let sampledAt = Date()
+            if ready {
+                if let stableFrames, sameFrames(stableFrames, frames) {
+                    stableSamples += 1
+                } else {
+                    stableSamples = 1
+                    stableSince = sampledAt
+                    stableFrames = frames
+                }
+                if stableSamples >= 3, let stableSince, sampledAt.timeIntervalSince(stableSince) >= 0.5 {
+                    // List/ScrollView 자체는 조작 버튼이 아니다. 안정된 실제 열의 경계와
+                    // 그 안의 정리/날짜 제어가 터치 가능한지 확인한 뒤 캡처한다.
+                    if review.isHittable && (!landscape || calendarDate.isHittable), Date() < deadline { return }
+                }
+            } else {
+                stableFrames = nil
+                stableSince = nil
+                stableSamples = 0
+            }
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining > 0 { try await Task.sleep(for: .seconds(min(0.25, remaining))) }
         } while Date() < deadline
-        XCTFail("기기 회전 뒤 실제 앱 viewport가 요청한 방향으로 바뀌어야 한다.")
+        XCTFail(landscape
+            ? "15초 안에 실제 iPad 가로 화면과 인접 일정이 표시되고 0.5초 이상 3회 연속 안정되어야 한다."
+            : "15초 안에 실제 iPad 세로 화면으로 복귀하고 0.5초 이상 3회 연속 안정되어야 한다.")
         throw UIHarnessError.unexpectedValue("viewportOrientation")
     }
     #endif

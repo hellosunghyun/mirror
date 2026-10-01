@@ -45,7 +45,11 @@ struct MirrorRootView: View {
                         List(selection: sidebarSelection) {
                             ForEach(MirrorDestination.allCases) { destination in
                                 Button { selectDestination(destination) } label: {
-                                    Label(destination.title, systemImage: destination.symbol)
+                                    Label {
+                                        Text(destination.title).foregroundStyle(Color.primary)
+                                    } icon: {
+                                        Image(systemName: destination.symbol).foregroundStyle(MirrorPalette.accent)
+                                    }
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .contentShape(Rectangle())
                                 }
@@ -97,8 +101,12 @@ struct MirrorRootView: View {
         }
         .onOpenURL { url in Task { await model.handleURL(url) } }
         #if os(macOS)
-        .frame(minWidth: 760, minHeight: 520)
+        // Inspector는 자신의 최소 폭을 별도로 더하므로, 열렸을 때는 탐색 영역만 확보한다.
+        .frame(minWidth: isTaskInspectorVisible ? 520 : 760, minHeight: 520)
         #endif
+    }
+    private var isTaskInspectorVisible: Bool {
+        model.preferences.onboardingComplete && !model.isLoading && !model.showReview && model.selectedTask != nil
     }
     private func showsAdjacentCalendar(width: CGFloat, destination: MirrorDestination) -> Bool {
         #if os(iOS)

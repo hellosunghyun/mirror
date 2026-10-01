@@ -21,6 +21,20 @@ struct MirrorApp: App {
         #endif
         .defaultSize(width: 1_100, height: 740)
         #if os(macOS)
+        .defaultWindowPlacement { content, context in
+            let idealSize = content.sizeThatFits(.unspecified)
+            let visibleRect = context.defaultDisplay.visibleRect
+            let size = CGSize(width: min(max(idealSize.width, 1_100), visibleRect.width),
+                              height: min(max(idealSize.height, 740), visibleRect.height))
+            return WindowPlacement(size: size)
+        }
+        .windowIdealPlacement { content, context in
+            let visibleRect = context.defaultDisplay.visibleRect
+            let idealSize = content.sizeThatFits(ProposedViewSize(visibleRect.size))
+            let size = CGSize(width: min(idealSize.width, visibleRect.width),
+                              height: min(idealSize.height, visibleRect.height))
+            return WindowPlacement(size: size)
+        }
         MenuBarExtra("미러", systemImage: "sun.max") {
             MirrorMenuBarContent().environment(model)
         }.menuBarExtraStyle(.window)
