@@ -73,6 +73,7 @@ final class AppModel {
     var search = ""
     var searchRequested = false
     var isTextEditing = false
+    var isDetailEditing = false
     var selectedTaskIDs: Set<UUID> = []
     var showCapture = false
     var captureIsSingle = false

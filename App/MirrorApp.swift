@@ -79,7 +79,7 @@ struct MirrorCommands: Commands {
         CommandGroup(after: .undoRedo) {
             Button("미러의 직전 작업 되돌리기") { Task { await model.undo() } }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(model.lastUndo == nil || model.isTextEditing || model.isSaving)
+                .disabled(model.lastUndo == nil || model.isTextEditing || model.isDetailEditing || model.isSaving)
         }
         CommandMenu("정리") {
             Button("오늘 정리") { model.beginReview() }

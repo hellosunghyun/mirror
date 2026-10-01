@@ -2,7 +2,7 @@
 
 > 잘 미루면, 지금 할 일이 남는다.
 
-미루기와 재결정 최소화를 중심으로 하는 iPhone / iPad / Mac 앱이다. SwiftUI의 실제 입력·정리·Today·검색·상세·설정 화면, 불변 원본 기반 Core Data 저장, Widget/Share/App Intents 및 선택 CloudKit 코드를 통합했다. 전체 구현의 Actions 컴파일·통합/UI 검증을 진행 중이며 실제 서명·두 기기 동기화·사용자 검증은 남아 있다.
+미루기와 재결정 최소화를 중심으로 하는 iPhone / iPad / Mac 앱이다. SwiftUI의 입력·정리·오늘·검색·상세·설정 화면과 불변 원본 기반 Core Data 저장을 사용한다. iOS Ad Hoc IPA와 macOS 서명·공증 DMG의 [실제 GitHub 배포](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36867363304)를 확인했다. 아직 남은 코드와 Apple 권한 설정·실기기 수용 조건은 [구현 공백](docs/IMPLEMENTATION_GAPS.md)에 구분한다.
 
 ## 이름 설명
 
@@ -44,6 +44,8 @@
 확인한 후보에는 UIKit 타입·색상 의존성이 있다. 상위 저장소의 [검증 워크플로](https://github.com/Saivion/SwiftPieces/blob/15e4a68ce09a58f7c93a8043f88fca9ea224af75/.github/workflows/swift.yml)는 iOS 26 Simulator 기준이므로 미러의 OS 27·Mac 지원을 증명하지 않는다. 필요한 플랫폼별 수정을 수행하고 iOS / iPadOS / macOS 27에서 각각 빌드와 실제 사용을 검증한다.
 
 컴포넌트 내부 상태는 미러의 날짜·계획·완료 데이터와 분리한다. 입력은 공통 명령 경로로 전달하고 저장 성공 이후 성공 상태를 표시한다. 접근성·한국어 문구·큰 글자·Reduce Motion·Reduce Transparency·실패 복구는 [테스트 전략](TESTING.md)에 따라 확인한다.
+
+단순하고 모던한 UI 요청에 따라 목록·상세·저장 안내를 정리했다. iPhone은 탭과 상세 시트, iPad와 Mac은 사이드바와 필요한 때 열리는 inspector를 사용한다. 세 플랫폼의 실제 화면 캡처와 수정 전후 검토 기준은 [UI 검토 안내](docs/UI_REVIEW.md)를 따른다. 코드 작성, Actions 기능 통과, 화면을 직접 검토한 결과를 각각 구분한다.
 
 ## 식별자 후보
 

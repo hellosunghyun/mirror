@@ -26,5 +26,8 @@ func mirrorAdaptiveColor(light: UInt32, dark: UInt32) -> Color {
 
 public enum MirrorPalette {
     public static var surface: Color { mirrorAdaptiveColor(light: 0xF3F2EE, dark: 0x121212) }
+    public static var canvas: Color { mirrorAdaptiveColor(light: 0xF7F8F6, dark: 0x191C1A) }
+    public static var card: Color { mirrorAdaptiveColor(light: 0xFFFFFF, dark: 0x252925) }
+    public static var border: Color { mirrorAdaptiveColor(light: 0xE4E8E3, dark: 0x373E38) }
     public static var accent: Color { mirrorAdaptiveColor(light: 0x28663C, dark: 0xA9DCB7) }
 }

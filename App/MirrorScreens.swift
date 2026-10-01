@@ -9,17 +9,51 @@ struct MirrorTodayView: View {
     @State private var showCompleted = false
     var body: some View {
         List {
-            if let context = model.context {
-                Section { Text(AppDate.label(context.planningDay)).font(.title2).accessibilityAddTraits(.isHeader) }
+            Section {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let context = model.context {
+                        Text(AppDate.label(context.planningDay))
+                            .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    }
+                    MirrorActionGroup {
+                        Button("오늘 정리") { model.beginReview() }
+                            .buttonStyle(.borderedProminent).controlSize(.regular)
+                            .frame(minHeight: 44).accessibilityIdentifier("today.review")
+                        Menu {
+                            if let review = model.review, !review.cards.isEmpty {
+                                Button("이어서 정리") { model.beginReview(mode: .manualResume) }
+                                    .accessibilityIdentifier("today.resumeReview")
+                            }
+                            Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
+                                .accessibilityIdentifier("today.reviewAgain")
+                            if model.reviewSummary != nil, !model.pendingTasks.isEmpty {
+                                Button("새로 넣은 일도 정리") { model.beginReview(mode: .manualResume, includeNewInputs: true) }
+                            }
+                        } label: { Label("정리 옵션", systemImage: "ellipsis").frame(minHeight: 44) }
+                            #if os(macOS)
+                            .menuStyle(.borderlessButton)
+                            #endif
+                    }
+                    if !model.pendingTasks.isEmpty {
+                        Text("보관함에 정하지 않은 일 \(model.pendingTasks.count)개")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let summary = model.reviewSummary {
+                        Text(summary).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }.padding(.vertical, 8)
             }
+            .listRowSeparator(.hidden).listRowBackground(Color.clear)
             if !model.deadlines.isEmpty {
                 Section("실제 마감 안내 · 계획과 별개") {
                     ForEach(model.deadlines, id: \.taskID) { task in
                         Button { model.selectedTaskID = task.taskID } label: {
                             Label { VStack(alignment: .leading) { Text(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.plain).padding(.vertical, 4)
                     }
                 }
+                .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
             Section("오늘에 남긴 일") {
                 if model.todayTasks.isEmpty {
@@ -29,29 +63,21 @@ struct MirrorTodayView: View {
                         Text(model.pendingTasks.isEmpty ? "직접 날짜를 정한 일만 여기에 보여요." : "정하지 않은 일은 보관함에 있어요.")
                     } actions: { Button("일단 넣기") { model.openCapture() } }
                 }
-                ForEach(model.todayTasks, id: \.taskID) { MirrorTaskRow(task: $0) }
-            }
-            Section {
-                Button("오늘 정리") { model.beginReview() }
-                    .accessibilityIdentifier("today.review")
-                if let review = model.review, !review.cards.isEmpty {
-                    Button("이어서 정리") { model.beginReview(mode: .manualResume) }
-                        .accessibilityIdentifier("today.resumeReview")
-                }
-                Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
-                    .accessibilityIdentifier("today.reviewAgain")
-                if !model.pendingTasks.isEmpty { Text("보관함에 정하지 않은 일 \(model.pendingTasks.count)개").font(.caption).foregroundStyle(.secondary) }
-                if let summary = model.reviewSummary { Text(summary).font(.callout).fixedSize(horizontal: false, vertical: true) }
-                if model.reviewSummary != nil, !model.pendingTasks.isEmpty {
-                    Button("새로 넣은 일도 정리") { model.beginReview(mode: .manualResume, includeNewInputs: true) }
+                ForEach(model.todayTasks, id: \.taskID) {
+                    MirrorTaskRow(task: $0).listRowSeparator(.hidden).listRowBackground(Color.clear)
                 }
             }
-            Section {
-                DisclosureGroup("완료한 일", isExpanded: $showCompleted) {
-                    ForEach(model.completedToday, id: \.taskID) { MirrorTaskRow(task: $0) }
+            .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            if !model.completedToday.isEmpty {
+                Section {
+                    DisclosureGroup("완료한 일 \(model.completedToday.count)개", isExpanded: $showCompleted) {
+                        ForEach(model.completedToday, id: \.taskID) { MirrorTaskRow(task: $0) }
+                    }.foregroundStyle(.secondary)
                 }
+                .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
         }
+        .listStyle(.plain).scrollContentBackground(.hidden)
         .accessibilityIdentifier("today.list")
         .navigationTitle("오늘")
     }
@@ -65,8 +91,13 @@ struct MirrorTaskRow: View {
     var body: some View {
         TaskRow(task.title, status: Binding(get: { task.status == .completed ? .completed : .open }, set: { value in
             if value != .snoozed { Task { await model.setCompleted(task, completed: value == .completed) } }
-        }), due: planLabel(task.plan.target), onTap: openDetail,
+        }), due: planLabel(task.plan.target), style: rowStyle, onTap: openDetail,
                 onSnooze: { Task { await model.park(task) } }, onDelete: { Task { await model.trash(task) } })
+            .background {
+                if model.selectedTaskID == task.taskID {
+                    RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
+                }
+            }
             .disabled(model.isSaving || task.status == .deleted)
             .accessibilityIdentifier("task.row.\(task.taskID.uuidString)")
             .contextMenu {
@@ -76,6 +107,14 @@ struct MirrorTaskRow: View {
                 Button("당분간 보관") { Task { await model.park(task) } }
                 Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }
             }
+    }
+    private var rowStyle: TaskRow.Style {
+        var style = TaskRow.Style.standard
+        style.surface = .clear
+        style.text = .primary
+        style.muted = .secondary
+        style.cornerRadius = 10
+        return style
     }
     private func openDetail() {
         if let onOpen { onOpen() }
@@ -254,17 +293,33 @@ struct MirrorLibraryView: View {
         @Bindable var model = model
         List {
             Section {
-                TextField("미래·완료·보관까지 검색", text: $model.search).focused($searchFocused).accessibilityIdentifier("library.search")
-                    .onSubmit { searchFocused = false; model.isTextEditing = false }
-                Picker("목록", selection: $filter) { ForEach(LibraryFilter.allCases) { Text($0.label).tag($0) } }
-                Toggle("여러 개 선택", isOn: $selecting)
-                if selecting {
-                    Text("같은 날짜로 최대 20개를 한 번에 배치해요. 하나라도 오래된 상태이면 전체를 저장하지 않아요.").font(.caption)
-                    Button("선택한 \(model.selectedTaskIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(model.selectedTaskIDs)) }
-                        .disabled(model.selectedTaskIDs.isEmpty || model.selectedTaskIDs.count > 20)
-                        .accessibilityIdentifier("library.batchPlan")
-                }
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+                        TextField("미래·완료·보관까지 검색", text: $model.search)
+                            .textFieldStyle(.plain).focused($searchFocused).accessibilityIdentifier("library.search")
+                            .onSubmit { searchFocused = false; model.isTextEditing = false }
+                    }
+                    .padding(10).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    MirrorActionGroup {
+                        Picker("목록", selection: $filter) {
+                            ForEach(LibraryFilter.allCases) { Text($0.label).tag($0) }
+                        }.pickerStyle(.menu).frame(minHeight: 44)
+                        Button(selecting ? "선택 마치기" : "선택") { selecting.toggle() }
+                            .buttonStyle(.borderless).frame(minHeight: 44)
+                            .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
+                    }
+                    if selecting {
+                        Text("같은 날짜로 최대 20개를 한 번에 배치해요. 하나라도 오래된 상태이면 전체를 저장하지 않아요.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("선택한 \(model.selectedTaskIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(model.selectedTaskIDs)) }
+                            .buttonStyle(.bordered).frame(minHeight: 44)
+                            .disabled(model.selectedTaskIDs.isEmpty || model.selectedTaskIDs.count > 20)
+                            .accessibilityIdentifier("library.batchPlan")
+                    }
+                }.padding(.vertical, 4)
             }
+            .listRowSeparator(.hidden).listRowBackground(Color.clear)
             Section(filter.label) {
                 if filtered.isEmpty { ContentUnavailableView("여기에 표시할 일이 없어요", systemImage: "tray", description: Text("목록을 바꾸거나 새로운 일을 넣을 수 있어요.")) }
                 ForEach(filtered, id: \.taskID) { task in
@@ -285,10 +340,12 @@ struct MirrorLibraryView: View {
                             Spacer()
                             Button("복구") { Task { await model.restore(task) } }.disabled(model.isSaving)
                         } else { MirrorTaskRow(task: task, onOpen: { openDetail(task) }) }
-                    }
+                    }.listRowSeparator(.hidden).listRowBackground(Color.clear)
                 }
             }
+            .listRowSeparator(.hidden).listRowBackground(Color.clear)
         }
+        .listStyle(.plain).scrollContentBackground(.hidden)
         .navigationTitle("보관함")
         .accessibilityIdentifier("library.list")
         .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
@@ -524,77 +581,123 @@ struct MirrorTaskDetail: View {
     @State private var editing = false
     @State private var editingSnapshot: TaskProjection?
     @State private var showDeadline = false
+    @State private var showHistory = false
+    private var actionMaxWidth: CGFloat {
+        #if os(macOS)
+        return 200
+        #else
+        return .infinity
+        #endif
+    }
+    private var actionMinHeight: CGFloat {
+        #if os(macOS)
+        return 20
+        #else
+        return 32
+        #endif
+    }
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
-            Form {
-                Section("내용") {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    Label(statusLabel, systemImage: statusSymbol)
+                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     if editing {
-                        TextField("제목", text: $title, axis: .vertical).accessibilityIdentifier("detail.title")
-                        TextField("메모", text: $note, axis: .vertical).lineLimit(3...12)
-                        TextField("원문 링크", text: $link)
-                        if let original = editingSnapshot,
-                           original.taskID != task.taskID || original.versions[.content]?.headsDigest != task.versions[.content]?.headsDigest {
-                            Text("편집을 시작한 뒤 작업이나 내용이 바뀌었어요. 입력한 내용은 유지했어요. 편집을 취소하고 최신 내용을 확인한 뒤 다시 편집하세요.")
-                                .font(.callout)
-                        }
-                        if let problem = model.problem {
-                            Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
+                        VStack(alignment: .leading, spacing: 12) {
+                            TextField("제목", text: $title, axis: .vertical)
+                                .font(.title3).textFieldStyle(.roundedBorder).accessibilityIdentifier("detail.title")
+                            TextField("메모", text: $note, axis: .vertical).lineLimit(3...12).textFieldStyle(.roundedBorder)
+                            TextField("원문 링크", text: $link).textFieldStyle(.roundedBorder)
+                            if let original = editingSnapshot,
+                               original.taskID != task.taskID || original.versions[.content]?.headsDigest != task.versions[.content]?.headsDigest {
+                                Text("편집을 시작한 뒤 작업이나 내용이 바뀌었어요. 입력한 내용은 유지했어요. 편집을 취소하고 최신 내용을 확인한 뒤 다시 편집하세요.")
+                                    .font(.callout)
+                            }
+                            if let problem = model.problem {
+                                Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
+                            }
                         }
                     } else {
-                        Text(task.title).font(.title2).textSelection(.enabled).accessibilityIdentifier("detail.contentTitle")
-                        if let note = task.content.note { ExpandableText(note).textSelection(.enabled) }
-                        if let original = task.content.sourceURL, let url = URL(string: original), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                            Link("원문 링크 열기", destination: url)
-                            Text(original).font(.caption).textSelection(.enabled)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(task.title).font(.title2.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled).accessibilityIdentifier("detail.contentTitle")
+                            if let note = task.content.note { ExpandableText(note).textSelection(.enabled).foregroundStyle(.secondary) }
+                            if let original = task.content.sourceURL, let url = URL(string: original), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                                Link("원문 링크 열기", destination: url)
+                                Text(original).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                            Button("내용 편집") {
+                                editingSnapshot = task
+                                title = task.title; note = task.content.note ?? ""; link = task.content.sourceURL ?? ""; editing = true
+                            }.buttonStyle(.borderless).frame(minHeight: 44).accessibilityIdentifier("detail.edit")
                         }
-                        Button("내용 편집") {
-                            editingSnapshot = task
-                            title = task.title; note = task.content.note ?? ""; link = task.content.sourceURL ?? ""; editing = true
-                        }.accessibilityIdentifier("detail.edit")
                     }
-                }
-                Section("계획") {
-                    Text(planLabel(task.plan.target)).accessibilityIdentifier("detail.plan")
-                    Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID]) }.disabled(task.status != .open)
-                    if let day = model.context?.planningDay {
-                        Button("오늘에 남기기") { model.makePicker(taskIDs: [task.taskID]); if let request = model.picker { Task { await model.choosePlan(request, target: .day(day)) } } }
-                            .disabled(task.status != .open)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("계획", systemImage: "calendar").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(planLabel(task.plan.target)).font(.body).accessibilityIdentifier("detail.plan")
+                        MirrorActionGroup {
+                            Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID]) }
+                                .buttonStyle(.bordered).frame(minHeight: 44).disabled(task.status != .open)
+                            Menu {
+                                if let day = model.context?.planningDay {
+                                    Button("오늘에 남기기") {
+                                        model.makePicker(taskIDs: [task.taskID])
+                                        if let request = model.picker { Task { await model.choosePlan(request, target: .day(day)) } }
+                                    }
+                                }
+                                Button("당분간 보관") { Task { await model.park(task) } }
+                            } label: { Text("계획 옵션").frame(minHeight: 44) }
+                                .disabled(task.status != .open)
+                        }.frame(minHeight: 44)
                     }
-                    Button("당분간 보관") { Task { await model.park(task) } }.disabled(task.status != .open)
-                }
-                Section("실제 마감 · 계획과 별개") {
-                    Text(deadlineLabel(task.deadline, context: model.context))
-                    Button("실제 마감 편집") { showDeadline = true }
-                    if task.deadline != nil { Button("실제 마감 지우기") { Task { await model.setDeadline(task, deadline: nil) } } }
-                    if task.deadline != nil {
-                        Text(model.preferences.deadlineAlarmDates[task.taskID].map { "이 기기 알림: \($0.formatted())" } ?? "이 작업의 실제 마감 알림은 꺼져 있어요.").font(.caption)
-                        Button("실제 마감 알림 설정") { showDeadline = true }
-                        if model.preferences.deadlineAlarmDates[task.taskID] != nil { Button("이 작업 마감 알림 끄기") { model.setDeadlineAlarm(task, fireAt: nil) } }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("실제 마감 · 계획과 별개", systemImage: "flag")
+                            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(deadlineLabel(task.deadline, context: model.context))
+                        Button("실제 마감 편집") { showDeadline = true }.buttonStyle(.borderless).frame(minHeight: 44)
+                        if task.deadline != nil {
+                            Text(model.preferences.deadlineAlarmDates[task.taskID].map { "이 기기 알림: \($0.formatted())" } ?? "이 작업의 실제 마감 알림은 꺼져 있어요.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                }
-                Section("상태") {
-                    if task.status == .deleted {
-                        Button("휴지통에서 복구") { Task { await model.restore(task) } }
-                        Text("개별 작업의 이력은 영구 삭제하지 않아요.").font(.caption)
-                    } else {
-                        Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }
+                    if !task.conflictGroups.isEmpty {
+                        Label("다른 변경과 충돌한 이력이 있어요. 최신 상태를 확인해 주세요.", systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.secondary)
                     }
-                    if !task.conflictGroups.isEmpty { Label("다른 변경과 충돌한 이력이 있어요. 최신 상태를 확인해 주세요.", systemImage: "exclamationmark.triangle") }
-                }
-                Section("최근 변경") {
-                    ForEach(model.history(for: task.taskID), id: \.operationID) { record in
-                        VStack(alignment: .leading) { Text(record.kindLabel); Text(record.recordedAt, style: .date).font(.caption) }
-                        if !record.undoValues.isEmpty { Button("이 변경을 조건부로 되돌리기") { Task { await model.undo(record) } } }
+                    DisclosureGroup("변경 이력과 관리", isExpanded: $showHistory) {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if task.deadline != nil {
+                                Button("실제 마감 알림 설정") { showDeadline = true }.frame(minHeight: 44)
+                                if model.preferences.deadlineAlarmDates[task.taskID] != nil {
+                                    Button("이 작업 마감 알림 끄기") { model.setDeadlineAlarm(task, fireAt: nil) }.frame(minHeight: 44)
+                                }
+                                Button("실제 마감 지우기") { Task { await model.setDeadline(task, deadline: nil) } }.frame(minHeight: 44)
+                            }
+                            ForEach(model.history(for: task.taskID), id: \.operationID) { record in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(record.kindLabel).font(.callout)
+                                    Text(record.recordedAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                                    if !record.undoValues.isEmpty {
+                                        Button("이 변경을 조건부로 되돌리기") { Task { await model.undo(record) } }.frame(minHeight: 44)
+                                    }
+                                }
+                            }
+                            if task.status == .deleted {
+                                Text("개별 작업의 이력은 영구 삭제하지 않아요.").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }.frame(minHeight: 44)
+                            }
+                        }.buttonStyle(.borderless).padding(.top, 12)
                     }
-                }
+                    .font(.callout).foregroundStyle(.secondary)
+                }.padding(24).frame(maxWidth: 600, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            #if os(macOS)
-            .formStyle(.grouped)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            #endif
             if editing {
-                VStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
                     Button {
                         Task {
                             guard let original = editingSnapshot, original.taskID == task.taskID else { return }
@@ -603,42 +706,66 @@ struct MirrorTaskDetail: View {
                             }
                         }
                     } label: {
-                        Text("내용 저장").frame(maxWidth: .infinity, minHeight: 44)
+                        Text("내용 저장").frame(maxWidth: .infinity, minHeight: actionMinHeight)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).controlSize(.regular)
+                    #if os(macOS)
+                    .frame(maxWidth: actionMaxWidth, minHeight: 32, maxHeight: 44, alignment: .leading)
+                    #else
+                    .frame(minHeight: 44)
+                    #endif
                     .disabled(editingSnapshot?.taskID != task.taskID)
                     .accessibilityIdentifier("detail.save")
                     Button("편집 취소") { editing = false; editingSnapshot = nil }
-                        .buttonStyle(.bordered).frame(minHeight: 44)
-                }.padding(12).frame(maxWidth: .infinity).background(.bar)
-            } else if task.status != .deleted || model.lastUndo?.taskID == task.taskID {
-                VStack(spacing: 8) {
+                        .buttonStyle(.borderless).frame(minHeight: 44)
+                }.padding(.horizontal, 24).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading).background(MirrorPalette.surface)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
                     if task.status != .deleted {
                         Button {
                             Task { await model.setCompleted(task, completed: task.status != .completed) }
                         } label: {
                             Text(task.status == .completed ? "완료 취소 · 다시 열기" : "완료")
-                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .frame(maxWidth: .infinity, minHeight: actionMinHeight)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.borderedProminent).controlSize(.regular)
+                        #if os(macOS)
+                        .frame(maxWidth: actionMaxWidth, minHeight: 32, maxHeight: 44, alignment: .leading)
+                        #else
+                        .frame(minHeight: 44)
+                        #endif
                         .accessibilityIdentifier("task.complete")
+                    } else {
+                        Button("휴지통에서 복구") { Task { await model.restore(task) } }
+                            .buttonStyle(.bordered).frame(minHeight: 44)
                     }
                     if model.lastUndo?.taskID == task.taskID {
                         Button("직전 변경 되돌리기") { Task { await model.undo() } }
-                            .buttonStyle(.bordered).frame(minHeight: 44)
+                            .buttonStyle(.borderless).frame(minHeight: 44)
                             .accessibilityIdentifier("task.undo")
                     }
-                }.padding(12).frame(maxWidth: .infinity).background(.bar)
+                }.padding(.horizontal, 24).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading).background(MirrorPalette.surface)
             }
         }
         .navigationTitle("작업 상세")
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("상세 닫기") { model.selectedTaskID = nil }.accessibilityIdentifier("detail.close") } }
         .disabled(model.isSaving)
-        .onChange(of: editing) { _, value in model.isTextEditing = value }
-        .onDisappear { model.isTextEditing = false }
+        .onChange(of: editing) { _, value in
+            model.isDetailEditing = value
+            model.isTextEditing = value
+        }
+        .onDisappear { model.isDetailEditing = false; model.isTextEditing = false }
         .sheet(isPresented: $showDeadline) { MirrorDeadlineEditor(task: task) }
         .sheet(item: $model.picker) { MirrorPlanPicker(request: $0) }
         .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil))
+    }
+    private var statusLabel: String {
+        switch task.status { case .open: "미완료"; case .completed: "완료한 일"; case .deleted: "휴지통에 있는 일" }
+    }
+    private var statusSymbol: String {
+        switch task.status { case .open: "circle"; case .completed: "checkmark.circle"; case .deleted: "trash" }
     }
 }
 
@@ -709,6 +836,19 @@ struct MirrorDeadlineEditor: View {
                     alarm = model.preferences.deadlineAlarmDates[task.taskID] != nil
                 }
         }.frame(minWidth: 300, idealWidth: 450, minHeight: 300)
+    }
+}
+
+@MainActor
+private struct MirrorActionGroup<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        layout { content }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

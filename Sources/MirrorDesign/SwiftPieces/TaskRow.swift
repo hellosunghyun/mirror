@@ -41,7 +41,7 @@ public struct TaskRow: View {
     @State private var compact = false
     @State private var lifted = false
     @State private var lift: CGFloat = 0
-    @State private var rowHeight: CGFloat = 72
+    @State private var rowHeight: CGFloat = 52
     @State private var completions = 0
 
     private let title: String
@@ -112,18 +112,18 @@ public struct TaskRow: View {
     // MARK: Card
 
     private var card: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 8) {
             checkControl
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(compact ? .subheadline.weight(.medium) : .body.weight(.semibold))
-                    .foregroundStyle(completing ? style.ink : status == .open ? style.text : style.muted)
+                    .font(compact ? .subheadline : .body.weight(.medium))
+                    .foregroundStyle(status == .open ? style.text : style.muted)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
                     .overlay(alignment: .leading) {
                         // The strike draws from the leading edge over the text's own width.
                         Capsule()
-                            .fill(completing ? style.ink : style.muted)
+                            .fill(style.muted)
                             .frame(height: 2)
                             .scaleEffect(x: strike, y: 1, anchor: .leading)
                             .opacity(strike > 0 ? 1 : 0)
@@ -140,15 +140,15 @@ public struct TaskRow: View {
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 16)
-        .padding(.vertical, compact ? 8 : 14)
+        .padding(.leading, 2)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             ZStack {
                 style.surface
-                // The card becomes the solid block while the completion runs, then settles back as it compacts.
-                tint.opacity(completing ? 1 : 0)
+                // 저장된 완료 상태의 짧은 피드백만 남기고 목록의 대비와 밀도를 유지한다.
+                tint.opacity(completing ? 0.12 : 0)
             }
         }
         .clipShape(cardShape)
@@ -168,7 +168,7 @@ public struct TaskRow: View {
         } else if let due {
             Label(due, systemImage: "calendar")
                 .font(.footnote.weight(.medium))
-                .foregroundStyle(completing ? style.ink.opacity(0.7) : style.muted)
+                .foregroundStyle(style.muted)
                 .labelStyle(TightLabel())
         }
     }
@@ -194,7 +194,7 @@ public struct TaskRow: View {
         Button(action: toggle) {
             ZStack {
                 Circle()
-                    .strokeBorder(status == .open ? style.muted.opacity(0.55) : .clear, lineWidth: 2)
+                    .strokeBorder(status == .open ? style.muted.opacity(0.55) : .clear, lineWidth: 1.5)
                 Circle()
                     .fill(status == .snoozed ? style.snooze : completing ? style.ink : tint)
                     .scaleEffect(status == .open ? 0.001 : 1)
@@ -206,10 +206,10 @@ public struct TaskRow: View {
                 } else {
                     checkmark
                         .trim(from: 0, to: check)
-                        .stroke(completing ? tint : style.ink, style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
+                        .stroke(completing ? tint : style.ink, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 }
             }
-            .frame(width: compact ? 24 : 28, height: compact ? 24 : 28)
+            .frame(width: compact ? 18 : 20, height: compact ? 18 : 20)
             .frame(width: 44, height: 44)
             .contentShape(.rect)
             .animation(spring, value: status)
@@ -219,7 +219,7 @@ public struct TaskRow: View {
 
     private var checkmark: Path {
         Path { path in
-            let s = compact ? 24.0 : 28.0
+            let s = compact ? 18.0 : 20.0
             path.move(to: CGPoint(x: s * 0.29, y: s * 0.52))
             path.addLine(to: CGPoint(x: s * 0.44, y: s * 0.67))
             path.addLine(to: CGPoint(x: s * 0.72, y: s * 0.37))
@@ -284,12 +284,12 @@ public struct TaskRow: View {
 
     private func tile(_ label: String, systemImage: String, color: Color, reveal: CGFloat, action: @escaping () -> Void) -> some View {
         Button { settle(0); action() } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 3) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                     .scaleEffect(0.55 + 0.45 * reveal)
                 Text(label)
-                    .font(.caption.weight(.semibold))
+                    .font(.caption2.weight(.semibold))
                     .opacity(max(0, (reveal - 0.45) / 0.55))
             }
             .foregroundStyle(style.ink)

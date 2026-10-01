@@ -165,6 +165,17 @@ final class MirrorUITests: XCTestCase {
         try activate("detail.edit", in: app)
         let field = try requireElement("detail.title", in: app)
         try replaceText(in: field, with: edited, app: app)
+        #if os(macOS)
+        // 다른 입력창의 포커스가 닫혀도 상세의 미저장 입력은 유지해야 한다.
+        try activate("capture.open", in: app)
+        _ = try requireElement("capture.title", in: app)
+        try activate("capture.close", in: app)
+        try requireNoElement("capture.title", in: app)
+        try showLibrary(in: app)
+        XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
+                       "빠른 입력을 닫고 목록을 이동해도 미저장 상세 편집을 잃지 않는다.")
+        try showToday(in: app)
+        #endif
         try recordUI("detail-edit", in: app, identifiers: ["detail.title", "detail.save", "detail.close"])
         try activate("detail.save", in: app)
         try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app), in: app)
@@ -172,6 +183,13 @@ final class MirrorUITests: XCTestCase {
 
         try activate("task.complete", in: app)
         try waitForLabel("완료 취소 · 다시 열기", element: requireElement("task.complete", in: app), in: app)
+        #if os(macOS)
+        let completionButton = try requireElement("task.complete", in: app)
+        XCTAssertLessThanOrEqual(completionButton.frame.width, 220,
+                                 "Mac 완료 버튼이 상세 패널 전체로 늘어나지 않는다.")
+        XCTAssertLessThanOrEqual(completionButton.frame.height, 46,
+                                 "Mac 완료 버튼의 클릭 경계는 44pt와 렌더링 오차 이내다.")
+        #endif
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"), "완료는 계획을 지우지 않는다.")
         try recordUI("completion", in: app, identifiers: ["detail.contentTitle", "detail.plan", "task.complete", "task.undo", "detail.close"])
         try activate("task.undo", in: app)

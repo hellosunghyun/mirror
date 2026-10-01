@@ -11,6 +11,7 @@ struct MirrorRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var sceneExposureID = UUID()
+    @State private var calendarInspectorDismissed = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -23,61 +24,55 @@ struct MirrorRootView: View {
     }
     var body: some View {
         @Bindable var model = model
-        let selectedDestination = model.destination
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                Group {
-                    if model.isLoading {
-                        ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .accessibilityIdentifier("startup.loading")
-                    } else if !model.preferences.onboardingComplete {
-                        MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
-                    } else if isCompact {
-                        TabView(selection: $model.destination) {
-                            ForEach(MirrorDestination.allCases) { destination in
-                                NavigationStack {
-                                    VStack(spacing: 0) {
-                                        content(destination).frame(maxWidth: .infinity, maxHeight: .infinity)
-                                        statusBar
-                                    }.toolbar { commonToolbar }
-                                }
-                                    .tabItem { Label(destination.title, systemImage: destination.symbol) }
-                                    .tag(destination)
-                                    .accessibilityIdentifier("destination.\(destination.rawValue)")
-                            }
-                        }
-                    } else {
-                        NavigationSplitView {
-                            List(selection: sidebarSelection) {
-                                ForEach(MirrorDestination.allCases) { destination in
-                                    Button { model.destination = destination } label: {
-                                        Label(destination.title, systemImage: destination.symbol)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .contentShape(Rectangle())
-                                    }
-                                        .buttonStyle(.plain)
-                                        .tag(destination)
-                                        .listRowBackground(selectedDestination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
-                                        .accessibilityIdentifier("destination.\(destination.rawValue)")
-                                }
-                            }.navigationTitle("미러").navigationSplitViewColumnWidth(min: 160, ideal: 190)
-                        } content: {
-                            content(selectedDestination).id(selectedDestination).toolbar { commonToolbar }
-                                .navigationSplitViewColumnWidth(min: 280, ideal: 420)
-                        } detail: {
-                            if let task = model.selectedTask { MirrorTaskDetail(task: task) }
-                            else if showsAdjacentCalendar(width: geometry.size.width, destination: selectedDestination) {
-                                MirrorCalendarView().accessibilityIdentifier("ipad.adjacentCalendar")
-                            }
-                            else {
-                                ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요."))
-                                    .accessibilityIdentifier("detail.empty")
+            Group {
+                if model.isLoading {
+                    ProgressView("저장된 일을 불러오고 있어요")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("startup.loading")
+                } else if !model.preferences.onboardingComplete {
+                    MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
+                } else if isCompact {
+                    TabView(selection: destinationSelection) {
+                        ForEach(MirrorDestination.allCases) { destination in
+                            Tab(destination.title, systemImage: destination.symbol, value: destination) {
+                                mainContent(destination)
                             }
                         }
                     }
+                } else {
+                    NavigationSplitView {
+                        List(selection: sidebarSelection) {
+                            ForEach(MirrorDestination.allCases) { destination in
+                                Button { selectDestination(destination) } label: {
+                                    Label(destination.title, systemImage: destination.symbol)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .tag(destination)
+                                .listRowBackground(model.destination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
+                                .accessibilityIdentifier("destination.\(destination.rawValue)")
+                            }
+                        }
+                        .navigationTitle("미러")
+                        .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
+                    } detail: {
+                        mainContent(model.destination)
+                    }
+                    .navigationSplitViewStyle(.balanced)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if !isCompact { statusBar }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .inspector(isPresented: inspectorPresentation(width: geometry.size.width)) {
+                NavigationStack {
+                    if let task = model.selectedTask {
+                        MirrorTaskDetail(task: task)
+                    } else if showsAdjacentCalendar(width: geometry.size.width, destination: model.destination) {
+                        MirrorCalendarView().accessibilityIdentifier("ipad.adjacentCalendar")
+                    }
+                }
+                .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
             }
         }
         .tint(MirrorPalette.accent)
@@ -85,13 +80,6 @@ struct MirrorRootView: View {
         .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
         .sheet(isPresented: $model.showReview) { MirrorReviewView() }
         .sheet(item: basePicker) { MirrorPlanPicker(request: $0) }
-        .sheet(item: detailSheet) { detail in
-            NavigationStack {
-                if let task = model.tasks.first(where: { $0.taskID == detail.id }) {
-                    MirrorTaskDetail(task: task)
-                }
-            }
-        }
         .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
         .task { await model.start() }
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -104,18 +92,32 @@ struct MirrorRootView: View {
             }
         }
         .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
+        .onChange(of: model.destination) { _, _ in
+            calendarInspectorDismissed = false
+        }
         .onOpenURL { url in Task { await model.handleURL(url) } }
-        .frame(minWidth: isCompact ? 0 : 720, minHeight: isCompact ? 0 : 480)
+        #if os(macOS)
+        .frame(minWidth: 760, minHeight: 520)
+        #endif
     }
     private func showsAdjacentCalendar(width: CGFloat, destination: MirrorDestination) -> Bool {
         #if os(iOS)
-        return UIDevice.current.userInterfaceIdiom == .pad && width >= 900 && destination != .calendar
+        return !isCompact && UIDevice.current.userInterfaceIdiom == .pad && width >= 1_050 && destination != .calendar
         #else
         return false
         #endif
     }
     @ViewBuilder private func content(_ destination: MirrorDestination) -> some View {
         switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
+    }
+    private func mainContent(_ destination: MirrorDestination) -> some View {
+        NavigationStack {
+            content(destination)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(MirrorPalette.canvas)
+                .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
+                .toolbar { commonToolbar }
+        }
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
@@ -127,33 +129,56 @@ struct MirrorRootView: View {
         }
     }
     @ViewBuilder private var statusBar: some View {
-        if model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending {
-            VStack(alignment: .leading, spacing: 6) {
-                StatusMorph(state: model.isSaving || model.projectionPending ? .loading : model.problem == nil ? .success : .failure,
-                            captions: .saving, size: 24, pops: false)
-                if model.isSaving { HStack { ProgressView(); Text("저장 중 · 현재 작업을 유지하고 있어요") } }
-                else if let problem = model.problem {
-                    HStack(alignment: .top) {
-                        Label(problem, systemImage: "exclamationmark.triangle")
-                            .accessibilityElement(children: .ignore).accessibilityLabel(problem).accessibilityIdentifier("state.error")
-                        Spacer()
+        if model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
+            || model.lastUndo != nil || model.systemProblem != nil || model.cleanupProblem != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
+                    StatusMorph(state: model.isSaving || model.projectionPending ? .loading : model.problem == nil ? .success : .failure,
+                                size: 18, tint: MirrorPalette.accent, pops: false)
+                        .accessibilityHidden(true)
+                    if model.isSaving { Text("저장 중…").font(.callout) }
+                    else if let problem = model.problem {
+                        Text(problem).font(.callout).fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel(problem).accessibilityIdentifier("state.error")
+                    } else if model.projectionPending {
+                        Text("저장 결과를 확인하고 있어요").font(.callout)
+                    } else if let feedback = model.feedback {
+                        Text(feedback).font(.callout).accessibilityIdentifier("state.feedback")
+                    } else { Text(model.storageLabel).font(.caption).foregroundStyle(.secondary) }
+                    Spacer(minLength: 8)
+                    if model.problem != nil || model.projectionPending {
                         Button("다시 확인") { Task { await model.retry() } }.accessibilityIdentifier("state.retry")
                     }
-                } else if let feedback = model.feedback { Text(feedback).accessibilityIdentifier("state.feedback") }
-                if model.projectionPending { Button("저장 결과 다시 확인") { Task { await model.retry() } } }
+                    if model.lastUndo != nil && model.selectedTaskID == nil {
+                        Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo")
+                    }
+                }
+                .buttonStyle(.borderless)
                 if let systemProblem = model.systemProblem { Text(systemProblem).font(.caption).foregroundStyle(.secondary) }
                 if let cleanupProblem = model.cleanupProblem { Text(cleanupProblem).font(.caption).foregroundStyle(.secondary) }
-                if model.lastUndo != nil { Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo") }
-                Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
-            }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(.horizontal, 20).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)
                 .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.bar))
         }
     }
-    private var detailSheet: Binding<MirrorDetailRequest?> {
-        Binding(get: { isCompact && !model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: { if $0 == nil, isCompact, !model.showReview { model.selectedTaskID = nil } })
+    private func inspectorPresentation(width: CGFloat) -> Binding<Bool> {
+        Binding(get: {
+            model.preferences.onboardingComplete && !model.isLoading && !model.showReview
+                && (model.selectedTask != nil || (!calendarInspectorDismissed && showsAdjacentCalendar(width: width, destination: model.destination)))
+        }, set: { shown in
+            guard !shown, !model.showReview else { return }
+            model.selectedTaskID = nil
+            calendarInspectorDismissed = true
+        })
     }
     private var sidebarSelection: Binding<MirrorDestination?> {
-        Binding(get: { model.destination }, set: { if let destination = $0 { model.destination = destination } })
+        Binding(get: { model.destination }, set: { if let destination = $0 { selectDestination(destination) } })
+    }
+    private var destinationSelection: Binding<MirrorDestination> {
+        Binding(get: { model.destination }, set: { selectDestination($0) })
+    }
+    private func selectDestination(_ destination: MirrorDestination) {
+        if destination != model.destination && !model.isDetailEditing { model.selectedTaskID = nil }
+        model.destination = destination
     }
     private var basePicker: Binding<PlanPickerRequest?> {
         Binding(get: { !model.showReview && model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })

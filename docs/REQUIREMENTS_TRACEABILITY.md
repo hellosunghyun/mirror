@@ -1,5 +1,13 @@
 # 미러 요구사항·QA 추적표
 
+## 최신 상태 · 2026-10-01
+
+`d7a3630`의 [Actions 실행 36867363304](https://github.com/hellosunghyun/mirror/actions/runs/36867363304)은 준비 회귀 85개·SwiftPM 159개·Mac 단위 159개/UI 6개·iPhone/iPad 각각 단위 156개/UI 6개를 통과했다. 실패·skip은 0개이며 [동일 실행의 Release](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36867363304)에 iOS IPA와 Developer ID 서명·공증·staple·Gatekeeper를 확인한 macOS DMG가 게시됐다. 이전 인증서 불일치·IPA 미게시 기록은 아래의 과거 증거다.
+
+전체 요구사항 완료를 선언하지 않는다. 현재 코드 공백·설정 막힘·미검증은 [구현 공백](IMPLEMENTATION_GAPS.md)에 구분하며, UI 기능 테스트 통과만으로 시각 품질을 승인하지 않는다. [UI 검토](UI_REVIEW.md)는 실제 앱샷 43장과 기존 6개 UI 흐름을 Actions에서 확인한다. 수정 전 캡처 변경 `728d682`의 준비 회귀 116개는 실제 통과했으며 앱 UI 수정의 전체 결과는 해당 새 실행과 별도 `ui-review` prerelease로 확인한다.
+
+## 이전 검증 기록
+
 `f091e83`의 [별도 Swift 실행 36820276082](https://github.com/hellosunghyun/mirror/actions/runs/36820276082)은 실제 최종 결과에서 SwiftPM 151개, Mac 단위 151개·UI 6개, iPhone/iPad 각각 단위 150개·UI 6개를 통과했다. 각 summary의 실패·skip은 0개이며 세 UI strict guard는 필수 bundle 1개/case 6개와 missingMethods·nonPassedMethods 없음이다. 같은 SHA의 Ad Hoc 사전 검사는 유효한 개인 키 identity 1개와 프로파일 인증서 1개를 확인했으나 일치 수는 0개여서 실패했다. P12 가져오기는 성공했으며 현재 P12와 같은 인증서로 생성한 프로파일 Secret 갱신이 필요하다. IPA·Release는 아직 생성되지 않았다.
 
 같은 `f091e83`의 [Ad Hoc 실행 36820272558](https://github.com/hellosunghyun/mirror/actions/runs/36820272558)은 Mac/iPhone 최종 UI 통과와 iPad 단위 150개 통과를 확인했으나 iPad UI는 20분 제한으로 중단됐다. stdout의 앞 네 사례 통과·내일 검색 시작은 부분 진단이며 최종 UI summary/strict guard 통과가 아니다. 별도 Swift 실행의 성공과 이 배포 게이트 실패를 구분한다. 수정분은 새 실행에서 확인하며 제한이나 assertion을 낮추지 않는다.
@@ -8,7 +16,7 @@
 
 [전체 구현 계획](IMPLEMENTATION_PLAN.md)의 범위와 검증 책임을 추적한다. 원본 [FR/QA 연결](../postpone-app-docs/validation/traceability.json)과 [QA 87개](../postpone-app-docs/validation/qa-cases.json)의 ID·기대 결과를 유지하고 단계·검증 경로를 추가했다. 원본 보고서는 수정하지 않는다.
 
-## 1. 현재 증거와 상태
+## 1. 이전 증거와 상태
 
 최신 커밋 `2da19a9`의 [Ad Hoc 실행 36817569714](https://github.com/hellosunghyun/mirror/actions/runs/36817569714)은 서명 입력 존재·준비 Python 40개·SwiftPM 151개를 통과했다. Mac 단위 151개/UI 6개, iPhone 단위 150개/UI 6개, iPad 단위 150개/UI 6개도 모두 실제 최종 summary에서 통과했다. 세 플랫폼의 UI 실패·skip은 0개이며 strict guard는 각각 bundle 1개/case 6개/missingMethods·nonPassedMethods 없음이다. 여섯 UI 부분 시나리오 통과는 QA 87개 전체나 실기기·시스템 표면 수용 완료를 뜻하지 않는다.
 
