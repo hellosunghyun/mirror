@@ -38,6 +38,9 @@ STAGE_PATTERN = '(?:' + '|'.join(re.escape(stage) for stage in sorted(ALL_STAGES
 # XCTestCase.name의 module/class/method를 ASCII hyphen으로 치환한 명명 규칙이다.
 METHOD_PATTERN = r'([a-z0-9]+(?:-[a-z0-9]+)*)'
 SHOT_PATTERN = re.compile(r'mirror-ui-(' + STAGE_PATTERN + r')-' + METHOD_PATTERN + r'-([0-9]{1,6})')
+# SDK27 export가 추가한 counter·대문자 UUID 형식만 제거한다.
+SDK_UUID_PATTERN = r'[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}'
+SDK_SHOT_PATTERN = re.compile(r'(' + SHOT_PATTERN.pattern + r')_[0-9]{1,6}_' + SDK_UUID_PATTERN)
 PUBLIC_PNG_PATTERN = re.compile(r'mirror-ui-(iphone|ipad|mac)-(' + STAGE_PATTERN + r')-' + METHOD_PATTERN + r'-([0-9]{1,6})\.png')
 SAFE_BASENAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,239}\.png')
 IDENTITY_KEYS = {'commitSHA', 'buildNumber', 'runID', 'runAttempt'}
@@ -159,6 +162,17 @@ def shape_summary(value):
             'truncated': bool(pending)}
 
 
+def canonical_attachment_name(value):
+    require(isinstance(value, str) and len(value) <= 240, 'invalidAttachmentName')
+    name = value[:-4] if value.endswith('.png') else value
+    if SHOT_PATTERN.fullmatch(name):
+        return name
+    # .png가 있는 실제 SDK export만 지원하며 임의 suffix는 승인하지 않는다.
+    match = SDK_SHOT_PATTERN.fullmatch(name) if value.endswith('.png') else None
+    require(match is not None, 'invalidAttachmentName')
+    return match[1]
+
+
 def export_attachments(value):
     # SDK export의 명시적인 test-record 목록만 받는다. 임의 JSON을 재귀 검색하여
     # 그 안의 우연한 name/path 필드를 screenshot으로 승인하지 않는다.
@@ -184,10 +198,9 @@ def export_attachments(value):
             # 동봉한 geometry JSON은 내부 진단이다. 내용을 읽거나 공개하지 않는다.
             if human_name.startswith('mirror-ui-metadata-'):
                 continue
-            name = human_name[:-4] if human_name.endswith('.png') else human_name
-            require(len(name) <= 240 and SHOT_PATTERN.fullmatch(name), 'invalidAttachmentName')
+            name = canonical_attachment_name(human_name)
             if 'name' in attachment and 'suggestedHumanReadableName' in attachment:
-                require(attachment['name'] in (name, name + '.png'), 'invalidAttachmentName')
+                require(attachment['name'] in (name, name + '.png', human_name), 'invalidAttachmentName')
             filename = attachment.get('exportedFileName')
             require(isinstance(filename, str) and SAFE_BASENAME.fullmatch(filename), 'invalidAttachmentPath')
             uti = attachment.get('uniformTypeIdentifier')

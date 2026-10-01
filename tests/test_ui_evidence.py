@@ -22,6 +22,7 @@ SPEC.loader.exec_module(helper)
 PRIVATE = 'SYNTHETIC_PRIVATE_LOG_OR_GEOMETRY'
 IDENTITY = helper.identity('a' * 40, '27', '31415', '1')
 METHOD = 'mirroriosuitests-mirroruitests-testexplicitcompletionandundopreserveeditedtitleandplan'
+SDK_SUFFIX = '_1_12345678-90AB-CDEF-1234-567890ABCDEF.png'
 SCREENSHOT_COUNT = sum(len(helper.required_stages(platform)) for platform in helper.PLATFORMS)
 
 
@@ -203,6 +204,61 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertIn('::notice::UI attachment export 구조:', output)
         self.assertIn('::error::UI attachment export 구조 미확인:', output)
         self.assertFalse((self.root / 'out').exists())
+
+    def test_sdk27_export_suffix_preserves_pixels_and_canonical_names(self):
+        source = self.root / 'sdk27'
+        value = raw_export(source)
+        originals = []
+        for attachment in value[0]['attachments'][:len(helper.STAGES)]:
+            originals.append(attachment['suggestedHumanReadableName'])
+            attachment['suggestedHumanReadableName'] += SDK_SUFFIX
+        rewrite_export(source, value)
+        output = self.root / 'sdk27-prepared'
+        manifest = helper.prepare(source, output, 'iphone', IDENTITY)
+        self.assertEqual({shot['name'] for shot in manifest['screenshots']}, set(originals))
+        for shot in manifest['screenshots']:
+            self.assertNotIn('12345678-90AB-CDEF', shot['file'])
+            original_file = source / ('export-' + shot['name'].rsplit('-', 1)[1] + '.png')
+            self.assertEqual(dict(chunks(original_file.read_bytes()))[b'IDAT'],
+                             dict(chunks((output / shot['file']).read_bytes()))[b'IDAT'])
+
+    def test_sdk_suffix_rejects_unknown_stage_extra_suffix_nonhex_and_unbounded_counter(self):
+        base = 'mirror-ui-initial-today-' + METHOD + '-1'
+        invalid = (base + SDK_SUFFIX.replace('CDEF', 'GHIJ'),
+                   base + SDK_SUFFIX.replace('_1_', '_1234567_'),
+                   base + SDK_SUFFIX.replace('.png', '-extra.png'),
+                   base + SDK_SUFFIX[:-4], base + SDK_SUFFIX + '.png',
+                   base + SDK_SUFFIX.replace('_1_', '_-1_'),
+                   base.replace('initial-today', 'unknown') + SDK_SUFFIX,
+                   base + '/' + SDK_SUFFIX, base + SDK_SUFFIX.lower())
+        for name in invalid:
+            with self.subTest(name=name):
+                self.expect_error('invalidAttachmentName', lambda: helper.canonical_attachment_name(name))
+
+    def test_sdk_dual_name_allows_only_same_raw_or_canonical_name(self):
+        canonical = 'mirror-ui-initial-today-' + METHOD + '-1'
+        for index, alias in enumerate((canonical, canonical + '.png', canonical + SDK_SUFFIX,
+                                       canonical + SDK_SUFFIX.replace('_1_', '_2_'))):
+            source = self.root / ('sdk-alias-' + str(index))
+            value = raw_export(source)
+            value[0]['attachments'][0].update(suggestedHumanReadableName=canonical + SDK_SUFFIX, name=alias)
+            rewrite_export(source, value)
+            output = self.root / ('alias-out-' + str(index))
+            if index == 3:
+                self.expect_error('invalidAttachmentName', lambda: helper.prepare(source, output, 'iphone', IDENTITY))
+            else:
+                manifest = helper.prepare(source, output, 'iphone', IDENTITY)
+                self.assertEqual(len(manifest['screenshots']), len(helper.STAGES))
+
+    def test_distinct_sdk_suffixes_cannot_hide_duplicate_canonical_screenshots(self):
+        source = self.root / 'sdk-duplicate'
+        value = raw_export(source)
+        first, second = value[0]['attachments'][:2]
+        canonical = first['suggestedHumanReadableName']
+        first['suggestedHumanReadableName'] = canonical + SDK_SUFFIX
+        second['suggestedHumanReadableName'] = canonical + SDK_SUFFIX.replace('_1_', '_2_')
+        rewrite_export(source, value)
+        self.expect_error('duplicateScreenshot', lambda: helper.prepare(source, self.root / 'duplicate-out', 'iphone', IDENTITY))
 
     def test_empty_manifest_and_missing_export_fail(self):
         source = self.root / 'empty'

@@ -182,6 +182,10 @@ jobs:
                       normalized = name[:-4] if name.endswith('.png') else name
                       match = helper.SHOT_PATTERN.match(normalized)
                       suffix = normalized[match.end():] if match else ''
+                      suffix_matches = re.fullmatch(r'_[0-9]{1,6}_' + helper.SDK_UUID_PATTERN, suffix) is not None
+                      need(suffix_matches)
+                      canonical = helper.canonical_attachment_name(name)
+                      need(helper.SHOT_PATTERN.fullmatch(canonical) is not None)
                       runs, truncated = suffix_runs(suffix)
                       known_stage = next((stage for stage in sorted(helper.ALL_STAGES, key=len, reverse=True)
                                           if name.startswith('mirror-ui-' + stage + '-')), None)
@@ -194,11 +198,18 @@ jobs:
                                'hasName': 'name' in attachment, 'nameIsString': isinstance(other_name, str),
                                'nameEqualsNormalizedSuggested': other_name == normalized,
                                'nameEqualsNormalizedSuggestedPlusPNG': other_name == normalized + '.png',
-                               'suffixLength': len(suffix), 'suffixRuns': runs, 'suffixRunsTruncated': truncated}
+                               'suffixLength': len(suffix), 'suffixRuns': runs, 'suffixRunsTruncated': truncated,
+                               'sdkCounterAndHexUUIDMatches': suffix_matches, 'canonicalNameValidated': True}
                       print('::notice::UI attachment name shape: ' + json.dumps(shape, sort_keys=True))
               need(count > 0 and samples > 0)
               print('::notice::UI SDK diagnostics: ' + json.dumps({'manualAttachmentCount': count,
                                                                  'safeNameShapeSamples': samples}, sort_keys=True))
+              phase = 'actual PNG normalization and coverage'
+              prepared = helper.prepare(exported, work / 'prepared', 'mac',
+                                        helper.identity(os.environ['BASELINE_SHA'], os.environ['BASELINE_BUILD'],
+                                                        os.environ['BASELINE_RUN_ID'], os.environ['BASELINE_RUN_ATTEMPT']))
+              need(len(prepared['screenshots']) == 14)
+              print('::notice::실제 SDK27 Mac PNG 14개 정규화·내용·필수 화면 검증 통과.')
           except Exception:
               # 예외에 든 비공개 값·경로·URL·토큰을 출력하지 않는다.
               print('::error::UI SDK 진단 실패 (' + phase + ').')

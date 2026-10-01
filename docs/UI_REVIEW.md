@@ -19,7 +19,7 @@
 
 테스트와 앱 빌드는 GitHub Actions에서만 실행한다. [수정 전 화면 실행](https://github.com/hellosunghyun/mirror/actions/runs/36881520763)은 UI 캡처 변경 `728d682`를 사용하며 앱 화면 소스는 이전 배포와 같다. Mac·iPhone은 각각 실제 UI 6개와 guard를 통과했으나 SDK export 이름의 파싱에서 실패했다. iPad는 완료한 두 사례 통과 뒤 UI 20분 제한으로 중단되어 전체 UI 결과·필수 앱샷 완료를 확보하지 못했다. 수정 전 전체 시각 검증 통과로 기록하지 않는다.
 
-[UI 수정본 실행](https://github.com/hellosunghyun/mirror/actions/runs/36883100875)의 Mac·iPhone은 실제 단위 및 UI 6개·guard를 통과했다. Mac의 새 버튼 크기·미저장 편집 회귀도 포함한다. 앱샷 게시의 SDK 이름 문제는 별도로 확인한다. 후속 변경은 실제 PNG와 모든 기능 assertions·실행 제한을 유지하고, 캡처마다 반복하던 추가 접근성 진단 조회를 없애 viewport만 기록한다. 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
+[UI 수정본 실행](https://github.com/hellosunghyun/mirror/actions/runs/36883100875)의 Mac·iPhone은 실제 단위 및 UI 6개·guard를 통과했다. Mac의 새 버튼 크기·미저장 편집 회귀도 포함한다. iPad는 Simulator의 테스트 runner를 실행하지 못해 UI 여섯 사례가 실행되지 않았다. 이 결과를 제품 UI assertion 실패나 통과로 기록하지 않는다. 앱샷 게시의 SDK 이름 문제는 별도로 확인한다. 후속 변경은 실제 PNG와 모든 기능 assertions·실행 제한을 유지하고, 캡처마다 반복하던 추가 접근성 진단 조회를 없애 viewport만 기록한다. 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
 |---|---|
