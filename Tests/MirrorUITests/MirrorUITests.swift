@@ -267,7 +267,8 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func requireNoElement(_ identifier: String, in app: XCUIApplication) throws {
-        let found = element(identifier, in: app)
+        // 닫히는 UI의 부재는 exists만 검사한다. 사라지는 버튼의 activation point를 조회하지 않는다.
+        let found = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: found)
         guard XCTWaiter.wait(for: [gone], timeout: 15) == .completed else {
             printFailurePrefix("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
@@ -311,7 +312,8 @@ final class MirrorUITests: XCTestCase {
         let identifier = element.identifier
         // 38d7849 iPhone 실제 AX: 행 중심 y=434, 목록 하단 y=403인데 hittable=true였다.
         // 작업 행은 소유 목록의 표시 영역 안으로 실제 스크롤한 뒤 일반 tap을 수행한다.
-        let rowSurface = identifier.hasPrefix("task.row.") ? scrollContainer(containing: element, in: app) : nil
+        let rowSurface = identifier.hasPrefix("task.row.")
+            ? scrollContainer(containing: element, in: app, requiringHittable: false) : nil
         if identifier.hasPrefix("task.row."), rowSurface == nil {
             printFailurePrefix("작업 행을 포함하는 스크롤 컨테이너가 없다")
             XCTFail("작업 행을 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
@@ -351,13 +353,32 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func scrollContainer(containing element: XCUIElement, in app: XCUIApplication) -> XCUIElement? {
+    private func scrollContainer(containing element: XCUIElement, in app: XCUIApplication,
+                                 requiringHittable: Bool = true) -> XCUIElement? {
         let surfaces = app.scrollViews.allElementsBoundByIndex
             + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
         let identifier = element.identifier
-        return surfaces.first { candidate in
-            candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+        if requiringHittable {
+            return surfaces.first { candidate in
+                candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+            }
         }
+        // List의 AX 컨테이너와 탭할 행은 다르다. 행의 hittable/enabled는 interact에서 계속 검사한다.
+        let windowFrames = app.windows.allElementsBoundByIndex.map { $0.frame }
+        var probes: [String] = []
+        for candidate in surfaces {
+            let frame = candidate.frame
+            let containsTarget = candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+            let visible = !frame.isEmpty && windowFrames.contains { $0.intersects(frame) }
+            let probe = "id=\(candidate.identifier), type=\(candidate.elementType.rawValue), frame=\(frame), containsTarget=\(containsTarget), inWindow=\(visible)"
+            probes.append(probe)
+            if containsTarget && visible {
+                print("UI row scroll owner: \(probe)")
+                return candidate
+            }
+        }
+        printFailurePrefix("작업 행 스크롤 컨테이너 후보: \(probes.joined(separator: "; "))")
+        return nil
     }
 
     @MainActor
