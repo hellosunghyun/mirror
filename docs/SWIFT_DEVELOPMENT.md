@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 공통 명령·실제 SQLite·시스템 계약과 Mac의 여섯 UI 시나리오가 Actions에서 통과했으며 모바일 UI의 종료 오류를 수정·검증하고 있다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 공통 명령·실제 SQLite·시스템 계약과 Mac의 여섯 UI 시나리오가 Actions에서 통과했으며 모바일의 화면 전환·입력·UI 집계 실패를 수정·검증하고 있다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -104,19 +104,36 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 그 실행의 iPhone·iPad IPS는 Mirror의 thread 0 `EXC_CRASH`/`SIGABRT`와 `NSException`/UIKitCore 경로, 36개 또는 42개 프레임의 `lastExceptionBacktrace`를 보고했다. 예외 세부 notice가 4,096바이트에서 잘려 사유가 확보되지 않았으므로 그 기록만으로 UI 원인을 특정하지 않는다. 후속 CI helper는 짧은 notice·safe `crash-summary.json`·현재 Simulator 예외 사유 수집을 추가했다. 같은 커밋의 [준비 검사 36785947353](https://github.com/hellosunghyun/mirror/actions/runs/36785947353)은 통과했다.
 
-최신 검증 커밋 `4ef52f969059ff15c693b635bfd1596d69b42e25`의 [Actions 36791089147](https://github.com/hellosunghyun/mirror/actions/runs/36791089147)은 SwiftPM과 Mac job이 성공했다. 세 native 플랫폼의 앱·두 확장 빌드와 필수 세 unit/integration bundle, 개인정보/라이선스/URL 및 실제 App Intents actions 16개 구성 검사가 통과했다. Mac은 선언된 여섯 UI 메서드가 모두 실제 실행돼 통과했고 필수 baseline/추가 선언 메서드 실행 guard도 통과했다. iPhone UI는 여섯 메서드가 모두 실패했다. iPad UI는 앱 종료·연결 끊김을 기록한 뒤 15분 단계 제한으로 중단돼 최종 xcresult 집계를 완료하지 못했다. 모바일 UI 실패로 전체 실행은 실패다.
+이전 검증 커밋 `4ef52f969059ff15c693b635bfd1596d69b42e25`의 [Actions 36791089147](https://github.com/hellosunghyun/mirror/actions/runs/36791089147)은 SwiftPM과 Mac job이 성공했다. 세 native 플랫폼의 앱·두 확장 빌드와 필수 세 unit/integration bundle, 개인정보/라이선스/URL 및 실제 App Intents actions 16개 구성 검사가 통과했다. Mac은 선언된 여섯 UI 메서드가 모두 실제 실행돼 통과했고 필수 baseline/추가 선언 메서드 실행 guard도 통과했다. iPhone UI는 여섯 메서드가 모두 실패했다. iPad UI는 앱 종료·연결 끊김을 기록한 뒤 15분 단계 제한으로 중단돼 최종 xcresult 집계를 완료하지 못했다. 모바일 UI 실패로 전체 실행은 실패다.
 
-| 경로 | 현재 단위·통합 결과 | 현재 UI 결과 |
+| 경로 | 해당 커밋의 단위·통합 결과 | 해당 커밋의 UI 결과 |
 |---|---|---|
 | SwiftPM | Domain 94 + Data 24 + System 33 = 151개 통과, 실패·skip 0개 | 해당 없음 |
 | macOS | Domain 94 + Data 24 + System 33 = 151개 통과, 실패·skip 0개 | 6개 통과, 실패·skip 0개 |
 | iPhone Simulator | Domain 94 + Data 23 + System 33 = 150개 통과, 실패·skip 0개 | 0개 통과, 6개 실패, skip 0개 |
 | iPad Simulator | unit/integration/구성 검사 단계 성공, 실제 tree에 Domain 94 + Data 23 + System 33 = 150개 | 6개 시작·5개 failed 종료·긴 제목 검사 crash 로그, 15분 중단으로 최종 집계 미완료 |
 
-새 분할 진단의 IPS에는 예외 사유가 없지만 같은 실행의 현재 Simulator 로그는 양쪽 모두 `NSInvalidArgumentException`과 `Replacement elements contain duplicates`를 보고했다. 사유는 같은 Command 수정키와 입력의 keyboard shortcut 중복이다. 실제 backtrace의 `UIMenuBuilder.perform(instruction:)` → `UIKitMainMenuController.buildMenu(with:)` → `AppDelegate.buildMenu(with:)`와 메뉴 재구축/`_keyCommands` 경로도 확인됐다. Mac 명령 등록의 iOS 실행 경로를 수정하는 근거이며 후속 소스 변경의 해결 여부는 다음 Actions에서 확인해야 한다. iPad의 다섯 `Test Case failed`와 나머지 긴 제목 검사 crash 로그를 xcresult의 확정된 6개 실패나 skip 0개로 바꾸지 않는다.
+그 실행의 분할 IPS 진단에는 예외 사유가 없지만 같은 실행의 현재 Simulator 로그는 양쪽 모두 `NSInvalidArgumentException`과 `Replacement elements contain duplicates`를 보고했다. 사유는 같은 Command 수정키와 입력의 keyboard shortcut 중복이다. 실제 backtrace의 `UIMenuBuilder.perform(instruction:)` → `UIKitMainMenuController.buildMenu(with:)` → `AppDelegate.buildMenu(with:)`와 메뉴 재구축/`_keyCommands` 경로도 확인됐다. Mac 명령 등록의 iOS 실행 경로를 수정하는 근거다. 그때의 iPad 다섯 `Test Case failed`와 나머지 긴 제목 검사 crash 로그를 xcresult의 확정된 6개 실패나 skip 0개로 바꾸지 않는다.
 
 같은 커밋의 [준비 검사 36791084443](https://github.com/hellosunghyun/mirror/actions/runs/36791084443)은 원본 무결성 검사와 Python 40개 검사(기존 9개 + profile 12개 + publisher 19개)가 통과했다. 이 Python 검사는 서명 입력/프로파일과 게시 로직의 검증이며 실제 GitHub API 게시나 서명된 IPA 성공을 뜻하지 않는다. 여섯 UI 시나리오의 원본 QA 부분 범위와 남은 조건은 [추적표](REQUIREMENTS_TRACEABILITY.md#1-현재-증거와-상태)에 보존한다.
+
+최신 검증 커밋 `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)은 Mac 명령 등록을 macOS로 제한한 뒤의 실제 결과다. SwiftPM과 Mac job은 성공했고, iPhone·iPad는 앱·두 확장 빌드, 필수 세 unit/integration bundle 및 구성 검사 단계가 성공했지만 UI 단계가 각각 15분 제한으로 중단돼 전체 실행은 실패했다. 세 native 플랫폼 모두 실제 App Intents actions 16개를 확인했다.
+
+| 경로 | 실제 단위·통합 결과 | 실제 UI 결과 |
+|---|---|---|
+| SwiftPM | Domain 94 + Data 24 + System 33 = 151개 완료 보고 통과 | 해당 없음 |
+| macOS | 151개 통과, 실패·skip 0개 | 6개 통과, 실패·skip 0개; bundle 1개/case 6개, missingMethods·nonPassedMethods 없음 |
+| iPhone Simulator | unit/integration/구성 단계 성공; Domain 94 + Data 23 + System 33 = 150개 완료 보고 통과 | stdout의 여섯 메서드 모두 failed; 15분 중단으로 최종 summary/tree/실행 guard 미확보 |
+| iPad Simulator | unit/integration/구성 단계 성공; Domain 94 + Data 23 + System 33 = 150개 완료 보고 통과 | stdout에서 긴 제목·내일 검색·주 패널 취소/부분 종료 3개 passed, 나머지 3개 failed; 15분 중단으로 최종 summary/tree/실행 guard 미확보 |
+
+Mac의 실제 UI tree는 여섯 선언 메서드를 모두 `Passed`로 보고했고 strict guard의 `actualCaseCount`는 6이며 누락·비통과 메서드는 없었다. 이 시나리오에는 Mac 키보드 명령 조작이 없으므로 Q-078 완료 근거로 확장하지 않는다. 모바일의 stdout 통과/실패 기록은 최종 xcresult 집계나 skip 0개, strict guard 통과를 대신하지 않는다.
+
+최신 모바일 진단은 현재 Mirror IPS 0개·읽기 실패 0개를 보고했고, 이전 중복 단축키 예외는 해당 로그에서 관측되지 않았다. 앱 전체 안정성이나 UI 해결을 뜻하지 않는다. 실제 남은 오류는 시작 시 `today.list` 부재, `capture.save` 실제 입력 뒤 `capture.title`에 원문이 남고 disabled 상태가 지속된 입력 초기화 실패, iPhone `capture.save`의 invalid activation point 및 `library.search` 부재, iPad 정리 카드 `review.card` 미닫힘이다. 다음 수정은 이 관측을 기준으로 검증한다.
+
+같은 커밋의 [준비 검사 36793734834](https://github.com/hellosunghyun/mirror/actions/runs/36793734834)은 원본 무결성과 Python 40개 검사를 통과했다. 이는 실제 IPA 서명·GitHub API 게시 결과가 아니다. [추적표](REQUIREMENTS_TRACEABILITY.md#1-현재-증거와-상태)는 최신 메서드별 부분 결과와 QA의 미검증 조건을 유지한다.
 
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 단위 단계 20분·UI 15분 제한과 실패 로그 진단은 중단 원인을 드러내며 성공 판정을 대신하지 않는다.
 
 실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다. 개발용 AppIcon과 unsigned CI packaging 결과도 Apple 등록·배포 준비 완료를 뜻하지 않는다.
+
+후속 수정은 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리는 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone의 상태 패널은 탭 내용 안에 배치하고 입력 화면 저장 버튼은 스크롤 본문 아래 고정 영역에 둔다. UI 테스트는 정리 종료 화면이 실제 닫힐 때까지 기다리며 기존 여섯 시나리오의 원본·계획·Undo assertions를 유지한다. 이 변경의 성공은 다음 Actions 결과로 확인한다.

@@ -24,12 +24,16 @@ struct MirrorRootView: View {
         Group {
             if model.isLoading {
                 ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("startup.loading")
             } else if !model.preferences.onboardingComplete {
-                MirrorOnboardingView()
+                MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
             } else if isCompact {
                 TabView(selection: $model.destination) {
                     ForEach(MirrorDestination.allCases) { destination in
-                        NavigationStack { content(destination).toolbar { commonToolbar } }
+                        NavigationStack {
+                            content(destination).toolbar { commonToolbar }
+                                .safeAreaInset(edge: .bottom) { statusBar }
+                        }
                             .tabItem { Label(destination.title, systemImage: destination.symbol) }
                             .tag(destination)
                             .accessibilityIdentifier("destination.\(destination.rawValue)")
@@ -55,12 +59,15 @@ struct MirrorRootView: View {
                         .navigationSplitViewColumnWidth(min: 280, ideal: 420)
                 } detail: {
                     if let task = model.selectedTask { MirrorTaskDetail(task: task) }
-                    else { ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요.")) }
+                    else {
+                        ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요."))
+                            .accessibilityIdentifier("detail.empty")
+                    }
                 }
             }
         }
         .tint(MirrorPalette.accent)
-        .safeAreaInset(edge: .bottom) { statusBar }
+        .safeAreaInset(edge: .bottom) { if !isCompact { statusBar } }
         .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
         .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
         .sheet(isPresented: $model.showReview) { MirrorReviewView() }

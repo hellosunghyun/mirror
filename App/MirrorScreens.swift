@@ -96,36 +96,33 @@ struct MirrorCaptureView: View {
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Text("일단 넣고, 나중에 정하세요").font(.headline)
-                    TextField("할 일 제목", text: $title, axis: .vertical)
-                        .lineLimit(1...8).focused($focusedField, equals: .title)
-                        .disabled(model.isSaving || model.projectionPending)
-                        .accessibilityIdentifier("capture.title")
-                    Text("\(title.count)/500자 · 입력은 자동으로 잘리지 않아요").font(.caption).foregroundStyle(title.count > 500 ? .red : .secondary)
-                }
-                DisclosureGroup("메모와 원문 링크", isExpanded: $more) {
-                    TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
-                    TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
-                    Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption)
-                }
-                if lines.count > 1 {
-                    Section("여러 줄 입력") {
-                        Text("자동으로 여러 작업을 만들지 않아요. 저장 방식을 고르세요.")
-                        Button("한 개로 저장") { save() }.disabled(model.isSaving || model.projectionPending)
-                        Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }.disabled(model.isSaving || model.projectionPending)
+            VStack(spacing: 0) {
+                Form {
+                    Section {
+                        Text("일단 넣고, 나중에 정하세요").font(.headline)
+                        TextField("할 일 제목", text: $title, axis: .vertical)
+                            .lineLimit(1...8).focused($focusedField, equals: .title)
+                            .disabled(model.isSaving || model.projectionPending)
+                            .accessibilityIdentifier("capture.title")
+                        Text("\(title.count)/500자 · 입력은 자동으로 잘리지 않아요").font(.caption).foregroundStyle(title.count > 500 ? .red : .secondary)
+                    }
+                    DisclosureGroup("메모와 원문 링크", isExpanded: $more) {
+                        TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
+                        TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
+                        Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption)
+                    }
+                    if lines.count > 1 {
+                        Section("여러 줄 입력") {
+                            Text("자동으로 여러 작업을 만들지 않아요. 저장 방식을 고르세요.")
+                            Button("한 개로 저장") { save() }.disabled(model.isSaving || model.projectionPending)
+                            Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }.disabled(model.isSaving || model.projectionPending)
+                        }
+                    }
+                    if let problem = model.problem {
+                        Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
                     }
                 }
-                if let problem = model.problem {
-                    Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
-                }
-                Section {
-                    Button(model.isSaving ? "저장 중…" : "보관함에 넣기") { save() }
-                        .disabled(model.isSaving || model.projectionPending)
-                        .accessibilityIdentifier("capture.save")
-                    if model.projectionPending { Button("저장 결과 다시 확인") { Task { await model.retry() } } }
-                }
+                captureActions
             }
             .navigationTitle("일단 넣기")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.accessibilityIdentifier("capture.close") } }
@@ -168,6 +165,18 @@ struct MirrorCaptureView: View {
                 }
             }
         }.frame(minWidth: 300, idealWidth: 480, minHeight: 340)
+    }
+    private var captureActions: some View {
+        VStack(spacing: 8) {
+            Button(model.isSaving ? "저장 중…" : "보관함에 넣기") { save() }
+                .buttonStyle(.borderedProminent).frame(minHeight: 44)
+                .disabled(model.isSaving || model.projectionPending)
+                .accessibilityIdentifier("capture.save")
+            if model.projectionPending {
+                Button("저장 결과 다시 확인") { Task { await model.retry() } }
+                    .frame(minHeight: 44)
+            }
+        }.padding(12).frame(maxWidth: .infinity).background(.bar)
     }
     private func save() {
         startCaptureFlow()

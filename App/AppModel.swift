@@ -119,6 +119,8 @@ final class AppModel {
     @ObservationIgnored private var cloudObservationID = UUID()
     @ObservationIgnored private var canonicalObservation: Task<Void, Never>?
     @ObservationIgnored private var canonicalRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var systemReconciliationTask: Task<Void, Never>?
+    @ObservationIgnored private var systemReconciliationPending = false
     @ObservationIgnored private var storeObservationID = UUID()
     @ObservationIgnored private var canonicalChangePending = false
     @ObservationIgnored private var canonicalStreamEnded = false
@@ -142,6 +144,7 @@ final class AppModel {
         cloudStatusObservation?.cancel()
         canonicalObservation?.cancel()
         canonicalRefreshTask?.cancel()
+        systemReconciliationTask?.cancel()
     }
 
     var selectedTask: TaskProjection? { tasks.first { $0.taskID == selectedTaskID } }
@@ -278,7 +281,7 @@ final class AppModel {
             context = next
             selectedTaskIDs.formIntersection(Set(tasks.filter { $0.status == .open }.map(\.taskID)))
             if retryEnvelope == nil { projectionPending = false }
-            await reconcileSystemServices()
+            requestSystemReconciliation()
             return true
         } catch {
             guard storeObservationID == identity else { return false }
@@ -310,6 +313,8 @@ final class AppModel {
     private func stopCanonicalObservation() {
         canonicalObservation?.cancel(); canonicalObservation = nil
         canonicalRefreshTask?.cancel(); canonicalRefreshTask = nil
+        systemReconciliationTask?.cancel(); systemReconciliationTask = nil
+        systemReconciliationPending = false
         storeObservationID = UUID()
         canonicalChangePending = false; canonicalStreamEnded = false
     }
@@ -348,7 +353,7 @@ final class AppModel {
 
     func savePreferences() {
         if let bytes = try? JSONEncoder().encode(preferences) { defaults.set(bytes, forKey: preferenceKey) }
-        Task { await reconcileSystemServices() }
+        requestSystemReconciliation()
     }
     func finishOnboarding() { preferences.onboardingComplete = true; savePreferences(); showCapture = true }
 
@@ -900,9 +905,25 @@ final class AppModel {
             }
         } catch { problem = "이 공간의 작업을 찾을 수 없거나 링크가 오래되었어요. 데이터는 바뀌지 않았어요." }
     }
-    private func reconcileSystemServices() async {
-        guard let services, let context else { return }
+    private func requestSystemReconciliation() {
+        guard services != nil, context != nil else { return }
+        systemReconciliationPending = true
+        guard systemReconciliationTask == nil else { return }
         let identity = storeObservationID
+        // OS 후처리는 저장된 화면과 명령의 성공 응답을 기다리게 하지 않는다.
+        // 실행 중 들어온 여러 요청은 다음 한 번의 최신 설정 갱신으로 합친다.
+        systemReconciliationTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.storeObservationID == identity, self.systemReconciliationPending {
+                self.systemReconciliationPending = false
+                await self.reconcileSystemServices(identity: identity)
+            }
+            guard self.storeObservationID == identity else { return }
+            self.systemReconciliationTask = nil
+        }
+    }
+    private func reconcileSystemServices(identity: UUID) async {
+        guard !Task.isCancelled, storeObservationID == identity, let services, let context else { return }
         do {
             let reviewPreference = ReviewNotificationPreference(enabled: preferences.reviewNotifications,
                                                                  hour: preferences.reviewHour, minute: preferences.reviewMinute,
@@ -914,13 +935,14 @@ final class AppModel {
                                                       selectedCalendarIDs: preferences.selectedCalendars,
                                                       reviewNotification: reviewPreference, deadlineNotifications: deadlinePreferences)
             try await services.savePreferences(systemPreferences)
+            guard !Task.isCancelled, storeObservationID == identity else { return }
             let report = await services.reconcileExternalSurfaces(at: now)
-            guard storeObservationID == identity else { return }
+            guard !Task.isCancelled, storeObservationID == identity else { return }
             notificationOmittedCount = report.omittedNotificationCount
             WidgetReload.request()
             systemProblem = report.safeUserMessage
         } catch {
-            guard storeObservationID == identity else { return }
+            guard !Task.isCancelled, storeObservationID == identity else { return }
             systemProblem = "할 일은 저장되어 있어요. 알림 또는 시스템 검색 갱신을 다시 확인해 주세요."
         }
     }

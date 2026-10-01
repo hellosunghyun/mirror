@@ -25,6 +25,7 @@ final class MirrorUITests: XCTestCase {
         try activate("review.today", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
+        try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
 
         let today = try requireRow(title, in: app)
@@ -42,6 +43,7 @@ final class MirrorUITests: XCTestCase {
         try activate("review.tomorrow", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
+        try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
         XCTAssertFalse(taskRow(title, in: app).exists)
 
@@ -99,6 +101,7 @@ final class MirrorUITests: XCTestCase {
         try activate("plan.cancel", in: app)
         try waitForLabel(remainingTitle, element: requireElement("review.card", in: app))
         try activate("review.finish", in: app)
+        try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
 
         _ = try requireRow(decidedTitle, in: app)
@@ -120,6 +123,7 @@ final class MirrorUITests: XCTestCase {
         try activate("review.today", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
+        try requireNoElement("review.finish", in: app)
         try interact(with: requireRow(original, in: app), in: app)
 
         try activate("detail.edit", in: app)
@@ -154,6 +158,7 @@ final class MirrorUITests: XCTestCase {
         try activate("task.undo", in: app)
         try waitForLabel(title, element: requireElement("review.card", in: app))
         try activate("review.finish", in: app)
+        try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
         XCTAssertFalse(taskRow(title, in: app).exists)
         try showLibrary(in: app)
@@ -283,6 +288,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func interact(with element: XCUIElement, in app: XCUIApplication,
                           file: StaticString = #filePath, line: UInt = #line) throws {
+        lastActionDescription = describe(element)
         // 원본 저장·projection 갱신 직후에는 action의 enabled/hittable 반영도 기다린다.
         // 숨은 요소를 좌표로 누르거나 disabled 행동을 통과시키지 않는다.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true AND enabled == true"), object: element)
@@ -384,7 +390,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func describe(_ element: XCUIElement) -> String {
         guard element.exists else { return "exists=false" }
-        return "id=\(element.identifier), type=\(element.elementType.rawValue), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), hittable=\(element.isHittable), frame=\(element.frame)"
+        return "id=\(element.identifier), type=\(element.elementType.rawValue), label=\(element.label.prefix(90)), value=\(value(of: element).prefix(90)), enabled=\(element.isEnabled), hittable=\(element.isHittable), selected=\(element.isSelected), frame=\(element.frame)"
     }
 
     @MainActor
@@ -394,7 +400,7 @@ final class MirrorUITests: XCTestCase {
             return "appState=\(state.rawValue), 앱 프로세스 종료: hierarchy 조회를 수행하지 않음"
         }
         // UI 테스트는 이 launch에서 직접 입력한 dummy만 사용한다. 앱 데이터나 로그 파일은 읽지 않는다.
-        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state."]
+        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state.", "startup.", "onboarding."]
         let appIDPredicate = NSCompoundPredicate(orPredicateWithSubpredicates: prefixes.map {
             NSPredicate(format: "identifier BEGINSWITH %@", $0)
         })
@@ -429,7 +435,10 @@ final class MirrorUITests: XCTestCase {
         append(nodes, limit: 5)
         let windowFrames = app.windows.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
         let sheetFrames = app.sheets.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], lastAction={\(lastActionDescription)}; "
+        let tabs = app.tabBars.buttons.allElementsBoundByIndex.prefix(3).map {
+            "\($0.label.prefix(30)): selected=\($0.isSelected), frame=\($0.frame)"
+        }.joined(separator: ", ")
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
         return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }
