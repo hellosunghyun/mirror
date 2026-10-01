@@ -49,9 +49,18 @@ final class MirrorUITests: XCTestCase {
         _ = try requireElement("today.list", in: app)
         XCTAssertFalse(taskRow(title, in: app).exists)
 
+        #if os(macOS)
+        lastActionDescription = "Mac Cmd+F로 보관함 검색"
+        app.typeKey("f", modifierFlags: .command)
+        let search = try requireElement("library.search", in: app)
+        app.typeText("tomorrow is searchable")
+        try waitForValue("tomorrow is searchable", element: search)
+        XCTAssertEqual(value(of: search), "tomorrow is searchable", "Cmd+F는 검색 입력란으로 포커스를 옮긴다.")
+        #else
         try showLibrary(in: app)
         let search = try requireElement("library.search", in: app)
         try replaceText(in: search, with: "tomorrow is searchable", app: app)
+        #endif
         let future = try requireRow(title, in: app)
         XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
         XCTAssertTrue(value(of: future).contains("미완료"))

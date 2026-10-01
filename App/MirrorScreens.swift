@@ -27,7 +27,7 @@ struct MirrorTodayView: View {
                         Label("오늘에 남긴 일이 없어요", systemImage: "sun.max")
                     } description: {
                         Text(model.pendingTasks.isEmpty ? "직접 날짜를 정한 일만 여기에 보여요." : "정하지 않은 일은 보관함에 있어요.")
-                    } actions: { Button("일단 넣기") { model.showCapture = true } }
+                    } actions: { Button("일단 넣기") { model.openCapture() } }
                 }
                 ForEach(model.todayTasks, id: \.taskID) { MirrorTaskRow(task: $0) }
             }
@@ -137,11 +137,15 @@ struct MirrorCaptureView: View {
             .onDisappear { model.isTextEditing = false }
             .onChange(of: model.lastCaptureCommittedToken) { _, token in
                 guard token == requestToken else { return }
-                if pendingSingle { title = ""; note = ""; sourceURL = ""; pendingSingle = false; requestToken = UUID().uuidString; captureFlowStarted = false }
-                else if let pendingLine {
+                if pendingSingle {
+                    title = ""; note = ""; sourceURL = ""; pendingSingle = false
+                    requestToken = UUID().uuidString; captureFlowStarted = false
+                    finishSavedCapture()
+                } else if let pendingLine {
                     var remaining = title.components(separatedBy: .newlines)
                     if remaining.first == pendingLine { remaining.removeFirst(); title = remaining.joined(separator: "\n") }
                     self.pendingLine = nil; requestToken = UUID().uuidString
+                    if remaining.isEmpty { finishSavedCapture() }
                 }
             }
             .sheet(isPresented: $splitPreview) {
@@ -162,7 +166,8 @@ struct MirrorCaptureView: View {
                                 }
                                 title = remaining.joined(separator: "\n")
                                 splitPreview = false
-                                focusedField = .title
+                                if remaining.isEmpty { finishSavedCapture() }
+                                else { focusedField = .title }
                             }
                         }.disabled(model.isSaving || model.projectionPending)
                     }.navigationTitle("줄마다 나누기")
@@ -188,11 +193,19 @@ struct MirrorCaptureView: View {
         Task {
             requestToken = UUID().uuidString
             if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken) {
-                title = ""; note = ""; sourceURL = ""; focusedField = .title
+                title = ""; note = ""; sourceURL = ""
                 requestToken = UUID().uuidString
                 captureFlowStarted = false
+                finishSavedCapture()
             } else if model.projectionPending { pendingSingle = true }
         }
+    }
+    private func finishSavedCapture() {
+        // 원본 저장과 projection 갱신을 확인한 성공 경로에서만 단일 입력을 닫는다.
+        let single = model.captureIsSingle
+        focusedField = single ? nil : .title
+        model.finishCapture()
+        if single { dismiss() }
     }
     private func startCaptureFlow() {
         guard !captureFlowStarted else { return }
@@ -278,7 +291,7 @@ struct MirrorLibraryView: View {
         }
         .navigationTitle("보관함")
         .accessibilityIdentifier("library.list")
-        .onChange(of: model.searchRequested) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
+        .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
         .onChange(of: searchFocused) { _, focused in model.isTextEditing = focused }
         .onDisappear { model.isTextEditing = false }
     }

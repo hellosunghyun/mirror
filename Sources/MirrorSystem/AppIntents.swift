@@ -36,6 +36,9 @@ public struct MirrorTaskQuery: EntityStringQuery {
             .map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
     }
     public func entities(matching string: String) async throws -> [MirrorTaskEntity] {
+        try await entities(matching: string, status: nil)
+    }
+    func entities(matching string: String, status: MirrorTaskStatusFilter?) async throws -> [MirrorTaskEntity] {
         guard !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, string.count <= 500 else { return [] }
         let services = try await SystemCompositionRoot.open()
         let preferences = try await services.preferences()
@@ -44,10 +47,8 @@ public struct MirrorTaskQuery: EntityStringQuery {
         if identifier == nil, (!preferences.spotlightEnabled || preferences.hideExternalTitles) {
             throw SystemServiceError.externalSearchDisabled
         }
-        return try await services.tasks().filter { task in
-            task.status != .deleted && task.isProjectionComplete &&
-                (identifier.map { $0 == task.taskID } ?? task.title.localizedStandardContains(string))
-        }.prefix(50).map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
+        return MirrorTaskSearchPolicy.matches(try await services.tasks(), query: string, status: status)
+            .map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
     }
     public func suggestedEntities() async throws -> [MirrorTaskEntity] {
         let services = try await SystemCompositionRoot.open()
@@ -101,6 +102,19 @@ public enum MirrorTaskStatusFilter: String, AppEnum {
     public static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [.open: "미완료", .completed: "완료"]
 }
 
+/// 검색과 상태 조건을 모두 적용한 결과에서만 외부 응답의 개수 제한을 적용한다.
+enum MirrorTaskSearchPolicy {
+    static func matches(_ tasks: [TaskProjection], query: String?, status: MirrorTaskStatusFilter?) -> [TaskProjection] {
+        let identifier = query.flatMap { UUID(uuidString: $0) }
+        return Array(tasks.lazy.filter { task in
+            guard task.status != .deleted, task.isProjectionComplete else { return false }
+            if let status, task.status != (status == .completed ? .completed : .open) { return false }
+            guard let query else { return true }
+            return identifier.map { $0 == task.taskID } ?? task.title.localizedStandardContains(query)
+        }.prefix(50))
+    }
+}
+
 public struct FindTasksIntent: AppIntent {
     public static let title: LocalizedStringResource = "할 일 찾기"
     public static let authenticationPolicy: IntentAuthenticationPolicy = .requiresAuthentication
@@ -112,15 +126,13 @@ public struct FindTasksIntent: AppIntent {
         let text = query?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text?.isEmpty == false || status != nil else { throw SystemServiceError.invalidInput }
         let matches: [MirrorTaskEntity]
-        if let text, !text.isEmpty { matches = try await MirrorTaskQuery().entities(matching: text) }
+        if let text, !text.isEmpty { matches = try await MirrorTaskQuery().entities(matching: text, status: status) }
         else {
             let services = try await SystemCompositionRoot.open(), preferences = try await services.preferences()
-            matches = try await services.tasks().filter { $0.status != .deleted && $0.isProjectionComplete }
+            matches = MirrorTaskSearchPolicy.matches(try await services.tasks(), query: nil, status: status)
                 .map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
         }
-        return .result(value: Array(matches.filter { entity in
-            status.map { entity.completed == ($0 == .completed) } ?? true
-        }.prefix(50)))
+        return .result(value: matches)
     }
 }
 

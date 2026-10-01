@@ -52,6 +52,50 @@ private func harness(twoTasks: Bool = true) async throws -> WidgetHarness {
 
 @Suite("시스템 경계와 실제 SQLite 위젯 명령")
 struct SystemContractTests {
+    private func searchTask(title: String, status: TaskStatus, complete: Bool = true) throws -> TaskProjection {
+        TaskProjection(taskID: UUID(), workspaceKey: "personal-v1", workspaceEpoch: "local-v1",
+                       content: try TaskContent(title: title), plan: .init(target: .unassigned),
+                       lifecycle: .init(status: status, completedAt: status == .completed ? fixedInstant : nil,
+                                        deletedAt: status == .deleted ? fixedInstant : nil),
+                       deadline: nil, createdAt: fixedInstant, versions: [:], isProjectionComplete: complete)
+    }
+
+    @Test("제목 검색의 첫 50개가 다른 상태여도 뒤의 일치 상태를 찾고 결과만 50개로 제한한다")
+    func searchFiltersStatusBeforeLimit() throws {
+        for status in [MirrorTaskStatusFilter.open, .completed] {
+            let desired: TaskStatus = status == .completed ? .completed : .open
+            let other: TaskStatus = desired == .open ? .completed : .open
+            let leading = try (0..<60).map { try searchTask(title: "검색 대상 \($0)", status: other) }
+            let matching = try (0..<55).map { try searchTask(title: "검색 대상 뒤 \($0)", status: desired) }
+            let result = MirrorTaskSearchPolicy.matches(leading + matching, query: "검색 대상", status: status)
+            #expect(result.count == 50)
+            #expect(result.map(\.taskID) == matching.prefix(50).map(\.taskID))
+        }
+    }
+
+    @Test("제목과 명시 ID 검색은 삭제·불완전 작업을 제외하고 상태 조건을 함께 적용한다")
+    func searchKeepsIDAndEligibility() throws {
+        let open = try searchTask(title: "검색 대상 미완료", status: .open)
+        let completed = try searchTask(title: "검색 대상 완료", status: .completed)
+        let deleted = try searchTask(title: "검색 대상 삭제", status: .deleted)
+        let incomplete = try searchTask(title: "검색 대상 불완전", status: .open, complete: false)
+        let unrelated = try searchTask(title: "다른 제목", status: .open)
+        let tasks = [deleted, incomplete, unrelated, open, completed]
+        #expect(MirrorTaskSearchPolicy.matches(tasks, query: "검색 대상", status: nil).map(\.taskID) == [open.taskID, completed.taskID])
+        #expect(MirrorTaskSearchPolicy.matches(tasks, query: completed.taskID.uuidString, status: .completed).map(\.taskID) == [completed.taskID])
+        #expect(MirrorTaskSearchPolicy.matches(tasks, query: completed.taskID.uuidString, status: .open).isEmpty)
+        #expect(MirrorTaskSearchPolicy.matches(tasks, query: deleted.taskID.uuidString, status: nil).isEmpty)
+        #expect(MirrorTaskSearchPolicy.matches(tasks, query: incomplete.taskID.uuidString, status: nil).isEmpty)
+    }
+
+    @Test("제목 없이 상태만 찾을 때도 앞의 다른 상태를 건너뛰고 일치 결과를 제한한다")
+    func searchStatusOnlyLimitsMatches() throws {
+        let completed = try (0..<60).map { try searchTask(title: "완료 \($0)", status: .completed) }
+        let open = try (0..<55).map { try searchTask(title: "미완료 \($0)", status: .open) }
+        let result = MirrorTaskSearchPolicy.matches(completed + open, query: nil, status: .open)
+        #expect(result.map(\.taskID) == open.prefix(50).map(\.taskID))
+    }
+
     @Test("외부 딥링크는 엄격한 탐색 계약만 받는다", arguments: [
         "mirror://task/not-a-uuid", "mirror://today?mutation=complete", "mirror://review?mode=unknown",
         "mirror://today?mode=daily&mode=weekly", "mirror://user:password@today", "javascript:alert(1)",

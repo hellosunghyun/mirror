@@ -75,6 +75,7 @@ final class AppModel {
     var isTextEditing = false
     var selectedTaskIDs: Set<UUID> = []
     var showCapture = false
+    var captureIsSingle = false
     var showSettings = false
     var showReview = false
     var picker: PlanPickerRequest?
@@ -126,6 +127,9 @@ final class AppModel {
     @ObservationIgnored private var canonicalStreamEnded = false
     @ObservationIgnored private var lamportByOperationID: [String: Int64] = [:]
     @ObservationIgnored private var retryEnvelope: CommandEnvelope?
+    @ObservationIgnored private var pendingImportFeedback: String?
+    @ObservationIgnored private var calendarDisplayRange: (start: Date, end: Date)?
+    @ObservationIgnored private var calendarLoadID = UUID()
     @ObservationIgnored private var widgetDecision: (request: PlanPickerRequest, target: PlanTarget)?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let preferenceKey = "Mirror.preferences.v1"
@@ -281,6 +285,11 @@ final class AppModel {
             context = next
             selectedTaskIDs.formIntersection(Set(tasks.filter { $0.status == .open }.map(\.taskID)))
             if retryEnvelope == nil { projectionPending = false }
+            if let pendingImportFeedback {
+                feedback = pendingImportFeedback
+                problem = nil
+                self.pendingImportFeedback = nil
+            }
             requestSystemReconciliation()
             return true
         } catch {
@@ -355,7 +364,17 @@ final class AppModel {
         if let bytes = try? JSONEncoder().encode(preferences) { defaults.set(bytes, forKey: preferenceKey) }
         requestSystemReconciliation()
     }
-    func finishOnboarding() { preferences.onboardingComplete = true; savePreferences(); showCapture = true }
+    func openCapture(single: Bool = false) {
+        captureIsSingle = single
+        showCapture = true
+    }
+    func finishCapture() {
+        guard captureIsSingle else { return }
+        showCapture = false
+        captureIsSingle = false
+        destination = .today
+    }
+    func finishOnboarding() { preferences.onboardingComplete = true; savePreferences(); openCapture() }
 
     @discardableResult
     func capture(title: String, note: String, sourceURL: String, requestToken: String = UUID().uuidString) async -> Bool {
@@ -447,10 +466,11 @@ final class AppModel {
         _ = await execute(envelope, success: "\(planLabel(target))로 보냈어요.")
     }
 
-    func beginReview(mode: ReviewMode = .automatic, includeNewInputs: Bool = false) {
+    func beginReview(mode: ReviewMode = .automatic, includeNewInputs: Bool = false, weekly: Bool? = nil) {
         guard let context, let configuration else { return }
         selectedTaskID = nil
-        if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty { showReview = true; return }
+        if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty,
+           weekly == nil || weekly == review.isWeekly { showReview = true; return }
         let cycleID = ReviewCycle.id(workspaceEpoch: configuration.workspaceEpoch, context: context)
         activeReviewMilliseconds = 0
         reviewExposureStart = nil
@@ -463,7 +483,7 @@ final class AppModel {
             .map { ReviewCard(id: UUID().uuidString, taskID: $0.taskID, expected: ExpectedVersions($0), decisionToken: UUID().uuidString) }
         let weekday = AppDate.weekday(context.planningDay)
         review = AppReviewSession(id: UUID().uuidString, cycleID: cycleID, context: context,
-                                  isWeekly: weekday == preferences.weeklyWeekday, todayOverride: mode == .manualTodayOverride, cards: cards)
+                                  isWeekly: weekly ?? (weekday == preferences.weeklyWeekday), todayOverride: mode == .manualTodayOverride, cards: cards)
         persistSession()
         reviewSummary = nil
         showReview = true
@@ -563,7 +583,7 @@ final class AppModel {
             else { problem = "개인 공간의 설정을 먼저 복구해야 해요. 현재 원본은 지우지 않았어요."; return }
             importData = bytes
             archivePreview = report
-            importPreview = "작업 \(report.taskCount)개 · 원본 기록 \(report.operationCount)개 · 중복 \(report.duplicateCount)개. \(report.warnings.joined(separator: " ")) 변경 이력의 개인 정보도 복원될 수 있어요."
+            importPreview = "작업 \(report.taskCount)개 · 새 작업 \(report.newTaskCount)개 · 원본 기록 \(report.operationCount)개 · 중복 \(report.duplicateCount)개 · 격리·미해석 원본 \(report.quarantinedRecordCount)개. \(report.warnings.joined(separator: " ")) 변경 이력의 개인 정보도 복원될 수 있어요."
         } catch { problem = "파일의 버전·개인 공간·원본 형식을 확인해 주세요. 현재 데이터는 바뀌지 않았어요." }
     }
     func importArchive(confirmAccount: Bool = false, confirmWorkspace: Bool = false) async {
@@ -594,8 +614,15 @@ final class AppModel {
             } else if let store { report = try await store.importArchive(bytes, consent: ArchiveImportConsent(accountChangeConfirmed: confirmAccount)) }
             else { problem = "저장소 설정을 먼저 확인해 주세요. 원본은 지우지 않았어요."; return }
             if let configuration, configuration.cloudSync == nil { resetCloudService(localConfiguration: configuration) }
-            feedback = "복원했어요. 새 기록 \(report.inserted)개, 중복 \(report.duplicates)개, 격리 \(report.quarantined)개."
-            importData = nil; importPreview = nil; archivePreview = nil; await refresh()
+            pendingImportFeedback = "복원했어요. 새 기록 \(report.inserted)개, 중복 \(report.duplicates)개, 격리 \(report.quarantined)개."
+            problem = nil
+            feedback = report.projectionPending ? "원본 자료는 복원했어요. 화면을 갱신하고 있어요. 다시 확인을 선택해 주세요." : nil
+            projectionPending = report.projectionPending
+            importData = nil; importPreview = nil; archivePreview = nil
+            if !(await refresh()) {
+                projectionPending = true
+                feedback = "원본 자료는 복원했어요. 화면을 갱신하고 있어요. 다시 확인을 선택해 주세요."
+            }
         } catch {
             problem = sourceRestored ? "원본 자료는 복원했어요. 새 저장소를 열지 못해 다시 확인해야 해요. 다시 확인을 선택해 주세요." : "복원하지 못했어요. 파일과 저장된 원본을 확인해 주세요."
         }
@@ -835,19 +862,67 @@ final class AppModel {
         } catch { calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요." }
     }
     func loadCalendar(from start: Date, to end: Date) async {
+        let loadID = UUID()
+        calendarLoadID = loadID
+        calendarDisplayRange = (start, end)
         guard let services, preferences.calendarEnabled else { calendarEvents = []; return }
+        let identity = storeObservationID
         let calendar = await services.calendar
-        calendarAccess = await calendar.authorization()
-        guard calendarAccess == .fullAccess else {
-            calendarEvents = []; calendars = []; await calendar.clearCache()
+        let access = await calendar.authorization()
+        guard storeObservationID == identity, calendarLoadID == loadID else { return }
+        calendarAccess = access
+        guard access == .fullAccess else {
+            calendarEvents = []; calendars = []
             calendarProblem = "캘린더 권한이 없어요. 할 일 날짜 배치는 계속 사용할 수 있어요."
+            await calendar.clearCache()
             return
         }
         do {
-            calendars = try await calendar.calendars()
-            calendarEvents = try await calendar.events(from: start, to: end, calendarIDs: preferences.selectedCalendars, now: now)
+            let available = try await calendar.calendars()
+            let events = try await calendar.events(from: start, to: end, calendarIDs: preferences.selectedCalendars, now: now)
+            guard storeObservationID == identity, calendarLoadID == loadID, preferences.calendarEnabled else { return }
+            calendars = available
+            calendarEvents = events
             calendarProblem = nil
-        } catch { calendarEvents = []; calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요." }
+        } catch {
+            guard storeObservationID == identity, calendarLoadID == loadID else { return }
+            calendarEvents = []; calendars = []
+            calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요."
+            await calendar.clearCache()
+        }
+    }
+    func refreshCalendarOnForeground() async {
+        guard let services else { return }
+        let identity = storeObservationID
+        let loadID = UUID()
+        calendarLoadID = loadID
+        let calendar = await services.calendar
+        await calendar.clearCache()
+        let access = await calendar.authorization()
+        guard storeObservationID == identity, calendarLoadID == loadID else { return }
+        calendarAccess = access
+        guard access == .fullAccess else {
+            calendarEvents = []; calendars = []
+            if preferences.calendarEnabled {
+                calendarProblem = "캘린더 권한이 없어요. 할 일 날짜 배치는 계속 사용할 수 있어요."
+            }
+            return
+        }
+        guard preferences.calendarEnabled else { calendarEvents = []; calendars = []; return }
+        if let calendarDisplayRange {
+            await loadCalendar(from: calendarDisplayRange.start, to: calendarDisplayRange.end)
+        } else {
+            do {
+                let available = try await calendar.calendars()
+                guard storeObservationID == identity, calendarLoadID == loadID else { return }
+                calendars = available
+                calendarProblem = nil
+            } catch {
+                guard storeObservationID == identity, calendarLoadID == loadID else { return }
+                calendarEvents = []; calendars = []
+                calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요."
+            }
+        }
     }
     func enableNotifications(review: Bool, deadlines: Bool) async {
         guard let services else { return }
@@ -886,9 +961,9 @@ final class AppModel {
             }
             let validated = try MirrorDeepLink.validate(route, ownedTaskIDs: Set(tasks.map(\.taskID)), trustedCards: trustedCards)
             switch validated {
-            case .capture: showCapture = true
+            case .capture: openCapture(single: true)
             case .today: destination = .today
-            case .review: beginReview(mode: .manualResume)
+            case let .review(weekly): beginReview(mode: .manualResume, weekly: weekly)
             case let .task(id): selectedTaskID = id
             case let .schedule(id, _, cardID):
                 if let widgetState, let card = widgetState.card {
@@ -1115,6 +1190,8 @@ final class AppModel {
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
         lamportByOperationID = [:]
         retryEnvelope = nil; widgetDecision = nil; archiveData = nil; importData = nil
+        pendingImportFeedback = nil; calendarDisplayRange = nil
+        calendarLoadID = UUID()
         importPreview = nil; archivePreview = nil; selectedTaskID = nil; selectedTaskIDs = []
         calendarEvents = []; calendars = []; showReview = false; projectionPending = false
         feedback = nil; problem = nil

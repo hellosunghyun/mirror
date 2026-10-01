@@ -1,5 +1,11 @@
 # 미러 요구사항·QA 추적표
 
+`f091e83`의 [별도 Swift 실행 36820276082](https://github.com/hellosunghyun/mirror/actions/runs/36820276082)은 실제 최종 결과에서 SwiftPM 151개, Mac 단위 151개·UI 6개, iPhone/iPad 각각 단위 150개·UI 6개를 통과했다. 각 summary의 실패·skip은 0개이며 세 UI strict guard는 필수 bundle 1개/case 6개와 missingMethods·nonPassedMethods 없음이다. 같은 SHA의 Ad Hoc 사전 검사는 유효한 개인 키 identity 1개와 프로파일 인증서 1개를 확인했으나 일치 수는 0개여서 실패했다. P12 가져오기는 성공했으며 현재 P12와 같은 인증서로 생성한 프로파일 Secret 갱신이 필요하다. IPA·Release는 아직 생성되지 않았다.
+
+같은 `f091e83`의 [Ad Hoc 실행 36820272558](https://github.com/hellosunghyun/mirror/actions/runs/36820272558)은 Mac/iPhone 최종 UI 통과와 iPad 단위 150개 통과를 확인했으나 iPad UI는 20분 제한으로 중단됐다. stdout의 앞 네 사례 통과·내일 검색 시작은 부분 진단이며 최종 UI summary/strict guard 통과가 아니다. 별도 Swift 실행의 성공과 이 배포 게이트 실패를 구분한다. 수정분은 새 실행에서 확인하며 제한이나 assertion을 낮추지 않는다.
+
+이번 후속 구현은 위젯 단일 입력의 저장 후 Today 전환, 상태/제목 필터 후 검색 결과 50개 제한, 복원 pending 완료 표시와 새 작업·격리 기록 미리보기, foreground 캘린더 권한 갱신, Mac Cmd+F 초기 포커스, 명시 일간·주간 정리 모드, 넓은 iPad의 인접 일정을 보완한다. 실제 두 Swift 프로세스 동일 명령 경쟁과 canonical 저장 후 SIGKILL·재시작 회귀도 추가한다. 작성한 소스와 새 SHA의 실제 Actions 통과를 구별한다. 외부 위젯·Siri·CloudKit·접근성·성능·사용자 게이트는 계속 not_run/blocked다.
+
 [전체 구현 계획](IMPLEMENTATION_PLAN.md)의 범위와 검증 책임을 추적한다. 원본 [FR/QA 연결](../postpone-app-docs/validation/traceability.json)과 [QA 87개](../postpone-app-docs/validation/qa-cases.json)의 ID·기대 결과를 유지하고 단계·검증 경로를 추가했다. 원본 보고서는 수정하지 않는다.
 
 ## 1. 현재 증거와 상태
@@ -75,7 +81,7 @@ iPhone UI stdout은 완료·Undo를 포함한 5개 통과와 내일 검색 1개 
 | V3 시스템 계약 | `SystemContractTests`/`CloudBoundaryTests`, System 33개. 실제 임시 SQLite의 frozen 카드·receipt/토큰·Today 순서·재정리, 알림 planner·안전 딥링크·로컬 계측·Cloud 상태 구독. unhosted OS adapter의 typed 실패를 확인하며 실제 Widget/Siri/권한/CloudKit 성공으로 대신하지 않음 |
 | V4 native 빌드·구성 | `179428d98dcbfa61470395f7acbd5653b9f25c06`, [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352). SwiftPM/Mac 각각 151개, iPhone·iPad 각각 150개 완료 보고 통과와 필수 세 unit bundle 확인. 세 native 플랫폼의 앱·두 확장 및 privacy/라이선스/URL/App Intents 구성 검사 단계 성공. 앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
 | V5 UI 부분 시나리오 | 최신 `2da19a9`의 [Ad Hoc 실행 36817569714](https://github.com/hellosunghyun/mirror/actions/runs/36817569714)에서 Mac/iPhone/iPad 각각 최종 UI summary 6개 통과·실패/skip 0개. 세 strict guard 각각 bundle 1개/case 6개/missingMethods·nonPassedMethods 없음. 아래 QA 부분 매핑만 검증한 결과이며 QA 87개 전체·실기기 수용을 뜻하지 않음 |
-| V6 준비·배포 로직 | 최신 `2da19a9`의 Ad Hoc 실행에서 서명 입력 존재·준비 Python 40개 통과. unit/UI gate 통과 후 archive 110231668813의 프로파일/개인키 포함 인증서 match guard 실패, publish skipped. 실제 서명 원인은 추가 진단 대기이며 서명 IPA·GitHub Release 게시 성공은 미검증 |
+| V6 준비·배포 로직 | 최신 `2da19a9`의 Ad Hoc 실행에서 서명 입력 존재·준비 Python 40개 통과. unit/UI gate 통과 후 archive 110231668813의 프로파일/개인키 포함 인증서 match guard 실패, publish skipped. `f091e83` 사전 진단에서 P12와 프로파일 인증서 불일치를 확인했으며 서명 IPA·GitHub Release 게시 성공은 미검증 |
 
 | UI 메서드 | 원본 QA의 관련 부분 | Mac | iPhone / iPad |
 |---|---|---|---|
@@ -184,7 +190,7 @@ Q-048의 과거 최소 OS 문구는 확정된 최소 **OS 27**의 지원/availab
 | Q-026 | 마감 이후 날짜 — 확인 전 변경 없음 | FR-014 | D-02/03/06/08 | A/UI/SYS | not_run; U3 부분 |
 | Q-027 | 마감 확인 중 변경 — 오래된 확인 token 거부 | FR-014 | D-02/03/06/10 | A/UI/SYS | not_run; U3 바인딩만 부분 |
 | Q-028 | 주 안의 마감 — 화요일 마감 표시, 월요일 자동 배치 안 함 | FR-014 | D-02/03/06/09 | A/UI/USER | not_run; U3 부분 |
-| Q-029 | 단순 Undo — 이전 plan과 reviewNotBefore 복원 | FR-015 | D-03/05/09 | A/UI | not_run; V5 Mac/iPad unassigned 복원 부분 통과·iPhone passed 로그/집계 미완료, reviewNotBefore 미검사 |
+| Q-029 | 단순 Undo — 이전 plan과 reviewNotBefore 복원 | FR-015 | D-03/05/09 | A/UI | not_run; V5와 f091e83에서 Mac/iPhone/iPad unassigned 복원 부분 통과, reviewNotBefore 미검사 |
 | Q-030 | 제목 수정 후 Undo — plan만 복원, 새 제목 유지 | FR-015 | D-03/09 | A/UI | not_run |
 | Q-031 | 후속 plan 변경 후 Undo — 영향 plan 버전 불일치로 과거 날짜 덮어쓰기 거부 | FR-015 | D-03/09/10 | A/UI/SYS | not_run |
 | Q-032 | 완료 처리 — status 완료, plan / deadline 이력 유지 | FR-013 | D-03/06/12 | A/UI | not_run; V5 Mac/iPad 상태·plan 표시 부분 통과·iPhone failed 로그/집계 미완료, deadline/history 미검사 |

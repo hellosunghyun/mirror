@@ -1,5 +1,11 @@
 # Swift 개발 안내
 
+`f091e83`의 [별도 Swift 실행 36820276082](https://github.com/hellosunghyun/mirror/actions/runs/36820276082)은 실제 최종 결과에서 SwiftPM 151개, Mac 단위 151개·UI 6개, iPhone/iPad 각각 단위 150개·UI 6개를 통과했다. 각 summary의 실패·skip은 0개이며 세 UI strict guard는 필수 bundle 1개/case 6개와 missingMethods·nonPassedMethods 없음이다. 같은 SHA의 Ad Hoc 사전 검사는 유효한 개인 키 identity 1개와 프로파일 인증서 1개를 확인했으나 일치 수는 0개여서 실패했다. P12 가져오기는 성공했으며 현재 P12와 같은 인증서로 생성한 프로파일 Secret 갱신이 필요하다. IPA·Release는 아직 생성되지 않았다.
+
+같은 `f091e83`의 [Ad Hoc 실행 36820272558](https://github.com/hellosunghyun/mirror/actions/runs/36820272558)은 Mac/iPhone 최종 UI 통과와 iPad 단위 150개 통과를 확인했으나 iPad UI는 20분 제한으로 중단됐다. stdout의 앞 네 사례 통과·내일 검색 시작은 부분 진단이며 최종 UI summary/strict guard 통과가 아니다. 별도 Swift 실행의 성공과 이 배포 게이트 실패를 구분한다. 수정분은 새 실행에서 확인하며 제한이나 assertion을 낮추지 않는다.
+
+이번 후속 구현은 위젯 단일 입력의 저장 후 Today 전환, 상태/제목 필터 후 검색 결과 50개 제한, 복원 pending 완료 표시와 새 작업·격리 기록 미리보기, foreground 캘린더 권한 갱신, Mac Cmd+F 초기 포커스, 명시 일간·주간 정리 모드, 넓은 iPad의 인접 일정을 보완한다. 실제 두 Swift 프로세스 동일 명령 경쟁과 canonical 저장 후 SIGKILL·재시작 회귀도 추가한다. 작성한 소스와 새 SHA의 실제 Actions 통과를 구별한다. 외부 위젯·Siri·CloudKit·접근성·성능·사용자 게이트는 계속 not_run/blocked다.
+
 ## 앱과 모듈 구성
 
 현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `2da19a9` Ad Hoc은 SwiftPM 151개, Mac 단위 151개와 모바일 각각 150개, 세 플랫폼 UI 여섯 사례를 실제 최종 summary/strict guard에서 통과했다. archive는 서명 인증서 match guard에서 실패했고 IPA·Release는 생성하지 못했다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.

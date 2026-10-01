@@ -329,6 +329,13 @@
 			name = Tests/MirrorDomainTests;
 			sourceTree = "<group>";
 		};
+		A0A867C3FED37E1493884A31 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = ArchivePreviewTests.swift;
+			path = Tests/MirrorDataTests/ArchivePreviewTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
 		EC5CFCAE32833A040E42F095 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -339,6 +346,7 @@
 		06E89160D6DF398D40794C31 = {
 			isa = PBXGroup;
 			children = (
+				A0A867C3FED37E1493884A31,
 				EC5CFCAE32833A040E42F095,
 			);
 			name = Tests/MirrorDataTests;
@@ -1522,6 +1530,10 @@
 			productReference = 317AE10D594FB10C3C9C1F7C;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		BCED82F99EC357DF7E5BA661 = {
+			isa = PBXBuildFile;
+			fileRef = A0A867C3FED37E1493884A31;
+		};
 		EF9BCD351B4F60F2F3D4BB79 = {
 			isa = PBXBuildFile;
 			fileRef = EC5CFCAE32833A040E42F095;
@@ -1530,6 +1542,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCED82F99EC357DF7E5BA661,
 				EF9BCD351B4F60F2F3D4BB79,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

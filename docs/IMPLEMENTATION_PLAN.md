@@ -20,7 +20,9 @@
 | System/확장 | 공통 composition root와 App Intents/Shortcuts, Widget 카드·패널·token·snapshot, Share 텍스트/URL, EventKit 읽기·알림 계획/취소·Spotlight·동의한 로컬 진단 | 실제 App Group/서명, 앱 미실행·잠금·위젯/Siri/Share·권한 철회와 OS 실행 정책 검증 |
 | Cloud opt-in | 실제 CKContainer 계정 확인·fingerprint별 공간, 최신 로컬 원본 병합 확인, 공유 active pointer와 오프라인 identity 바인딩, 계정 변경 writer/importer 중지, 원본만 NSPersistentCloudKitContainer로 미러링, 상태 스트림 | Apple container/group 설정과 2기기 G-SYNC. 전체 CloudKit 삭제는 권위 있는 epoch와 구세대 업로드 차단 미결정으로 blocked |
 
-확인된 통합 체크포인트는 `c0ef782`의 [Actions 36761176290](https://github.com/hellosunghyun/mirror/actions/runs/36761176290)다. SwiftPM 테스트 141개는 통과했다. 네이티브 앱·단위 테스트의 `xcodebuild` 명령은 성공했지만 후속 bundle별 JSON 결과 해석이 실패하여 해당 Actions 검사가 실패했고 UI 단계는 실행되지 않았다. 이를 플랫폼 통합 통과나 UI 통과로 기록하지 않는다. `760ba58`의 후속 실행은 아직 진행 중이므로 성공·실행 수를 선기록하지 않는다. 최신 확정 근거는 [Swift 개발 안내](SWIFT_DEVELOPMENT.md)와 [테스트 전략](../TESTING.md)에 commit/run별로 추가한다.
+최근 완료된 통합 체크포인트는 `2da19a9`의 [Actions 36817569714](https://github.com/hellosunghyun/mirror/actions/runs/36817569714)다. 준비 Python 40개, SwiftPM 151개, Mac 단위 151개와 iPhone/iPad 각각 150개, 세 플랫폼 UI 각각 여섯 사례가 실제 최종 집계와 필수 bundle/method 검사에서 통과했다. UI 실패·skip은 0개다. archive는 프로파일과 개인 키가 있는 인증서의 일치 검사에서 실패했으며 IPA·Release는 없다. 후속 `f091e83`의 서명 사전 검사에서는 유효한 개인 키 identity 1개와 프로파일 인증서 1개가 서로 일치하지 않는 것을 확인했다. 현재 P12와 같은 인증서로 만든 Ad Hoc 프로파일 Secret 갱신이 필요하다. 비밀번호나 원문 서명 자료는 재요청하지 않는다.
+
+2026-10-01 전체 명세 대조에서 위젯 단일 입력 후 Today 전환, 상태 조건을 적용하기 전 검색 결과 제한, 복원 후 투영 갱신 실패의 완료 표시, 복원 미리보기의 새 작업·격리 기록 건수, foreground 캘린더 권한 철회, Mac 검색 포커스, 명시 일간·주간 정리 딥링크의 모드, 넓은 iPad의 인접 일정 표시를 보완한다. 별도 Swift 프로세스 두 개의 동일 명령 경쟁과 원본 저장 직후 SIGKILL·재시작 회귀도 추가한다. 이 변경의 통과는 새 커밋의 실제 Actions 결과가 나올 때 기록하며 이전 체크포인트로 대신하지 않는다. 최신 확정 근거는 [Swift 개발 안내](SWIFT_DEVELOPMENT.md)와 [테스트 전략](../TESTING.md)에 commit/run별로 추가한다.
 
 fixture 36개는 매개변수 사례이며 SwiftPM 실행 수, 세 플랫폼에서 같은 테스트를 실행한 수, QA 87개 전체 시나리오를 서로 합산하지 않는다.
 
@@ -33,7 +35,7 @@ fixture 36개는 매개변수 사례이며 SwiftPM 실행 수, 세 플랫폼에�
 | 수용 완료 | FR·QA·NFR와 필요한 실기기/사용자 게이트의 근거가 있음 |
 | blocked / not_run | 필요한 결정·환경이 없거나 실행하지 않음. 성공으로 표현하지 않음 |
 
-D-01~D-15의 여러 생산 경로와 D-16의 로컬 계측 코드가 구현되어 있다. 단계별 전체 수용은 별개이며 현재 SwiftPM 증거만으로 QA 87개, NFR 12개 또는 네 게이트를 완료 처리하지 않는다. D-03 이후가 모두 미구현이라는 초기 상태는 더 이상 현재 상태가 아니다. 실제 등록·서명, UI 실행, 독립 프로세스·두 기기·사용자 검증과 전체 CloudKit 삭제는 남은 조건으로 유지한다.
+D-01~D-15의 여러 생산 경로와 D-16의 로컬 계측 코드가 구현되어 있다. 단계별 전체 수용은 별개이며 현재 SwiftPM 증거만으로 QA 87개, NFR 12개 또는 네 게이트를 완료 처리하지 않는다. D-03 이후가 모두 미구현이라는 초기 상태는 더 이상 현재 상태가 아니다. 실제 등록·서명, 추가 UI·독립 프로세스 회귀, 두 기기·사용자 검증과 전체 CloudKit 삭제는 남은 조건으로 유지한다.
 
 ## 2. 명세를 구현으로 옮기는 기준
 

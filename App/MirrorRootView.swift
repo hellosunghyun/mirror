@@ -1,6 +1,9 @@
 import MirrorDesign
 import MirrorDomain
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 struct MirrorRootView: View {
@@ -21,56 +24,61 @@ struct MirrorRootView: View {
     var body: some View {
         @Bindable var model = model
         let selectedDestination = model.destination
-        VStack(spacing: 0) {
-            Group {
-                if model.isLoading {
-                    ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityIdentifier("startup.loading")
-                } else if !model.preferences.onboardingComplete {
-                    MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
-                } else if isCompact {
-                    TabView(selection: $model.destination) {
-                        ForEach(MirrorDestination.allCases) { destination in
-                            NavigationStack {
-                                VStack(spacing: 0) {
-                                    content(destination).frame(maxWidth: .infinity, maxHeight: .infinity)
-                                    statusBar
-                                }.toolbar { commonToolbar }
-                            }
-                                .tabItem { Label(destination.title, systemImage: destination.symbol) }
-                                .tag(destination)
-                                .accessibilityIdentifier("destination.\(destination.rawValue)")
-                        }
-                    }
-                } else {
-                    NavigationSplitView {
-                        List(selection: sidebarSelection) {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                Group {
+                    if model.isLoading {
+                        ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .accessibilityIdentifier("startup.loading")
+                    } else if !model.preferences.onboardingComplete {
+                        MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
+                    } else if isCompact {
+                        TabView(selection: $model.destination) {
                             ForEach(MirrorDestination.allCases) { destination in
-                                Button { model.destination = destination } label: {
-                                    Label(destination.title, systemImage: destination.symbol)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
+                                NavigationStack {
+                                    VStack(spacing: 0) {
+                                        content(destination).frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        statusBar
+                                    }.toolbar { commonToolbar }
                                 }
-                                    .buttonStyle(.plain)
+                                    .tabItem { Label(destination.title, systemImage: destination.symbol) }
                                     .tag(destination)
-                                    .listRowBackground(selectedDestination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
                                     .accessibilityIdentifier("destination.\(destination.rawValue)")
                             }
-                        }.navigationTitle("미러").navigationSplitViewColumnWidth(min: 160, ideal: 190)
-                    } content: {
-                        content(selectedDestination).id(selectedDestination).toolbar { commonToolbar }
-                            .navigationSplitViewColumnWidth(min: 280, ideal: 420)
-                    } detail: {
-                        if let task = model.selectedTask { MirrorTaskDetail(task: task) }
-                        else {
-                            ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요."))
-                                .accessibilityIdentifier("detail.empty")
+                        }
+                    } else {
+                        NavigationSplitView {
+                            List(selection: sidebarSelection) {
+                                ForEach(MirrorDestination.allCases) { destination in
+                                    Button { model.destination = destination } label: {
+                                        Label(destination.title, systemImage: destination.symbol)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(Rectangle())
+                                    }
+                                        .buttonStyle(.plain)
+                                        .tag(destination)
+                                        .listRowBackground(selectedDestination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
+                                        .accessibilityIdentifier("destination.\(destination.rawValue)")
+                                }
+                            }.navigationTitle("미러").navigationSplitViewColumnWidth(min: 160, ideal: 190)
+                        } content: {
+                            content(selectedDestination).id(selectedDestination).toolbar { commonToolbar }
+                                .navigationSplitViewColumnWidth(min: 280, ideal: 420)
+                        } detail: {
+                            if let task = model.selectedTask { MirrorTaskDetail(task: task) }
+                            else if showsAdjacentCalendar(width: geometry.size.width, destination: selectedDestination) {
+                                MirrorCalendarView().accessibilityIdentifier("ipad.adjacentCalendar")
+                            }
+                            else {
+                                ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요."))
+                                    .accessibilityIdentifier("detail.empty")
+                            }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if !isCompact { statusBar }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if !isCompact { statusBar }
         }
         .tint(MirrorPalette.accent)
         .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
@@ -88,18 +96,30 @@ struct MirrorRootView: View {
         .task { await model.start() }
         .onChange(of: scenePhase, initial: true) { _, phase in
             model.setSceneActive(sceneExposureID, active: phase == .active)
-            if phase == .active { Task { await model.refresh() } }
+            if phase == .active {
+                Task {
+                    await model.refresh()
+                    await model.refreshCalendarOnForeground()
+                }
+            }
         }
         .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
         .onOpenURL { url in Task { await model.handleURL(url) } }
         .frame(minWidth: isCompact ? 0 : 720, minHeight: isCompact ? 0 : 480)
+    }
+    private func showsAdjacentCalendar(width: CGFloat, destination: MirrorDestination) -> Bool {
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad && width >= 900 && destination != .calendar
+        #else
+        return false
+        #endif
     }
     @ViewBuilder private func content(_ destination: MirrorDestination) -> some View {
         switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { model.showCapture = true } label: { Label("일단 넣기", systemImage: "plus") }
+            Button { model.openCapture() } label: { Label("일단 넣기", systemImage: "plus") }
                 .accessibilityIdentifier("capture.open")
                 .keyboardShortcut("n", modifiers: .command)
             Button { model.showSettings = true } label: { Label("설정", systemImage: "gearshape") }

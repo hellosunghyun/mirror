@@ -71,7 +71,7 @@ struct MirrorCommands: Commands {
     let model: AppModel
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("할 일 일단 넣기") { model.showCapture = true }.keyboardShortcut("n", modifiers: .command)
+            Button("할 일 일단 넣기") { model.openCapture() }.keyboardShortcut("n", modifiers: .command)
         }
         CommandGroup(after: .textEditing) {
             Button("전체 작업 검색") { model.destination = .library; model.searchRequested = true }.keyboardShortcut("f", modifiers: .command)

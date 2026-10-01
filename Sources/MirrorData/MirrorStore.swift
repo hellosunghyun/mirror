@@ -20,7 +20,11 @@ public struct StoreSnapshot: Sendable {
 public struct ImportPreview: Sendable {
     public let operationCount: Int
     public let taskCount: Int
+    /// 현재 공간의 원본 재생에 없고 병합 후 생기는 작업 수. 전체 교체는 빈 공간을 기준으로 한다.
+    public let newTaskCount: Int
     public let duplicateCount: Int
+    /// 선택한 파일의 중복 없는 원본 행 중 실제 재생에서 격리되거나 해석할 수 없는 행 수.
+    public let quarantinedRecordCount: Int
     public let warnings: [String]
     public let requiresWorkspaceConfirmation: Bool
     public let requiresAccountConfirmation: Bool
@@ -361,16 +365,18 @@ public actor MirrorStore {
             initialTimeZoneID: policy.timeZoneID, initialPolicyRevision: policy.revision)
         let decoded = Self.decode(parsed, configuration: previewConfiguration)
         let report = TaskReducer.reduce(decoded.records, workspaceKey: metadata.workspace, workspaceEpoch: metadata.epoch)
-        var warnings: [String] = []
-        if preview.quarantined > 0 { warnings.append("같은 ID의 다른 내용이나 해석할 수 없는 원본은 보존하고 격리합니다.") }
-        if !report.pending.isEmpty { warnings.append("아직 부모 기록이 없는 변경은 대기 상태로 보존합니다.") }
-        warnings.append("현재 작업 스냅샷이 아닌 원본 변경 기록을 병합합니다.")
         let otherEpoch = metadata.epoch != configuration.workspaceEpoch || metadata.workspace != configuration.workspaceKey
+        let counts = Self.archivePreviewCounts(parsed, existing: otherEpoch ? [] : existing, configuration: previewConfiguration)
+        var warnings: [String] = []
+        if counts.quarantinedRecords > 0 { warnings.append("격리·미해석 원본 \(counts.quarantinedRecords)개는 보존하지만 현재 작업에 적용하지 않습니다.") }
+        if counts.hasPendingRecords { warnings.append("아직 부모 기록이 없는 변경은 대기 상태로 보존합니다.") }
+        warnings.append("현재 작업 스냅샷이 아닌 원본 변경 기록을 병합합니다.")
         let otherAccount = Self.requiresAccountConfirmation(metadata.scopes, configuration: configuration)
         if otherEpoch { warnings.append("다른 세대의 자료입니다. 기기 내 작업을 교체하고 원본 공간을 명시적으로 복원해야 합니다.") }
         if otherAccount { warnings.append("다른 계정 또는 확인할 수 없는 출처의 자료입니다. 계정 간 이관을 명시적으로 확인해야 합니다.") }
         return ImportPreview(operationCount: parsed.count, taskCount: report.tasks.count,
-                             duplicateCount: preview.duplicates, warnings: warnings,
+                             newTaskCount: counts.newTasks, duplicateCount: preview.duplicates,
+                             quarantinedRecordCount: counts.quarantinedRecords, warnings: warnings,
                              requiresWorkspaceConfirmation: otherEpoch, requiresAccountConfirmation: otherAccount,
                              sourceWorkspaceEpoch: metadata.epoch)
     }
@@ -382,10 +388,14 @@ public actor MirrorStore {
             workspaceEpoch: metadata.epoch, deviceID: configuration.deviceID)
         let decoded = decode(parsed, configuration: previewConfiguration)
         let report = TaskReducer.reduce(decoded.records, workspaceKey: metadata.workspace, workspaceEpoch: metadata.epoch)
+        let counts = archivePreviewCounts(parsed, existing: [], configuration: previewConfiguration)
+        var warnings = ["중단된 기기 내 복원을 선택한 원본 export로 다시 진행합니다. 현재 저장소는 전체 교체됩니다.",
+                        "다른 계정과 세대의 자료가 포함되면 이관을 명시적으로 확인해야 합니다."]
+        if counts.quarantinedRecords > 0 { warnings.append("격리·미해석 원본 \(counts.quarantinedRecords)개는 보존하지만 현재 작업에 적용하지 않습니다.") }
+        if counts.hasPendingRecords { warnings.append("아직 부모 기록이 없는 변경은 대기 상태로 보존합니다.") }
         return ImportPreview(operationCount: parsed.count, taskCount: report.tasks.count,
-            duplicateCount: importCounts(parsed, existing: []).duplicates,
-            warnings: ["중단된 기기 내 복원을 선택한 원본 export로 다시 진행합니다. 현재 저장소는 전체 교체됩니다.",
-                       "다른 계정과 세대의 자료가 포함되면 이관을 명시적으로 확인해야 합니다."],
+            newTaskCount: counts.newTasks, duplicateCount: importCounts(parsed, existing: []).duplicates,
+            quarantinedRecordCount: counts.quarantinedRecords, warnings: warnings,
             requiresWorkspaceConfirmation: true,
             requiresAccountConfirmation: requiresAccountConfirmation(metadata.scopes, configuration: configuration),
             sourceWorkspaceEpoch: metadata.epoch)
@@ -650,6 +660,27 @@ public actor MirrorStore {
                 schemaVersion: schema, idempotencyKey: entry["idempotencyKey"] as? String,
                 requestDigest: entry["logicalCommandDigest"] as? String, lamport: lamport))
         }
+    }
+
+    private static func archivePreviewCounts(_ incoming: [StoredOperation], existing: [StoredOperation],
+                                            configuration: StoreConfiguration) -> (newTasks: Int, quarantinedRecords: Int, hasPendingRecords: Bool) {
+        let current = decode(existing, configuration: configuration)
+        let currentReport = TaskReducer.reduce(current.records, workspaceKey: configuration.workspaceKey,
+                                               workspaceEpoch: configuration.workspaceEpoch)
+        var mergedFingerprints = Set(existing.map(rowFingerprint))
+        let additions = incoming.filter { mergedFingerprints.insert(rowFingerprint($0)).inserted }
+        let merged = decode(existing + additions, configuration: configuration)
+        let report = TaskReducer.reduce(merged.records, workspaceKey: configuration.workspaceKey,
+                                        workspaceEpoch: configuration.workspaceEpoch)
+        let quarantinedIDs = Set(report.quarantined.keys)
+        var selectedFingerprints: Set<String> = []
+        let quarantinedRecords = incoming.filter { row in
+            guard selectedFingerprints.insert(rowFingerprint(row)).inserted else { return false }
+            return quarantinedIDs.contains(row.operationID) || !decode([row], configuration: configuration).unknownIDs.isEmpty
+        }.count
+        let selectedIDs = Set(incoming.map(\.operationID))
+        return (Set(report.tasks.keys).subtracting(currentReport.tasks.keys).count, quarantinedRecords,
+                !selectedIDs.intersection(report.pending.keys).isEmpty)
     }
 
     private static func importCounts(_ incoming: [StoredOperation], existing: [StoredOperation]) -> ImportReport {
