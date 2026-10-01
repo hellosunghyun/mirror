@@ -272,6 +272,7 @@ def patch(project, context):
     require(re.fullmatch(r'[A-Z0-9]{10}', str(context.get('teamID', ''))) is not None, 'CONTEXT_TEAM')
     require(re.fullmatch(r'[A-F0-9]{40}', str(context.get('identitySHA1', ''))) is not None, 'CONTEXT_IDENTITY')
     require(isinstance(context.get('profileUUID'), str) and re.fullmatch(r'[A-F0-9-]{36}', context['profileUUID']) is not None, 'CONTEXT_PROFILE')
+    require(isinstance(context.get('profileName'), str) and 0 < len(context['profileName']) <= 256 and context['profileName'].isprintable(), 'CONTEXT_PROFILE_NAME')
     require(context.get('sourceProjectSHA256') == project_digest(project), 'CONTEXT_PROJECT_CHANGED')
     stored = context.get('targets')
     require(isinstance(stored, list) and all(isinstance(target, dict) and isinstance(target.get('name'), str) for target in stored), 'CONTEXT_TARGETS')
@@ -294,8 +295,8 @@ def patch(project, context):
             for key in list(settings):
                 if key.startswith('PROVISIONING_PROFILE_SPECIFIER') or key.startswith('PROVISIONING_PROFILE[') or key.startswith('CODE_SIGN_IDENTITY['):
                     settings.pop(key)
-            # 현대 Xcode의 선택 키와 기존 UUID 키를 같은 검증된 프로파일로 고정한다.
-            settings['PROVISIONING_PROFILE_SPECIFIER'] = context['profileUUID']
+            # 현대 Xcode는 검증한 실제 이름으로 선택하고 기존 UUID도 같은 프로파일로 고정한다.
+            settings['PROVISIONING_PROFILE_SPECIFIER'] = context['profileName']
     return result
 
 

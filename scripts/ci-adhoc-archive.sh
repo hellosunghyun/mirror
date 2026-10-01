@@ -243,7 +243,7 @@ if xcodebuild -project "$repo_root/Mirror.xcodeproj" -scheme MirrorIOS -configur
     DEVELOPMENT_TEAM="$team_id" CODE_SIGN_IDENTITY="$identity_sha1" CODE_SIGNING_ALLOWED=YES \
     CURRENT_PROJECT_VERSION="$build_number" > "$private_dir/resolved-settings.json" 2> "$private_dir/settings.log"; then
   python3 - "$private_dir" <<'PY'
-import json, pathlib, sys
+import json, pathlib, plistlib, sys
 summary = {'status': 'unavailable'}
 try:
     private = pathlib.Path(sys.argv[1])
@@ -253,6 +253,7 @@ try:
     expected = {item['name']: item for item in context['targets'] if item['name'] in known_names}
     actual = {item['target']: item['buildSettings'] for item in resolved if item.get('target') in known_names}
     profile = (private / 'profile.mobileprovision').read_bytes()
+    source_profile = plistlib.loads((private / 'profile.plist').read_bytes())
     home = pathlib.Path.home()
     directories = (home / 'Library/Developer/Xcode/UserData/Provisioning Profiles',
                    home / 'Library/MobileDevice/Provisioning Profiles')
@@ -272,9 +273,11 @@ try:
             'identityMatches': str(settings.get('CODE_SIGN_IDENTITY', '')).upper() == context['identitySHA1'],
             'legacyProfileMatches': settings.get('PROVISIONING_PROFILE') == context['profileUUID'],
             'specifierMatches': settings.get('PROVISIONING_PROFILE_SPECIFIER') in (context['profileUUID'], context['profileName']),
+            'specifierUsesName': settings.get('PROVISIONING_PROFILE_SPECIFIER') == context['profileName'],
             'bundleMatches': settings.get('PRODUCT_BUNDLE_IDENTIFIER') == expected.get(name, {}).get('bundleIdentifier'),
         }
-    summary = {'status': 'resolved', 'matchingProfileLocations': installed_count, 'targets': targets}
+    summary = {'status': 'resolved', 'matchingProfileLocations': installed_count, 'targets': targets,
+               'profileUUIDMatchesSource': source_profile.get('UUID') == context['profileUUID']}
 except Exception:
     pass
 print('::notice::Effective signing settings diagnostics: ' + json.dumps(summary, sort_keys=True))

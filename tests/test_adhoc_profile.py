@@ -192,7 +192,7 @@ class AdHocProfileTests(unittest.TestCase):
                 self.assertEqual(settings['PROVISIONING_PROFILE'], PROFILE_UUID)
                 self.assertEqual(settings['DEVELOPMENT_TEAM'], TEAM)
                 self.assertEqual(settings['CODE_SIGN_IDENTITY'], context['identitySHA1'])
-                self.assertEqual(settings['PROVISIONING_PROFILE_SPECIFIER'], PROFILE_UUID)
+                self.assertEqual(settings['PROVISIONING_PROFILE_SPECIFIER'], context['profileName'])
                 self.assertNotIn('PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]', settings)
                 self.assertNotIn('PROVISIONING_PROFILE[sdk=iphoneos*]', settings)
                 self.assertNotIn('CODE_SIGN_IDENTITY[sdk=iphoneos*]', settings)
@@ -209,6 +209,13 @@ class AdHocProfileTests(unittest.TestCase):
             project['objects']['share' + configuration]['buildSettings']['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.other.share'
         with self.assertRaisesRegex(helper.ValidationError, '^EXTENSION_BUNDLE_ID$'):
             self.prepare(project=project)
+
+    def test_missing_or_invalid_profile_name_cannot_select_another_profile(self):
+        context, _, _ = self.prepare()
+        for name in (None, '', 'synthetic\nprofile'):
+            invalid = dict(context, profileName=name)
+            with self.subTest(name=name), self.assertRaisesRegex(helper.ValidationError, '^CONTEXT_PROFILE_NAME$'):
+                helper.patch(self.project, invalid)
 
     def test_context_project_and_entitlement_changes_prevent_unvalidated_patch(self):
         context, _, _ = self.prepare()

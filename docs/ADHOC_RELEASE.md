@@ -61,7 +61,7 @@ Release 태그는 adhoc-실행ID다. 실행을 재시도하면 같은 태그의 
 
 [서명 빌드 진단 workflow](../.github/workflows/adhoc-diagnostics.yml)는 서명 빌드 도구가 변경된 push에서 별도로 실행한다. archive·export와 실제 IPA 서명을 검사하되 산출물과 비공개 로그는 정리하고, 실패 시 알려진 오류 종류의 고정 이름·개수만 출력한다. 원문 오류·서명 식별자는 출력하지 않는다. 이 진단의 성공은 전체 배포 검증 게이트를 대체하지 않으며 Release 게시 권한도 없다. 각 push의 실제 게시에는 기존 준비 검사와 네 Swift 검증 경로가 모두 필요하다.
 
-러너에서만 앱·두 확장의 수동 서명 설정을 갱신한다. `PROVISIONING_PROFILE_SPECIFIER`와 기존 `PROVISIONING_PROFILE`에 동일한 검증된 UUID를 지정하고, 기존 이름이나 SDK별 선택 override를 제거한다. 원본 프로젝트는 작업 종료 시 복원한다.
+러너에서만 앱·두 확장의 수동 서명 설정을 갱신한다. `PROVISIONING_PROFILE_SPECIFIER`에는 검증한 실제 프로파일 이름을, 기존 `PROVISIONING_PROFILE`에는 동일 프로파일의 UUID를 지정한다. 기존 이름이나 SDK별 선택 override를 제거하고 원본 프로젝트는 작업 종료 시 복원한다.
 
 첫 실제 IPA 게시 전까지 자동화 코드 작성과 성공한 배포를 구별한다. 실제 UI·두 기기 동기화·전체 CloudKit 삭제·VoiceOver·사용자 검증의 남은 범위는 [요구사항 추적표](REQUIREMENTS_TRACEABILITY.md)에 유지한다.
 
