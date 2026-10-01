@@ -52,6 +52,9 @@ def diagnostics(path):
             'suiteSummaries': summaries[-3:],
             'xcodeCompletionReported': bool(re.search(r'\*\* TEST(?: EXECUTE)? (?:SUCCEEDED|FAILED) \*\*', log)),
         }, ensure_ascii=False))
+    owners = list(dict.fromkeys(line.strip() for line in lines if 'UI row scroll owner:' in line))
+    if owners:
+        print('::notice::UI row scroll owners: ' + json.dumps(owners[-8:], ensure_ascii=False))
     relevant = [line for line in lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)
                 and not re.match(r'^\s*[|`~-]', line)]
     unique = list(dict.fromkeys(relevant))

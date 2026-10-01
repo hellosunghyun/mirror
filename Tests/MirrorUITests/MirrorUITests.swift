@@ -365,14 +365,17 @@ final class MirrorUITests: XCTestCase {
         }
         // List의 AX 컨테이너와 탭할 행은 다르다. 행의 hittable/enabled는 interact에서 계속 검사한다.
         let windowFrames = app.windows.allElementsBoundByIndex.map { $0.frame }
+        let rowCenterX = element.frame.midX
         var probes: [String] = []
         for candidate in surfaces {
             let frame = candidate.frame
             let containsTarget = candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
             let visible = !frame.isEmpty && windowFrames.contains { $0.intersects(frame) }
-            let probe = "id=\(candidate.identifier), type=\(candidate.elementType.rawValue), frame=\(frame), containsTarget=\(containsTarget), inWindow=\(visible)"
+            // 다중 열의 다른 스크롤 영역을 배제한다. 세로 화면 밖 행은 계속 실제 스크롤로 찾는다.
+            let sameColumn = frame.minX <= rowCenterX && rowCenterX <= frame.maxX
+            let probe = "id=\(candidate.identifier), type=\(candidate.elementType.rawValue), frame=\(frame), containsTarget=\(containsTarget), inWindow=\(visible), rowCenterX=\(rowCenterX), sameColumn=\(sameColumn)"
             probes.append(probe)
-            if containsTarget && visible {
+            if containsTarget && visible && sameColumn {
                 print("UI row scroll owner: \(probe)")
                 return candidate
             }
