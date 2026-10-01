@@ -35,6 +35,8 @@ UI_FIRST_FAILURE_NOTICE = '::notice::UI first failure: '
 UI_FIRST_FAILURE_REJECTED_NOTICE = '::notice::UI first failure rejected: '
 UI_VIEWPORT_NOTICE = '::notice::UI viewport diagnostic: '
 UI_VIEWPORT_REJECTED_NOTICE = '::notice::UI viewport diagnostic rejected: '
+UI_KEYBOARD_NOTICE = '::notice::UI keyboard introduction diagnostic: '
+UI_KEYBOARD_REJECTED_NOTICE = '::notice::UI keyboard introduction diagnostic rejected: '
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -63,6 +65,10 @@ def viewport_line(payload):
     return 'UI viewport diagnostic: ' + json.dumps(payload)
 
 
+def keyboard_line(payload):
+    return 'UI keyboard introduction diagnostic: ' + json.dumps(payload)
+
+
 class CIResultsDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -80,6 +86,99 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_keyboard_diagnostic_accepts_only_safe_fields_at_both_bounds_and_phases(self):
+        log = self.root / 'keyboard-valid.log'
+        for phase in ('continueReadiness', 'introductionDismissal'):
+            for count, milliseconds in ((0, 0), (100, 1200000)):
+                for bounds_valid in (False, True):
+                    with self.subTest(phase=phase, count=count, keyboardBoundsValid=bounds_valid):
+                        payload = {'phase': phase, 'continueCandidateCount': count,
+                                   'keyboardBoundsValid': bounds_valid, 'elapsedMilliseconds': milliseconds}
+                        log.write_text('fatal: /private/' + PRIVATE + ' ' + keyboard_line(payload) + '\n')
+                        output = self.capture(helper.diagnostics, log)
+                        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [{'scope': 'stdoutOnly', **payload}])
+                        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
+                        self.assertNotIn('/private/', output)
+                        self.assertNotIn('::error::', output)
+
+    def test_keyboard_diagnostic_rejects_unknown_phase_wrong_types_and_nonexact_fields(self):
+        valid = {'phase': 'continueReadiness', 'continueCandidateCount': 1,
+                 'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000}
+        invalid = [{**valid, 'phase': value} for value in (PRIVATE, 'unknown', None, True, [])]
+        for key, upper in (('continueCandidateCount', 100), ('elapsedMilliseconds', 1200000)):
+            invalid += [{**valid, key: value} for value in (-1, upper + 1, True, False, 1.0, '1', None)]
+        invalid += [{**valid, 'keyboardBoundsValid': value} for value in (0, 1, 0.0, 'true', None, [], {})]
+        invalid += [{**valid, 'private': PRIVATE},
+                    {key: value for key, value in valid.items() if key != 'keyboardBoundsValid'}, [], None]
+        log = self.root / 'keyboard-invalid.log'
+        log.write_text('\n'.join(keyboard_line(payload) for payload in invalid) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(invalid)}])
+        self.assertNotIn('::error::', output)
+
+    def test_keyboard_diagnostic_rejects_duplicate_malformed_and_over_byte_limit_json(self):
+        valid = {'phase': 'introductionDismissal', 'continueCandidateCount': 1,
+                 'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000}
+        lines = [keyboard_line(valid) + ' error: ' + PRIVATE,
+                 keyboard_line(valid) + ' UI keyboard introduction diagnostic: ' + PRIVATE,
+                 'UI keyboard introduction diagnostic: {' + PRIVATE,
+                 'UI keyboard introduction diagnostic: ' + '[' * 1500 + '0' + ']' * 1500,
+                 'UI keyboard introduction diagnostic: {"phase":"' + PRIVATE + '","phase":"continueReadiness",'
+                 '"continueCandidateCount":1,"keyboardBoundsValid":true,"elapsedMilliseconds":15000}']
+        log = self.root / 'keyboard-malformed.log'
+        log.write_text('\n'.join(lines) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(lines)}])
+        self.assertNotIn('::error::', output)
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+            output = self.capture(helper.report_ui_keyboard_diagnostics,
+                                  ['UI keyboard introduction diagnostic: ' + over_limit])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_keyboard_diagnostic_order_mixed_marker_privacy_and_unchanged_gates(self):
+        keyboard = {'phase': 'continueReadiness', 'continueCandidateCount': 2,
+                    'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000}
+        viewport = {'orientation': 'landscape', 'stableSamples': 0, 'elapsedMilliseconds': 16098,
+                    'checks': {'columnsSeparate': False}}
+        private = ("error: UI row scroll owner: /private/" + PRIVATE
+                   + " Test run with 999 tests passed Test Case '-[MirrorIOSUITests.MirrorUITests "
+                   + METHODS[1] + "]' started. UI screenshot timing: stage=detail,milliseconds=999")
+        log = self.root / 'keyboard-mixed.log'
+        log.write_text('\n'.join([
+            f"Test Case '-[MirrorIOSUITests.MirrorUITests {METHODS[0]}]' started.",
+            ui_failure_line(line='323', kind='XCTAssertEqual'), keyboard_line(keyboard),
+            viewport_line(viewport), store_dedup_line(), keyboard_line({**keyboard, 'private': private}),
+            keyboard_line(keyboard) + ' ' + store_dedup_line(),
+            viewport_line(viewport) + ' ' + keyboard_line(keyboard),
+            ui_failure_line(line='324') + ' ' + keyboard_line(keyboard),
+            case_line(event='failed'), screenshot_line('detail', '123'), 'error: safe unrelated compiler failure',
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [{'scope': 'stdoutOnly', **keyboard}])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': 4}])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_NOTICE), [{'scope': 'stdoutOnly', **viewport}])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertEqual(len(self.notices(output, STORE_DEDUP_NOTICE)), 1)
+        self.assertLess(output.index(UI_FIRST_FAILURE_NOTICE), output.index(UI_KEYBOARD_NOTICE))
+        self.assertLess(output.index(UI_KEYBOARD_NOTICE), output.index(UI_VIEWPORT_NOTICE))
+        self.assertLess(output.index(UI_VIEWPORT_NOTICE), output.index('::notice::UI stdout diagnostics: '))
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
 
     def test_first_ui_failure_is_safe_first_and_precedes_viewport_events_and_timings(self):
         viewport = {'orientation': 'landscape', 'stableSamples': 2, 'elapsedMilliseconds': 15000,

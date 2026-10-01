@@ -51,6 +51,7 @@ UI_FAILURE_SOURCE_PATTERN = re.compile(
 UI_FAILURE_CASE_PATTERN = re.compile(
     r'^[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]\s*:\s*(.*)$')
 UI_VIEWPORT_DIAGNOSTIC_MARKER = 'UI viewport diagnostic:'
+UI_KEYBOARD_DIAGNOSTIC_MARKER = 'UI keyboard introduction diagnostic:'
 UI_VIEWPORT_CHECK_NAMES = frozenset({
     'foreground', 'appBoundsValid', 'appOrientationMatches', 'windowExists', 'todayExists',
     'reviewExists', 'windowInApp', 'windowOrientationMatches', 'todayInWindow', 'reviewInToday',
@@ -92,7 +93,8 @@ def report_store_dedup_diagnostics(lines):
         if STORE_DEDUP_DIAGNOSTIC_MARKER not in line:
             continue
         try:
-            if UI_VIEWPORT_DIAGNOSTIC_MARKER in line or is_ui_failure_candidate(line):
+            if (UI_VIEWPORT_DIAGNOSTIC_MARKER in line or UI_KEYBOARD_DIAGNOSTIC_MARKER in line
+                    or is_ui_failure_candidate(line)):
                 raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
             if line.count(STORE_DEDUP_DIAGNOSTIC_MARKER) != 1:
                 raise ValueError('진단 marker가 하나여야 합니다.')
@@ -190,6 +192,50 @@ def report_ui_first_failure(lines):
         print('::notice::UI first failure rejected: ' + json.dumps({'invalidCount': invalid_count}))
 
 
+def report_ui_keyboard_diagnostics(lines):
+    reports = deque(maxlen=8)
+    invalid_count = 0
+
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError('중복된 keyboard 필드입니다.')
+            fields[key] = value
+        return fields
+
+    for line in lines:
+        if UI_KEYBOARD_DIAGNOSTIC_MARKER not in line:
+            continue
+        try:
+            if (STORE_DEDUP_DIAGNOSTIC_MARKER in line or UI_VIEWPORT_DIAGNOSTIC_MARKER in line
+                    or is_ui_failure_candidate(line)):
+                raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
+            if line.count(UI_KEYBOARD_DIAGNOSTIC_MARKER) != 1:
+                raise ValueError('keyboard marker가 하나여야 합니다.')
+            payload = line.partition(UI_KEYBOARD_DIAGNOSTIC_MARKER)[2].strip()
+            if len(payload.encode('utf-8')) > 4096:
+                raise ValueError('keyboard payload가 너무 깁니다.')
+            report = json.loads(payload, object_pairs_hook=unique_fields)
+            if not isinstance(report, dict) or set(report) != {
+                    'phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds'}:
+                raise ValueError('keyboard 필드가 고정 계약과 다릅니다.')
+            count, milliseconds = report['continueCandidateCount'], report['elapsedMilliseconds']
+            if (report['phase'] not in ('continueReadiness', 'introductionDismissal')
+                    or type(count) is not int or not 0 <= count <= 100
+                    or type(report['keyboardBoundsValid']) is not bool
+                    or type(milliseconds) is not int or not 0 <= milliseconds <= 1200000):
+                raise ValueError('keyboard 수치·phase가 고정 계약과 다릅니다.')
+            reports.append({'scope': 'stdoutOnly', **report})
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    for report in reports:
+        print('::notice::UI keyboard introduction diagnostic: ' + json.dumps(report))
+    if invalid_count:
+        print('::notice::UI keyboard introduction diagnostic rejected: '
+              + json.dumps({'invalidCount': invalid_count}))
+
+
 def report_ui_viewport_diagnostics(lines):
     reports = deque(maxlen=8)
     invalid_count = 0
@@ -206,7 +252,8 @@ def report_ui_viewport_diagnostics(lines):
         if UI_VIEWPORT_DIAGNOSTIC_MARKER not in line:
             continue
         try:
-            if STORE_DEDUP_DIAGNOSTIC_MARKER in line or is_ui_failure_candidate(line):
+            if (STORE_DEDUP_DIAGNOSTIC_MARKER in line or UI_KEYBOARD_DIAGNOSTIC_MARKER in line
+                    or is_ui_failure_candidate(line)):
                 raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
             if line.count(UI_VIEWPORT_DIAGNOSTIC_MARKER) != 1:
                 raise ValueError('viewport marker가 하나여야 합니다.')
@@ -286,8 +333,9 @@ def diagnostics(path):
     log = Path(path).read_text(errors='replace')
     raw_lines = log.splitlines()
     lines = [line for line in raw_lines if STORE_DEDUP_DIAGNOSTIC_MARKER not in line
-             and UI_VIEWPORT_DIAGNOSTIC_MARKER not in line]
+             and UI_VIEWPORT_DIAGNOSTIC_MARKER not in line and UI_KEYBOARD_DIAGNOSTIC_MARKER not in line]
     report_ui_first_failure(lines)
+    report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)
     report_store_dedup_diagnostics(raw_lines)
     # 유효·무효 구조화 원문은 다른 진단·오류 fallback에도 섞지 않는다.

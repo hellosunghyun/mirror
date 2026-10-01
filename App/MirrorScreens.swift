@@ -713,7 +713,7 @@ struct MirrorTaskDetail: View {
                                     Text(record.kindLabel).font(.callout)
                                     Text(record.recordedAt, style: .date).font(.caption).foregroundStyle(.secondary)
                                     if !record.undoValues.isEmpty {
-                                        Button("이 변경을 조건부로 되돌리기") { Task { await model.undo(record) } }.frame(minHeight: 44)
+                                        Button("이 변경 되돌리기") { Task { await model.undo(record) } }.frame(minHeight: 44)
                                     }
                                 }
                             }

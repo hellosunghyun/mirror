@@ -11,7 +11,6 @@ struct MirrorRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var sceneExposureID = UUID()
-    @State private var calendarInspectorDismissed = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -62,18 +61,17 @@ struct MirrorRootView: View {
                         .navigationTitle("미러")
                         .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
                     } detail: {
-                        mainContent(model.destination)
+                        mainContent(model.destination, showCalendar: model.selectedTask == nil && !model.showReview
+                            && showsAdjacentCalendar(width: geometry.size.width, destination: model.destination))
                     }
                     .navigationSplitViewStyle(.balanced)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .inspector(isPresented: inspectorPresentation(width: geometry.size.width)) {
+            .inspector(isPresented: taskInspectorPresentation) {
                 NavigationStack {
                     if let task = model.selectedTask {
                         MirrorTaskDetail(task: task)
-                    } else if showsAdjacentCalendar(width: geometry.size.width, destination: model.destination) {
-                        MirrorCalendarView().accessibilityIdentifier("ipad.adjacentCalendar")
                     }
                 }
                 .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
@@ -96,9 +94,6 @@ struct MirrorRootView: View {
             }
         }
         .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
-        .onChange(of: model.destination) { _, _ in
-            calendarInspectorDismissed = false
-        }
         .onOpenURL { url in Task { await model.handleURL(url) } }
         #if os(macOS)
         // Inspector는 자신의 최소 폭을 별도로 더하므로, 열렸을 때는 탐색 영역만 확보한다.
@@ -118,13 +113,24 @@ struct MirrorRootView: View {
     @ViewBuilder private func content(_ destination: MirrorDestination) -> some View {
         switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
     }
-    private func mainContent(_ destination: MirrorDestination) -> some View {
-        NavigationStack {
-            content(destination)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(MirrorPalette.canvas)
-                .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
-                .toolbar { commonToolbar }
+    private func mainContent(_ destination: MirrorDestination, showCalendar: Bool = false) -> some View {
+        HStack(spacing: 0) {
+            NavigationStack {
+                content(destination)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(MirrorPalette.canvas)
+                    .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
+                    .toolbar { commonToolbar }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if showCalendar {
+                Divider()
+                NavigationStack {
+                    MirrorCalendarView().accessibilityIdentifier("ipad.adjacentCalendar")
+                }
+                .frame(width: 320)
+                .frame(maxHeight: .infinity)
+            }
         }
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
@@ -169,14 +175,12 @@ struct MirrorRootView: View {
                 .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.bar))
         }
     }
-    private func inspectorPresentation(width: CGFloat) -> Binding<Bool> {
+    private var taskInspectorPresentation: Binding<Bool> {
         Binding(get: {
-            model.preferences.onboardingComplete && !model.isLoading && !model.showReview
-                && (model.selectedTask != nil || (!calendarInspectorDismissed && showsAdjacentCalendar(width: width, destination: model.destination)))
+            isTaskInspectorVisible
         }, set: { shown in
             guard !shown, !model.showReview else { return }
             model.selectedTaskID = nil
-            calendarInspectorDismissed = true
         })
     }
     private var sidebarSelection: Binding<MirrorDestination?> {

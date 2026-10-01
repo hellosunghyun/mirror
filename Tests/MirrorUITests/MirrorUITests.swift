@@ -317,15 +317,69 @@ final class MirrorUITests: XCTestCase {
             "Speed up your typing by sliding your finger across the letters to compose a word."
         )).firstMatch
         if introduction.exists {
-            let keyboardBounds = keyboard.frame
-            let candidates = app.buttons.matching(NSPredicate(format: "label == %@", "Continue"))
-                .allElementsBoundByIndex.filter { $0.exists && $0.isHittable && keyboardBounds.contains($0.frame) }
+            // Continue 준비·실제 tap·안내 닫힘은 기존 안내 대기의 15초를 공유한다.
+            let introductionStarted = Date()
+            let introductionDeadline = introductionStarted.addingTimeInterval(15)
+            let continueButtons = app.buttons.matching(NSPredicate(format: "label == %@", "Continue"))
+            var candidates: [XCUIElement] = []
+            var keyboardBoundsValid = false
+            var continueReady = false
+            func printIntroductionDiagnostic(phase: String) {
+                // 이미 샘플한 값만 사용한다. 실패 진단 때문에 AX를 다시 조회하지 않는다.
+                guard (0...100).contains(candidates.count) else { return }
+                let diagnostic: [String: Any] = [
+                    "phase": phase,
+                    "continueCandidateCount": candidates.count,
+                    "keyboardBoundsValid": keyboardBoundsValid,
+                    "elapsedMilliseconds": Int(min(1_200_000, max(0, Date().timeIntervalSince(introductionStarted) * 1_000))),
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+                   let json = String(data: data, encoding: .utf8) {
+                    print("UI keyboard introduction diagnostic: \(json)")
+                }
+            }
+            repeat {
+                guard Date() < introductionDeadline else { break }
+                let keyboardBounds = keyboard.frame
+                keyboardBoundsValid = keyboardBounds.width > 0 && keyboardBounds.height > 0
+                    && keyboardBounds.minX.isFinite && keyboardBounds.minY.isFinite
+                    && keyboardBounds.width.isFinite && keyboardBounds.height.isFinite
+                candidates = keyboardBoundsValid ? continueButtons.allElementsBoundByIndex.filter {
+                    guard $0.exists && $0.isHittable && $0.isEnabled else { return false }
+                    let frame = $0.frame
+                    return frame.width > 0 && frame.height > 0 && keyboardBounds.contains(frame)
+                } : []
+                continueReady = candidates.count == 1 && Date() < introductionDeadline
+                if continueReady { break }
+                let remaining = introductionDeadline.timeIntervalSinceNow
+                if remaining > 0 { RunLoop.current.run(until: Date().addingTimeInterval(min(0.1, remaining))) }
+            } while Date() < introductionDeadline
+            if candidates.count != 1 || !continueReady {
+                printIntroductionDiagnostic(phase: "continueReadiness")
+            }
             XCTAssertEqual(candidates.count, 1, "확인된 키보드 안내 안의 유일한 Continue만 닫는다.")
             guard candidates.count == 1 else { throw UIHarnessError.missingElement("keyboardIntroduction.continue") }
+            XCTAssertTrue(continueReady, "기존 안내 대기의 15초 안에 실제 Continue가 준비되어야 한다.")
+            guard continueReady else { throw UIHarnessError.unhittable("keyboardIntroduction.continue") }
             let next = candidates[0]
-            try interact(with: next, in: app)
-            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: introduction)
-            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed)
+            guard Date() < introductionDeadline else {
+                printIntroductionDiagnostic(phase: "continueReadiness")
+                XCTFail("실제 Continue tap도 기존 안내 대기의 15초 안에 시작해야 한다.")
+                throw UIHarnessError.unhittable("keyboardIntroduction.continue")
+            }
+            // 준비 시 enabled/hittable과 키보드 내부 위치를 확인했으므로 별도 3초 대기를 더하지 않는다.
+            next.tap()
+            let remaining = introductionDeadline.timeIntervalSinceNow
+            let dismissalResult: XCTWaiter.Result
+            if remaining > 0 {
+                let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: introduction)
+                dismissalResult = XCTWaiter.wait(for: [dismissed], timeout: remaining)
+            } else { dismissalResult = .timedOut }
+            let dismissedBeforeDeadline = dismissalResult == .completed && Date() < introductionDeadline
+            if !dismissedBeforeDeadline { printIntroductionDiagnostic(phase: "introductionDismissal") }
+            XCTAssertEqual(dismissalResult, .completed)
+            XCTAssertTrue(dismissedBeforeDeadline, "Continue 준비와 안내 닫힘이 기존 단일 15초 안에 완료되어야 한다.")
+            guard dismissedBeforeDeadline else { throw UIHarnessError.unexpectedElement("keyboardIntroduction") }
         }
         let keyDeadline = Date().addingTimeInterval(15)
         XCTAssertTrue(keyboard.keys.firstMatch.waitForExistence(timeout: 15),
