@@ -80,3 +80,9 @@ Release 태그는 adhoc-실행ID다. 실행을 재시도하면 같은 태그의 
 이 변경을 포함한 `873049b2709de2a97dffbdb49a55706870f33373`의 [준비 검사 36800188766](https://github.com/hellosunghyun/mirror/actions/runs/36800188766)는 Python 40개를 통과했다. [자동 배포 36800189042](https://github.com/hellosunghyun/mirror/actions/runs/36800189042)는 세 Secret·준비·SwiftPM을 통과했지만 Mac UI에서 5개 통과·1개 실패·skip 0이었다. 실패는 Undo 실행 전 상세 제목 입력란이 창 위쪽에 가려지고 접근 가능한 스크롤 컨테이너가 없었던 편집 단계다. iPhone/iPad UI는 이 기록 시점 진행 중이며 archive·publish는 아직 실행되지 않았다.
 
 후속 수정은 Mac 상세 Form을 grouped 스타일과 가용 높이에 맞춰 스크롤할 수 있게 하고, UI 테스트도 대상이 뷰포트 위에 있으면 위로 스크롤해 실제 접근성을 확인한다. 상태 패널 부모의 진단용 ID가 자식의 오류·Undo ID를 덮는 문제를 제거한다. 숨은 요소의 강제 탭이나 assertion 생략은 추가하지 않으며 새 push의 검증·실제 서명 결과를 확인한다.
+
+`873049b` 자동 배포의 모바일 두 UI는 최종적으로 각각 20분 제한으로 중단됐다. iPad 첫 사례에서 `review.finish`의 접근성 hit point 계산 오류가 기록됐지만 최종 UI summary/tree가 없어 전체 여섯 사례의 결과수는 미확정이다. Archive와 publish는 skipped였다. 같은 SHA의 별도 Swift 실행은 새 push에 의해 자동 취소됐으며 Mac의 완료 결과만 확보했고 모바일 결과를 완료로 기록하지 않는다.
+
+`a7ef8a2df18a92e1146fde9b1b6c0ad451cc9a41`의 [자동 배포 36801483055](https://github.com/hellosunghyun/mirror/actions/runs/36801483055)는 Mac 단위 151개와 UI 5개를 통과했지만 완료·Undo 사례 하나가 실패했다. 제목 입력란에는 접근한 뒤 `task.complete`의 기대 상태가 표시되지 않았고 실제 버튼은 label=완료, enabled/hittable=true였다. 기존 진단에는 기대값·직전 입력·현재 오류가 없어 클릭 미실행과 명령 거절을 구분할 수 없다. 모바일 UI는 이 기록 시점 진행 중이며 archive 게이트는 차단됐다.
+
+후속 수정은 regular 화면의 상태 패널을 화면 내용과 VStack 형제로 배치해 높이를 나누고, 시작·온보딩 오류와 compact 탭 배치를 유지한다. UI 상태 대기 실패에는 기대값·직전 입력·현재 오류를 기록하며 중단 진단에는 stdout의 사례 진행과 suite 요약을 별도로 남긴다. stdout 진단을 최종 결과 파일·strict guard 통과로 대신하지 않으며 실제 서명·IPA·Release 성공은 계속 미검증이다.

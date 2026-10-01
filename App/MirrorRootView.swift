@@ -21,53 +21,56 @@ struct MirrorRootView: View {
     var body: some View {
         @Bindable var model = model
         let selectedDestination = model.destination
-        Group {
-            if model.isLoading {
-                ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityIdentifier("startup.loading")
-            } else if !model.preferences.onboardingComplete {
-                MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
-            } else if isCompact {
-                TabView(selection: $model.destination) {
-                    ForEach(MirrorDestination.allCases) { destination in
-                        NavigationStack {
-                            content(destination).toolbar { commonToolbar }
-                                .safeAreaInset(edge: .bottom) { statusBar }
-                        }
-                            .tabItem { Label(destination.title, systemImage: destination.symbol) }
-                            .tag(destination)
-                            .accessibilityIdentifier("destination.\(destination.rawValue)")
-                    }
-                }
-            } else {
-                NavigationSplitView {
-                    List(selection: sidebarSelection) {
+        VStack(spacing: 0) {
+            Group {
+                if model.isLoading {
+                    ProgressView("저장된 일을 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("startup.loading")
+                } else if !model.preferences.onboardingComplete {
+                    MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
+                } else if isCompact {
+                    TabView(selection: $model.destination) {
                         ForEach(MirrorDestination.allCases) { destination in
-                            Button { model.destination = destination } label: {
-                                Label(destination.title, systemImage: destination.symbol)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
+                            NavigationStack {
+                                content(destination).toolbar { commonToolbar }
+                                    .safeAreaInset(edge: .bottom) { statusBar }
                             }
-                                .buttonStyle(.plain)
+                                .tabItem { Label(destination.title, systemImage: destination.symbol) }
                                 .tag(destination)
-                                .listRowBackground(selectedDestination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
                                 .accessibilityIdentifier("destination.\(destination.rawValue)")
                         }
-                    }.navigationTitle("미러").navigationSplitViewColumnWidth(min: 160, ideal: 190)
-                } content: {
-                    content(selectedDestination).id(selectedDestination).toolbar { commonToolbar }
-                        .navigationSplitViewColumnWidth(min: 280, ideal: 420)
-                } detail: {
-                    if let task = model.selectedTask { MirrorTaskDetail(task: task) }
-                    else {
-                        ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요."))
-                            .accessibilityIdentifier("detail.empty")
+                    }
+                } else {
+                    NavigationSplitView {
+                        List(selection: sidebarSelection) {
+                            ForEach(MirrorDestination.allCases) { destination in
+                                Button { model.destination = destination } label: {
+                                    Label(destination.title, systemImage: destination.symbol)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                    .buttonStyle(.plain)
+                                    .tag(destination)
+                                    .listRowBackground(selectedDestination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
+                                    .accessibilityIdentifier("destination.\(destination.rawValue)")
+                            }
+                        }.navigationTitle("미러").navigationSplitViewColumnWidth(min: 160, ideal: 190)
+                    } content: {
+                        content(selectedDestination).id(selectedDestination).toolbar { commonToolbar }
+                            .navigationSplitViewColumnWidth(min: 280, ideal: 420)
+                    } detail: {
+                        if let task = model.selectedTask { MirrorTaskDetail(task: task) }
+                        else {
+                            ContentUnavailableView("작업 상세", systemImage: "sidebar.right", description: Text("작업을 선택하면 내용·계획·실제 마감을 볼 수 있어요."))
+                                .accessibilityIdentifier("detail.empty")
+                        }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !isCompact { statusBar }
         }
         .tint(MirrorPalette.accent)
-        .safeAreaInset(edge: .bottom) { if !isCompact { statusBar } }
         .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
         .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
         .sheet(isPresented: $model.showReview) { MirrorReviewView() }

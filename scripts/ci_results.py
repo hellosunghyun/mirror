@@ -38,6 +38,20 @@ def diagnostics(path):
     log = Path(path).read_text(errors='replace')
     lines = log.splitlines()
     report_runs(log)
+    # 중단된 xcresult와 stdout의 사례 진행을 구별한다. 게이트 통과 판정에는 사용하지 않는다.
+    case_events = []
+    for line in lines:
+        match = re.search(r"Test Case '[-+]\[[^ ]+\.MirrorUITests (test\w+)\]' (started|passed|failed)", line)
+        if match:
+            case_events.append({'method': match[1], 'event': match[2]})
+    if case_events:
+        summaries = list(dict.fromkeys(line.strip() for line in lines
+                        if re.match(r'\s*Executed \d+ tests, with \d+ failures', line)))
+        print('::notice::UI stdout diagnostics: ' + json.dumps({
+            'scope': 'stdoutOnly', 'events': case_events[-18:],
+            'suiteSummaries': summaries[-3:],
+            'xcodeCompletionReported': bool(re.search(r'\*\* TEST(?: EXECUTE)? (?:SUCCEEDED|FAILED) \*\*', log)),
+        }, ensure_ascii=False))
     relevant = [line for line in lines if re.search(r'error:|failed|Issue recorded|fatal:', line, re.I)
                 and not re.match(r'^\s*[|`~-]', line)]
     unique = list(dict.fromkeys(relevant))

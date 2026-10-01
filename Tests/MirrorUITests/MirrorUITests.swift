@@ -99,11 +99,11 @@ final class MirrorUITests: XCTestCase {
         let remainingTitle = try XCTUnwrap(titles.first { $0 != decidedTitle })
 
         try activate("review.today", in: app)
-        try waitForLabel(remainingTitle, element: requireElement("review.card", in: app))
+        try waitForLabel(remainingTitle, element: requireElement("review.card", in: app), in: app)
         try activate("review.nextWeek", in: app)
         _ = try requireElement("plan.day.2026-10-05", in: app)
         try activate("plan.cancel", in: app)
-        try waitForLabel(remainingTitle, element: requireElement("review.card", in: app))
+        try waitForLabel(remainingTitle, element: requireElement("review.card", in: app), in: app)
         try activate("review.finish", in: app)
         try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
@@ -135,14 +135,14 @@ final class MirrorUITests: XCTestCase {
         let field = try requireElement("detail.title", in: app)
         try replaceText(in: field, with: edited, app: app)
         try activate("detail.save", in: app)
-        try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app))
+        try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app), in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
 
         try activate("task.complete", in: app)
-        try waitForLabel("완료 취소 · 다시 열기", element: requireElement("task.complete", in: app))
+        try waitForLabel("완료 취소 · 다시 열기", element: requireElement("task.complete", in: app), in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"), "완료는 계획을 지우지 않는다.")
         try activate("task.undo", in: app)
-        try waitForLabel("완료", element: requireElement("task.complete", in: app))
+        try waitForLabel("완료", element: requireElement("task.complete", in: app), in: app)
         XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
         try activate("detail.close", in: app)
@@ -162,7 +162,7 @@ final class MirrorUITests: XCTestCase {
         try activate("review.tomorrow", in: app)
         try requireNoElement("review.card", in: app)
         try activate("task.undo", in: app)
-        try waitForLabel(title, element: requireElement("review.card", in: app))
+        try waitForLabel(title, element: requireElement("review.card", in: app), in: app)
         try activate("review.finish", in: app)
         try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
@@ -383,10 +383,10 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func waitForLabel(_ expected: String, element: XCUIElement) throws {
+    private func waitForLabel(_ expected: String, element: XCUIElement, in app: XCUIApplication) throws {
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ OR (label == '' AND value == %@)", expected, expected), object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
-            XCTFail("표시된 원본 상태가 기대값과 다르다: \(describe(element))")
+            XCTFail("표시된 원본 상태가 기대값과 다르다: expected=\(expected), \(describe(element)). \(diagnostics(in: app))")
             throw UIHarnessError.unexpectedValue(element.identifier)
         }
     }
