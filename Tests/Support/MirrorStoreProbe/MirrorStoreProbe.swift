@@ -27,14 +27,17 @@ private enum MirrorStoreProbe {
                     reportURL: URL(fileURLWithPath: arguments[3]), metadataURL: URL(fileURLWithPath: arguments[4]))
                 return
             }
-            guard arguments.count == 7,
-                  ["race", "after-canonical"].contains(arguments[1]) else { throw ProbeError.arguments }
+            guard arguments.count == 8,
+                  ["race", "after-canonical"].contains(arguments[1]),
+                  let serviceSeconds = Double(arguments[7]), serviceSeconds.isFinite else { throw ProbeError.arguments }
             let mode = arguments[1]
             let directory = URL(fileURLWithPath: arguments[2], isDirectory: true)
             let envelopeURL = URL(fileURLWithPath: arguments[3])
             let readyURL = URL(fileURLWithPath: arguments[4])
             let startURL = URL(fileURLWithPath: arguments[5])
             let reportURL = URL(fileURLWithPath: arguments[6])
+            // 외부 봉투는 capturedAt을 보존하지 않는다. 생산 서비스에 주입할 시각은 테스트 입력으로 따로 받는다.
+            let serviceInstant = Date(timeIntervalSince1970: serviceSeconds)
             stage = "envelope"
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .millisecondsSince1970
@@ -49,18 +52,26 @@ private enum MirrorStoreProbe {
                 try Data("ready".utf8).write(to: readyURL, options: .atomic)
                 try await waitForStart(startURL, timeout: .seconds(20))
                 stage = "race-command"
-                let result = await store.execute(envelope, at: envelope.context.capturedAt)
+                let result = await store.execute(envelope, at: serviceInstant)
                 guard [.locallyCommitted, .alreadyApplied].contains(result.state),
-                      result.operationID != nil else { throw ProbeError.unexpectedResult }
+                      result.operationID != nil else {
+                    try write(ProbeReport(state: result.state, operationID: result.operationID,
+                                          taskCount: nil, recordCount: nil), to: reportURL)
+                    throw ProbeError.unexpectedResult
+                }
                 let snapshot = try await store.snapshot()
                 try write(ProbeReport(state: result.state, operationID: result.operationID,
                                       taskCount: snapshot.tasks.count, recordCount: snapshot.records.count), to: reportURL)
                 print("probe finished state=\(result.state.rawValue) tasks=\(snapshot.tasks.count) records=\(snapshot.records.count)")
             } else {
                 stage = "canonical-command"
-                let result = await store.execute(envelope, at: envelope.context.capturedAt, failurePoint: .afterCanonicalSave)
+                let result = await store.execute(envelope, at: serviceInstant, failurePoint: .afterCanonicalSave)
                 guard result.state == .committedProjectionPending,
-                      result.operationID != nil else { throw ProbeError.unexpectedResult }
+                      result.operationID != nil else {
+                    try write(ProbeReport(state: result.state, operationID: result.operationID,
+                                          taskCount: nil, recordCount: nil), to: reportURL)
+                    throw ProbeError.unexpectedResult
+                }
                 // snapshot/rebuild를 호출하면 투영 전 종료 경계가 사라진다. 원본 save 결과만 기록한다.
                 try write(ProbeReport(state: result.state, operationID: result.operationID,
                                       taskCount: nil, recordCount: nil), to: reportURL)

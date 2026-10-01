@@ -55,8 +55,11 @@ private struct StoreProbeReport: Decodable {
 private final class StoreProbeChild: @unchecked Sendable {
     let process = Process()
     private let exitSignal = DispatchSemaphore(value: 0)
+    private let reportURL: URL
 
-    init(mode: String, directory: URL, envelope: URL, ready: URL, start: URL, report: URL) throws {
+    init(mode: String, directory: URL, envelope: URL, ready: URL, start: URL, report: URL,
+         serviceInstant: Date) throws {
+        reportURL = report
         // SwiftPM의 공식 --show-bin-path 결과를 사용해 native XCTest의 환경 변수 전달에 의존하지 않는다.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -71,7 +74,8 @@ private final class StoreProbeChild: @unchecked Sendable {
         try #require(FileManager.default.isExecutableFile(atPath: binary.path),
                      "실제 MirrorStoreProbe 실행 파일이 없으면 프로세스 회귀를 완료할 수 없습니다.")
         process.executableURL = binary
-        process.arguments = [mode, directory.path, envelope.path, ready.path, start.path, report.path]
+        process.arguments = [mode, directory.path, envelope.path, ready.path, start.path, report.path,
+                             String(serviceInstant.timeIntervalSince1970)]
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let signal = exitSignal
@@ -83,6 +87,14 @@ private final class StoreProbeChild: @unchecked Sendable {
 
     var hasReapedExit: Bool {
         hasReapedExitSignal(exitSignal)
+    }
+
+    var diagnostic: String {
+        let lifecycle = process.isRunning ? "running" :
+            "exitReason=\(process.terminationReason.rawValue) status=\(process.terminationStatus)"
+        let report = try? JSONDecoder().decode(StoreProbeReport.self, from: Data(contentsOf: reportURL))
+        // 원본 내용, 경로, operationID는 진단에 노출하지 않는다.
+        return "\(lifecycle) state=\(report?.state.rawValue ?? "no-report")"
     }
 }
 
@@ -106,11 +118,13 @@ private func killAndReap(_ process: Process, exitSignal: DispatchSemaphore) {
 private func waitForProbeReady(_ children: [StoreProbeChild], files: [URL]) async throws {
     let clock = ContinuousClock(), deadline = clock.now.advanced(by: .seconds(15))
     while !files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
-        try #require(children.allSatisfy { $0.process.isRunning }, "ready 이전에 helper가 종료됐습니다.")
+        try #require(children.allSatisfy { $0.process.isRunning },
+                     "ready 이전에 helper가 종료됐습니다: \(children.map(\.diagnostic))")
         try #require(clock.now < deadline, "helper ready 대기는 15초 이내여야 합니다.")
         try await Task.sleep(for: .milliseconds(10))
     }
-    try #require(children.allSatisfy { $0.process.isRunning }, "ready는 실행 중인 실제 helper가 보내야 합니다.")
+    try #require(children.allSatisfy { $0.process.isRunning },
+                 "ready는 실행 중인 실제 helper가 보내야 합니다: \(children.map(\.diagnostic))")
 }
 
 private func waitForProbeExit(_ children: [StoreProbeChild]) async throws {
@@ -634,10 +648,10 @@ struct StoreIntegrationTests {
         let readyFiles = (0..<2).map { configuration.directory.appendingPathComponent("ProbeReady-\($0)") }
         let reportFiles = (0..<2).map { configuration.directory.appendingPathComponent("ProbeReport-\($0).json") }
         let first = try StoreProbeChild(mode: "race", directory: configuration.directory, envelope: envelopeURL,
-                                        ready: readyFiles[0], start: start, report: reportFiles[0])
+                                        ready: readyFiles[0], start: start, report: reportFiles[0], serviceInstant: context.capturedAt)
         defer { first.cleanup() }
         let second = try StoreProbeChild(mode: "race", directory: configuration.directory, envelope: envelopeURL,
-                                         ready: readyFiles[1], start: start, report: reportFiles[1])
+                                         ready: readyFiles[1], start: start, report: reportFiles[1], serviceInstant: context.capturedAt)
         defer { second.cleanup() }
         try first.run()
         try second.run()
@@ -647,8 +661,10 @@ struct StoreIntegrationTests {
         #expect(second.process.processIdentifier != ProcessInfo.processInfo.processIdentifier)
         try Data("start".utf8).write(to: start, options: .atomic)
         try await waitForProbeExit([first, second])
-        try #require(first.process.terminationReason == .exit && first.process.terminationStatus == 0)
-        try #require(second.process.terminationReason == .exit && second.process.terminationStatus == 0)
+        try #require(first.process.terminationReason == .exit && first.process.terminationStatus == 0,
+                     "first helper: \(first.diagnostic)")
+        try #require(second.process.terminationReason == .exit && second.process.terminationStatus == 0,
+                     "second helper: \(second.diagnostic)")
         let reports = try reportFiles.map { try JSONDecoder().decode(StoreProbeReport.self, from: Data(contentsOf: $0)) }
         #expect(reports.filter { $0.state == .locallyCommitted }.count == 1)
         #expect(reports.filter { $0.state == .alreadyApplied }.count == 1)
@@ -678,7 +694,8 @@ struct StoreIntegrationTests {
         let ready = configuration.directory.appendingPathComponent("ProbeCanonicalReady")
         let reportURL = configuration.directory.appendingPathComponent("ProbeCanonicalReport.json")
         let child = try StoreProbeChild(mode: "after-canonical", directory: configuration.directory, envelope: envelopeURL,
-            ready: ready, start: configuration.directory.appendingPathComponent("UnusedStart"), report: reportURL)
+            ready: ready, start: configuration.directory.appendingPathComponent("UnusedStart"), report: reportURL,
+            serviceInstant: context.capturedAt)
         defer { child.cleanup() }
         try child.run()
         try await waitForProbeReady([child], files: [ready])
