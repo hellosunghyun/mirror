@@ -82,7 +82,7 @@ struct MirrorWidgetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: family == .systemMedium ? 2 : 8) {
             HStack {
-                Text(state.context?.planningDay.description ?? "미러").font(.caption)
+                header
                 Spacer()
                 if state.mode == .review {
                     Button(intent: FinishReviewIntent(state: state)) { Image(systemName: "pause.circle") }
@@ -119,6 +119,28 @@ struct MirrorWidgetView: View {
                 }
             }
         }.padding(8)
+    }
+
+    @ViewBuilder private var header: some View {
+        if state.mode == .review, state.panel != .card,
+           family != .systemSmall, !typeSize.isAccessibilitySize,
+           let context = state.context, let destinations = try? context.destinations() {
+            let week = state.panel == .thisWeek ? destinations.thisWeek : destinations.nextWeek
+            if let end = try? week.endExclusiveDate.addingDays(-1) {
+                let title = state.panel == .thisWeek ? "이번 주" : "다음 주"
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title)
+                    Text("\(week.startDate.month)/\(week.startDate.day)–\(end.month)/\(end.day)")
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(title), \(week.startDate.year)년 \(week.startDate.month)월 \(week.startDate.day)일부터 \(end.year)년 \(end.month)월 \(end.day)일까지")
+            } else { Text(context.planningDay.description).font(.caption) }
+        } else { Text(state.context?.planningDay.description ?? "미러").font(.caption) }
     }
 
     @ViewBuilder private func review(_ card: WidgetCard) -> some View {

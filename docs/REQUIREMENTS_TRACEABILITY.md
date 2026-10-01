@@ -4,7 +4,7 @@
 
 같은 `f091e83`의 [Ad Hoc 실행 36820272558](https://github.com/hellosunghyun/mirror/actions/runs/36820272558)은 Mac/iPhone 최종 UI 통과와 iPad 단위 150개 통과를 확인했으나 iPad UI는 20분 제한으로 중단됐다. stdout의 앞 네 사례 통과·내일 검색 시작은 부분 진단이며 최종 UI summary/strict guard 통과가 아니다. 별도 Swift 실행의 성공과 이 배포 게이트 실패를 구분한다. 수정분은 새 실행에서 확인하며 제한이나 assertion을 낮추지 않는다.
 
-이번 후속 구현은 위젯 단일 입력의 저장 후 Today 전환, 상태/제목 필터 후 검색 결과 50개 제한, 복원 pending 완료 표시와 새 작업·격리 기록 미리보기, foreground 캘린더 권한 갱신, Mac Cmd+F 초기 포커스, 명시 일간·주간 정리 모드, 넓은 iPad의 인접 일정을 보완한다. 실제 두 Swift 프로세스 동일 명령 경쟁과 canonical 저장 후 SIGKILL·재시작 회귀도 추가한다. 작성한 소스와 새 SHA의 실제 Actions 통과를 구별한다. 외부 위젯·Siri·CloudKit·접근성·성능·사용자 게이트는 계속 not_run/blocked다.
+이번 후속 구현은 위젯 단일 입력의 저장 후 Today 전환, 상태/제목 필터 후 검색 결과 50개 제한, 복원 pending 완료 표시와 새 작업·격리 기록 미리보기, foreground 캘린더 권한 갱신, Mac Cmd+F 초기 포커스, 명시 일간·주간 정리 모드, 넓은 iPad의 인접 일정을 보완한다. 실제 두 Swift 프로세스 동일 명령 경쟁과 canonical 저장 후 SIGKILL·재시작 회귀도 추가한다. 자체 export를 거부하던 임의 32MiB 복원 상한을 제거하고 위젯 주간 패널에 선택 주와 시작·종료 월일을 표시한다. 1만 작업·10만 유효 원본의 Release baseline은 실제 저장·조회·명령·export 크기와 전체 파일 두 번 복원을 별도 Actions에서 검사한다. 작성한 소스와 새 SHA의 실제 Actions 통과를 구별한다. 외부 위젯·Siri·CloudKit·접근성·성능·사용자 게이트는 계속 not_run/blocked다.
 
 [전체 구현 계획](IMPLEMENTATION_PLAN.md)의 범위와 검증 책임을 추적한다. 원본 [FR/QA 연결](../postpone-app-docs/validation/traceability.json)과 [QA 87개](../postpone-app-docs/validation/qa-cases.json)의 ID·기대 결과를 유지하고 단계·검증 경로를 추가했다. 원본 보고서는 수정하지 않는다.
 

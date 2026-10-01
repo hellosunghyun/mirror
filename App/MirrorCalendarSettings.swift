@@ -236,7 +236,6 @@ struct MirrorSettingsView: View {
                     defer { if access { url.stopAccessingSecurityScopedResource() } }
                     do {
                         let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
-                        guard bytes.count <= 32 * 1024 * 1024 else { model.problem = "복원 파일은 32MB 이하로 선택해 주세요."; return }
                         Task { await model.previewImport(bytes) }
                     } catch { model.problem = "파일을 읽지 못했어요. 원본은 유지했어요." }
                 case .failure: model.problem = "복원 파일을 선택하지 못했어요. 데이터는 바뀌지 않았어요."
