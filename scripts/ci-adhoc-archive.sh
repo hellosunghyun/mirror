@@ -237,6 +237,52 @@ for directory in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" 
   cp "$private_dir/profile.mobileprovision" "$installed"
 done
 
+signing_stage="Xcode 유효 서명 설정 진단"
+if xcodebuild -project "$repo_root/Mirror.xcodeproj" -scheme MirrorIOS -configuration Release \
+    -sdk iphoneos -destination 'generic/platform=iOS' -showBuildSettings -json \
+    DEVELOPMENT_TEAM="$team_id" CODE_SIGN_IDENTITY="$identity_sha1" CODE_SIGNING_ALLOWED=YES \
+    CURRENT_PROJECT_VERSION="$build_number" > "$private_dir/resolved-settings.json" 2> "$private_dir/settings.log"; then
+  python3 - "$private_dir" <<'PY'
+import json, pathlib, sys
+summary = {'status': 'unavailable'}
+try:
+    private = pathlib.Path(sys.argv[1])
+    context = json.loads((private / 'context.json').read_text())
+    resolved = json.loads((private / 'resolved-settings.json').read_text())
+    known_names = ('MirrorIOS', 'MirrorWidgetsIOS', 'MirrorShareIOS')
+    expected = {item['name']: item for item in context['targets'] if item['name'] in known_names}
+    actual = {item['target']: item['buildSettings'] for item in resolved if item.get('target') in known_names}
+    profile = (private / 'profile.mobileprovision').read_bytes()
+    home = pathlib.Path.home()
+    directories = (home / 'Library/Developer/Xcode/UserData/Provisioning Profiles',
+                   home / 'Library/MobileDevice/Provisioning Profiles')
+    installed_count = 0
+    for directory in directories:
+        candidate = directory / (context['profileUUID'] + '.mobileprovision')
+        if candidate.is_file() and candidate.read_bytes() == profile:
+            installed_count += 1
+    targets = {}
+    for name in known_names:
+        settings = actual.get(name, {})
+        targets[name] = {
+            'present': name in actual,
+            'manual': settings.get('CODE_SIGN_STYLE') == 'Manual',
+            'signingAllowed': settings.get('CODE_SIGNING_ALLOWED') == 'YES',
+            'teamMatches': settings.get('DEVELOPMENT_TEAM') == context['teamID'],
+            'identityMatches': str(settings.get('CODE_SIGN_IDENTITY', '')).upper() == context['identitySHA1'],
+            'legacyProfileMatches': settings.get('PROVISIONING_PROFILE') == context['profileUUID'],
+            'specifierMatches': settings.get('PROVISIONING_PROFILE_SPECIFIER') in (context['profileUUID'], context['profileName']),
+            'bundleMatches': settings.get('PRODUCT_BUNDLE_IDENTIFIER') == expected.get(name, {}).get('bundleIdentifier'),
+        }
+    summary = {'status': 'resolved', 'matchingProfileLocations': installed_count, 'targets': targets}
+except Exception:
+    pass
+print('::notice::Effective signing settings diagnostics: ' + json.dumps(summary, sort_keys=True))
+PY
+else
+  printf '%s\n' '::notice::Xcode 유효 서명 설정을 조회하지 못했습니다. 실제 archive로 결과를 확인합니다.'
+fi
+
 signing_stage="서명된 iOS archive 생성"
 if ! xcodebuild -project "$repo_root/Mirror.xcodeproj" -scheme MirrorIOS -configuration Release \
     -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$private_dir/Mirror.xcarchive" \

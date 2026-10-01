@@ -25,6 +25,16 @@ BARE_ERROR_MARKER = re.compile(
     r'CSSMERR_TP_(?:NOT_TRUSTED|CERT_EXPIRED|CERT_REVOKED)|'
     r'Undefined symbols for architecture|duplicate symbol|'
     r'^\s*ld:.*(?:not found|failed)|SecKeychainUnlock.*failed', re.IGNORECASE)
+KNOWN_TARGETS = (
+    'MirrorDomain', 'MirrorData', 'MirrorSystem', 'MirrorDesign',
+    'MirrorDomainTests', 'MirrorDataTests', 'MirrorSystemTests',
+    'MirrorIOS', 'MirrorMac', 'MirrorWidgetsIOS', 'MirrorWidgetsMac',
+    'MirrorShareIOS', 'MirrorShareMac', 'MirrorIOSUITests', 'MirrorMacUITests',
+)
+# 일치 자체를 고정 타깃명에 제한하여 임의의 로그 문자열을 공개 키로 사용하지 않는다.
+TARGET_CONTEXT = re.compile(r'\bin target (?P<quote>[\'\"])(?P<target>' +
+                            '|'.join(re.escape(name) for name in KNOWN_TARGETS) +
+                            r')(?P=quote)')
 
 # 구체적인 서명 원인과 linker 오류를 일반 provisioning/compile보다 먼저 검사한다.
 RULES = tuple((key, re.compile(pattern, re.IGNORECASE)) for key, pattern in (
@@ -32,15 +42,43 @@ RULES = tuple((key, re.compile(pattern, re.IGNORECASE)) for key, pattern in (
     ('manualAutomaticConflict', r'conflicting provisioning settings|'
      r'automatically signed.*manually specified|Xcode managed.*manually managed|'
      r'automatic signing.*(?:manual|provisioning profile).*conflict'),
+    ('missingProfile', r'No profiles for.*were found|No provisioning profiles?.*(?:found|available)|'
+     r'No profiles? for team.*matching.*found|No profile named|'
+     r'couldn.t find any.*provisioning profiles?|'
+     r'(?:requires|missing|could not find|cannot find).*provisioning profile|'
+     r'could not find any.*provisioning profiles?|'
+     r'provisioning profile.*(?:could not|cannot) be found'),
+    ('profileExpired', r'provisioning profile.*(?:has expired|is expired|expired on|expiration date)'),
+    ('profilePlatformMismatch', r'provisioning profile.*(?:doesn.t|does not) support.*'
+     r'(?:platform|iOS|macOS|OS X|watchOS|tvOS|visionOS)|'
+     r'provisioning profile.*has platform.*(?:doesn.t|does not) match.*platform|'
+     r'provisioning profile.*(?:not valid for|platform.*(?:mismatch|incorrect)).*'
+     r'(?:platform|iOS|macOS|OS X|watchOS|tvOS|visionOS)'),
+    ('profileDeviceMismatch', r'provisioning profile.*(?:doesn.t|does not) include.*(?:device|UDID)|'
+     r'provisioning profile.*(?:device.*not included|not valid for.*device)|'
+     r'device.*(?:not included|not provisioned).*profile'),
+    ('profileAppIDMismatch', r'provisioning profile.*(?:app(?:lication)?[- ]?id|application-identifier|bundle identifier).*'
+     r'(?:doesn.t match|does not match|mismatch|doesn.t include|does not include)|'
+     r'provisioning profile.*(?:doesn.t|does not) match.*'
+     r'(?:app(?:lication)?[- ]?id|application-identifier|bundle identifier)'),
+    ('profileTeamMismatch', r'provisioning profile.*(?:team|application-identifier prefix).*'
+     r'(?:does not match|doesn.t match|mismatch|different|incorrect)|'
+     r'provisioning profile.*(?:doesn.t|does not) match.*team|'
+     r'provisioning profile.*is not associated with team'),
+    ('profileSignatureInvalid', r'provisioning profile.*(?:invalid signature|not signed by Apple|'
+     r'signature.*(?:invalid|not valid|failed)|failed to (?:verify|validate)|'
+     r'(?:could not|cannot) be (?:verified|validated))|'
+     r'(?:could not|failed to|cannot) (?:verify|validate).*provisioning profile'),
+    ('profileEntitlementMismatch', r'provisioning profile.*(?:doesn.t|does not) (?:include|support).*'
+     r'(?:entitlement|capability)|provisioning profile.*entitlement.*(?:mismatch|does not match|not permitted)|'
+     r'provisioning profile.*(?:doesn.t|does not) match.*entitlements file|'
+     r'entitlement.*(?:not permitted|not allowed).*provisioning profile'),
     ('signingMismatch', r'provisioning profile.*(?:doesn.t|does not) include signing certificate|'
      r'provisioning profile.*(?:doesn.t|does not) match|'
      r'provisioning profile.*has app ID.*(?:does not|doesn.t) match|'
      r'signing certificate.*(?:does not|doesn.t) match.*provisioning profile'),
     ('missingTeam', r'requires a development team|No Team ID found in archive|'
      r'(?:development team|team ID).*(?:not set|not specified|missing)'),
-    ('missingProfile', r'No profiles for.*were found|No provisioning profiles?.*(?:found|available)|'
-     r'(?:requires|missing|could not find|cannot find).*provisioning profile|'
-     r'provisioning profile.*(?:could not|cannot) be found'),
     ('keychainInteraction', r'User interaction is not allowed|errSecInteractionNotAllowed|'
      r'SecKeychainUnlock.*failed|keychain.*(?:locked|interaction.*not allowed)'),
     ('certificate', r'No signing certificate.*found|No .*signing certificate.*private key.*found|'
@@ -83,8 +121,13 @@ def empty_counts():
     return {'errorLineCount': 0, **{key: 0 for key, _ in RULES}}
 
 
+def empty_target_counts():
+    return {name: 0 for name in KNOWN_TARGETS}
+
+
 def summarize_lines(lines):
     counts = empty_counts()
+    target_counts = empty_target_counts()
     for raw in lines:
         line = ANSI_ESCAPE.sub('', raw)
         if line.lstrip().startswith('::'):
@@ -93,11 +136,13 @@ def summarize_lines(lines):
             if NON_ERROR_MARKER.search(line) or not BARE_ERROR_MARKER.search(line):
                 continue
         counts['errorLineCount'] += 1
+        for target in {match.group('target') for match in TARGET_CONTEXT.finditer(line)}:
+            target_counts[target] += 1
         for key, pattern in RULES:
             if pattern.search(line):
                 counts[key] += 1
                 break
-    return counts
+    return counts, target_counts
 
 
 def summarize_file(path):
@@ -117,31 +162,33 @@ def summarize_file(path):
             os.close(descriptor)
 
 
-def emit_summary(phase, status, counts):
-    print(NOTICE_PREFIX + json.dumps({'phase': phase, 'status': status, 'counts': counts},
+def emit_summary(phase, status, counts, target_counts):
+    print(NOTICE_PREFIX + json.dumps({'phase': phase, 'status': status, 'counts': counts,
+                                     'targetCounts': target_counts},
                                     sort_keys=True, separators=(',', ':')))
 
 
 def main(argv=None):
     phase = None
     counts = empty_counts()
+    target_counts = empty_target_counts()
     try:
         parser = PrivateArgumentParser(prog='ci-adhoc-diagnostics', add_help=False)
         parser.add_argument('--phase', required=True, choices=('archive', 'export'))
         parser.add_argument('--log-file', required=True)
         arguments = parser.parse_args(argv)
         phase = arguments.phase
-        counts = summarize_file(arguments.log_file)
+        counts, target_counts = summarize_file(arguments.log_file)
     except InvalidArguments:
-        emit_summary(None, 'invalidArguments', counts)
+        emit_summary(None, 'invalidArguments', counts, target_counts)
         return 2
     except OSError:
-        emit_summary(phase, 'inputUnavailable', counts)
+        emit_summary(phase, 'inputUnavailable', counts, target_counts)
         return 1
     except Exception:
-        emit_summary(phase, 'processingFailed', counts)
+        emit_summary(phase, 'processingFailed', counts, target_counts)
         return 1
-    emit_summary(phase, 'classified', counts)
+    emit_summary(phase, 'classified', counts, target_counts)
     return 0
 
 
