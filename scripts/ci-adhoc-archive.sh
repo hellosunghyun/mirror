@@ -4,13 +4,15 @@ set +x
 umask 077
 
 # 서명 자료와 로그는 runner의 임시 영역에만 둔다. 공개 산출물은 성공 뒤 별도 폴더로 내보낸다.
-if [[ $# -ne 3 ]]; then
-  printf '%s\n' '사용법: ci-adhoc-archive.sh BUILD_NUMBER COMMIT_SHA RUN_ID' >&2
+if [[ $# -ne 3 && ( $# -ne 4 || ${4:-} != --preflight ) ]]; then
+  printf '%s\n' '사용법: ci-adhoc-archive.sh BUILD_NUMBER COMMIT_SHA RUN_ID [--preflight]' >&2
   exit 2
 fi
 build_number="$1"
 commit_sha="$2"
 run_id="$3"
+preflight=0
+if [[ ${4:-} == --preflight ]]; then preflight=1; fi
 [[ "$build_number" =~ ^[1-9][0-9]*$ && "$run_id" =~ ^[1-9][0-9]*$ && "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || {
   printf '%s\n' '::error::빌드 번호, commit SHA, run ID가 유효하지 않습니다.' >&2
   exit 2
@@ -72,6 +74,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+signing_stage="서명 환경 준비"
+trap 'printf "%s\n" "::error::Ad Hoc 처리 단계에 실패했습니다: $signing_stage" >&2' ERR
 
 private_dir="$(mktemp -d "$RUNNER_TEMP/mirror-adhoc-private.XXXXXX")"
 publish_dir="$(mktemp -d "$RUNNER_TEMP/mirror-adhoc-publish.XXXXXX")"
@@ -138,29 +142,70 @@ if (( previous_keychain_count > 0 )); then
 else
   security list-keychains -d user -s "$keychain_path" >> "$private_dir/security.log" 2>&1
 fi
+signing_stage="P12 인증서와 개인 키 가져오기"
 security import "$private_dir/distribution.p12" -k "$keychain_path" -P "$IOS_DISTRIBUTION_P12_PASSWORD" \
   -T /usr/bin/codesign -T /usr/bin/security >> "$private_dir/security.log" 2>&1
+signing_stage="개인 키 접근 설정"
 security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path" >> "$private_dir/security.log" 2>&1
+signing_stage="서명 identity 조회"
+security find-identity -p codesigning "$keychain_path" > "$private_dir/all-identities.txt" 2>> "$private_dir/security.log"
 security find-identity -v -p codesigning "$keychain_path" > "$private_dir/identities.txt" 2>> "$private_dir/security.log"
+certificate_query_succeeded=0
+if security find-certificate -a -p "$keychain_path" > "$private_dir/imported-certificates.pem" 2>> "$private_dir/security.log"; then
+  certificate_query_succeeded=1
+fi
+signing_stage="프로파일 해석"
 security cms -D -i "$private_dir/profile.mobileprovision" > "$private_dir/profile.plist" 2>> "$private_dir/security.log"
-python3 - "$private_dir" <<'PY'
-import hashlib, pathlib, plistlib, re, sys
+signing_stage="인증서·개인 키·프로파일 일치 검사"
+python3 - "$private_dir" "$certificate_query_succeeded" <<'PY'
+import base64, hashlib, json, pathlib, plistlib, re, sys
 root = pathlib.Path(sys.argv[1])
 profile = plistlib.loads((root / 'profile.plist').read_bytes())
-identities = set(re.findall(r'\b[0-9A-Fa-f]{40}\b', (root / 'identities.txt').read_text()))
-identities = {value.upper() for value in identities}
-matching = [value for value in profile.get('DeveloperCertificates', []) if hashlib.sha1(value).hexdigest().upper() in identities]
+def identities(filename):
+    return {value.upper() for value in re.findall(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\b',
+            (root / filename).read_text(), re.MULTILINE)}
+all_identities = identities('all-identities.txt')
+valid_identities = identities('identities.txt')
+profile_certificates = profile.get('DeveloperCertificates', [])
+matching = [value for value in profile_certificates if hashlib.sha1(value).hexdigest().upper() in valid_identities]
+matching_any = [value for value in profile_certificates if hashlib.sha1(value).hexdigest().upper() in all_identities]
+certificate_query_succeeded = sys.argv[2] == '1'
+imported_hashes = set()
+if certificate_query_succeeded:
+    for value in re.findall(r'-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----',
+                           (root / 'imported-certificates.pem').read_text(), re.DOTALL):
+        imported_hashes.add(hashlib.sha1(base64.b64decode(''.join(value.split()), validate=True)).hexdigest().upper())
+matching_certificates = sum(hashlib.sha1(value).hexdigest().upper() in imported_hashes for value in profile_certificates)
+print('::notice::Signing identity diagnostics: ' + json.dumps({
+    'profileCertificateCount': len(profile_certificates), 'allIdentityCount': len(all_identities),
+    'validIdentityCount': len(valid_identities), 'matchingAllIdentityCount': len(matching_any),
+    'matchingValidIdentityCount': len(matching), 'certificateQuerySucceeded': certificate_query_succeeded,
+    'matchingImportedCertificateCount': matching_certificates if certificate_query_succeeded else None,
+}), flush=True)
 if len(matching) != 1:
+    if matching_any and not matching:
+        raise SystemExit('프로파일과 일치하는 개인 키 identity가 유효한 코드 서명 판정을 통과하지 못했습니다. 인증서 유효기간과 Apple 신뢰 체인을 확인해야 합니다.')
+    if certificate_query_succeeded and not matching_certificates:
+        raise SystemExit('가져온 P12에 프로파일과 일치하는 인증서가 없습니다. 같은 인증서와 개인 키로 P12와 프로파일을 등록해야 합니다.')
+    if certificate_query_succeeded and matching_certificates and not matching_any:
+        raise SystemExit('프로파일과 일치하는 인증서는 있지만 해당 개인 키를 포함한 코드 서명 identity를 찾지 못했습니다.')
     raise SystemExit('프로파일과 일치하며 개인 키가 있는 서명 인증서가 정확히 하나여야 합니다.')
 (root / 'certificate.der').write_bytes(matching[0])
 PY
 
+signing_stage="프로파일과 배포 권한 검사"
 python3 "$repo_root/scripts/ci-adhoc-profile.py" prepare \
   --profile-plist "$private_dir/profile.plist" --certificate "$private_dir/certificate.der" \
   --project-json "$private_dir/project.json" --project-root "$repo_root" \
   --targets MirrorIOS MirrorWidgetsIOS MirrorShareIOS \
   --context-out "$private_dir/context.json" --manifest-out "$private_dir/build-manifest.json" \
-  --export-options-out "$private_dir/ExportOptions.plist" --metadata "$private_dir/build.json"
+  --export-options-out "$private_dir/ExportOptions.plist" --metadata "$private_dir/build.json" \
+  > "$private_dir/prepare.log"
+if [[ "$preflight" == 1 ]]; then
+  printf '%s\n' '서명 자료 사전 검사 통과: 유효한 인증서·개인 키·프로파일 및 세 배포 대상의 권한을 확인했습니다. 실제 IPA 서명은 archive 단계에서 별도로 검증합니다.'
+  exit 0
+fi
+signing_stage="프로젝트 수동 서명 설정"
 python3 - "$private_dir/context.json" <<'PY'
 import json, sys
 context = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -190,6 +235,7 @@ for directory in "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles" 
   cp "$private_dir/profile.mobileprovision" "$installed"
 done
 
+signing_stage="서명된 iOS archive 생성"
 if ! xcodebuild -project "$repo_root/Mirror.xcodeproj" -scheme MirrorIOS -configuration Release \
     -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$private_dir/Mirror.xcarchive" \
     -derivedDataPath "$private_dir/DerivedData" -jobs 2 \
@@ -198,6 +244,7 @@ if ! xcodebuild -project "$repo_root/Mirror.xcodeproj" -scheme MirrorIOS -config
   printf '%s\n' '::error::서명된 iOS archive 생성에 실패했습니다. 서명 자료와 비공개 로그는 정리합니다.' >&2
   exit 1
 fi
+signing_stage="Ad Hoc IPA export"
 if ! xcodebuild -exportArchive -archivePath "$private_dir/Mirror.xcarchive" \
     -exportOptionsPlist "$private_dir/ExportOptions.plist" -exportPath "$private_dir/export" \
     > "$private_dir/export.log" 2>&1; then
@@ -205,6 +252,7 @@ if ! xcodebuild -exportArchive -archivePath "$private_dir/Mirror.xcarchive" \
   exit 1
 fi
 
+signing_stage="IPA 서명과 공개 자산 검사"
 python3 - "$private_dir" "$publish_dir" <<'PY'
 import hashlib, json, pathlib, plistlib, shutil, subprocess, sys, zipfile
 private, public = map(pathlib.Path, sys.argv[1:])

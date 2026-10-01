@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `25515ee` Ad Hoc은 Mac 단위 151개 통과·UI 3개 통과/3개 실패·skip 0개이며 모바일 UI는 진행 중이다. 최종 모바일 수용과 실제 배포 성공은 미확정이다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `2da19a9` Ad Hoc은 SwiftPM 151개, Mac 단위 151개와 모바일 각각 150개, 세 플랫폼 UI 여섯 사례를 실제 최종 summary/strict guard에서 통과했다. archive는 서명 인증서 match guard에서 실패했고 IPA·Release는 생성하지 못했다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -189,16 +189,20 @@ iPhone UI stdout은 완료·Undo를 포함한 5개 통과와 내일 검색 1개 
 
 이전 소유 컨테이너·부재 검사 보완은 `task.row.*`의 소유 컨테이너 탐색에서 컨테이너 hittability 필터 대신 실제 descendant ID·양수 frame·실제 window와의 교집합을 확인한다. 후보의 id/type/frame/containsTarget/window 진단을 남겨 소유 관계와 표시 영역을 확인한다. 행 자체의 hittable/enabled·중심의 표시 영역 포함 조건, 최대 8회 실제 scroll·일반 native tap은 유지한다. 닫힌 버튼의 부재 검사는 hittability를 조회하지 않고 전체 matching ID의 firstMatch.exists=false를 기존 15초 동안 확인한다. 제품 소스·상태·명령과 기대값·여섯 사례의 28개 assertions·15초 대기·최종 xcresult/strict guard 판정은 유지한다. 고정 좌표 tap이나 행동 재시도는 추가하지 않는다. 이 보완만으로 성공을 확정하지 않으며 후속 실행의 실제 결과와 구분한다.
 
-최신 커밋 `25515ee`의 [Ad Hoc 실행 36815613352](https://github.com/hellosunghyun/mirror/actions/runs/36815613352)은 모바일 검증이 진행 중인 중간 기록이다. 서명 입력 존재·준비 Python 40개·SwiftPM 151개는 통과했다. Mac job `110219909296`은 실제 단위 151/151개 통과, UI 3/6개 통과·3개 실패·skip 0개이며 xcodeCompletionReported=true다. UI 실패는 완료·Undo/내일 검색/주 패널 사례다. iPhone job `110219909248`은 로그 04:39:56부터, iPad job `110219909274`는 04:48:49부터 UI를 실행 중이며 최종 결과를 확정하지 않는다. archive·서명 IPA·Release 게시 단계에는 아직 진입하지 않았다.
+이전 커밋 `25515ee`의 [Ad Hoc 실행 36815613352](https://github.com/hellosunghyun/mirror/actions/runs/36815613352)은 Mac 단위 151/151개 통과·UI 3/6개 통과/3개 실패·skip 0개, xcodeCompletionReported=true였다. 실패는 완료·Undo/내일 검색/주 패널 사례다. 이후 iPhone은 단위 150개/UI 6개를 통과했지만 iPad UI는 stdout 3개 passed·1개 failed, 내일 검색 started·주 패널 미보고 상태에서 20분 제한으로 중단됐다. iPad 최종 UI summary/tree/strict guard는 없으며 archive·publish는 실행하지 못했다.
 
-같은 SHA의 [별도 Swift 실행 36815617243](https://github.com/hellosunghyun/mirror/actions/runs/36815617243)에서 iPhone job `110221075621`은 단위 150/150개와 UI 6/6개를 실제 통과했다. 최종 summary의 실패·skip은 0개이고 strict guard는 필수 bundle 1개/case 6개·missing/nonPassed 없음이다. 이 별도 실행의 성공을 위 Ad Hoc 실행의 모바일 게이트 통과로 대신하지 않는다.
+같은 `25515ee`의 [별도 Swift 실행 36815617243](https://github.com/hellosunghyun/mirror/actions/runs/36815617243)은 최종 cancelled였다. 완료한 iPhone job `110221075621`의 단위 150/150개/UI 6/6개 통과·실패/skip 0개와 strict guard bundle 1개/case 6개/missing·nonPassed 없음은 부분 증거로 보존한다. 취소된 별도 실행이나 그 부분 성공으로 당시 Ad Hoc의 실패를 대신하지 않는다.
 
-Mac 행 frame은 content 열 X=152..432 안에 있지만 sidebar X=-38..152도 소유 컨테이너 후보가 될 수 있다. 현재 선택된 owner의 raw 로그는 확보하지 못했으므로 sidebar 오선택을 실패 원인으로 확정하지 않는다. 후속 변경은 행 중심 X가 후보 minX..maxX 안에 있어야 하는 sameColumn 조건을 추가하며 세로 offscreen 행의 소유 영역 탐색은 유지한다. CI에는 정상 경로에서 선택된 owner 메타데이터를 notice로 남겨 실제 선택을 확인하도록 한다.
+이후 확보한 `25515ee` 전체 로그는 content 열 X=152..432의 행에 대해 sidebar X=-38..152를 소유 영역으로 선택하고 실제 스크롤 8회 뒤 세 사례가 실패한 경로를 확인했다. sameColumn·선택 owner 진단 변경을 포함한 `2da19a9`에서 Mac 여섯 UI 사례가 최종 통과했다. 기존 여섯 사례 본문·28개 assertions·최대 8회 실제 스크롤·행 hittable/enabled 확인·실제 tap·최종 xcresult/strict guard 판정은 유지했다.
 
-기존 여섯 사례 본문·28개 assertions·최대 8회 실제 스크롤·행 hittable/enabled 확인·실제 tap과 최종 xcresult/strict guard 판정은 유지한다. 제품 상태·명령과 기대값을 바꾸지 않는다. sameColumn·선택 owner 진단 보완의 효과는 새 SHA의 실제 Actions 검증 대기이며 현재 모바일 결과·실제 서명·Release 게시 성공과 QA 87개 전체 수용은 미완료다.
+최신 커밋 `2da19a9`의 [Ad Hoc 실행 36817569714](https://github.com/hellosunghyun/mirror/actions/runs/36817569714)은 서명 입력 존재·준비 Python 40개·SwiftPM 151개를 통과했다. Mac 단위 151개/UI 6개, iPhone 단위 150개/UI 6개, iPad 단위 150개/UI 6개도 모두 실제 최종 summary에서 통과했다. 세 플랫폼의 UI 실패·skip은 0개이며 strict guard는 각각 bundle 1개/case 6개/missingMethods·nonPassedMethods 없음이다. 여섯 UI 부분 시나리오 통과는 QA 87개 전체나 실기기·시스템 표면 수용 완료를 뜻하지 않는다.
+
+archive job `110231668813`은 `프로파일과 일치하며 개인 키가 있는 서명 인증서가 정확히 하나여야 합니다.`라는 match guard 메시지로 실패했고 publish는 skipped였다. 서명 IPA와 Release는 생성하지 못했다. 현재 -v codesigning 조회는 유효한 identity만 확인하므로 이 메시지만으로 P12 암호 오류·다른 인증서·개인키 부재·신뢰 체인 문제를 구분할 수 없다. 테스트 통과와 실제 서명·게시 성공을 구분한다.
+
+후속 서명 검사 보완은 --preflight 모드에서 프로파일 준비 단계까지 검증한 뒤 임시 자료를 정리한다. 전체 identity·valid identity와 각각의 profile 일치 수, 가져온 인증서의 matchingImportedCertificateCount만 안전 진단으로 남긴다. 프로파일 준비 출력은 비공개 파일에 보관하고 고정 signing_stage 오류 notice를 사용하며 구체 도구 출력·해시·DN·서명 자료는 출력하지 않는다. 인증서 부재·인증서는 있지만 개인키 identity를 조회하지 못한 상태·전체 identity는 일치하지만 valid identity가 없는 상태를 정적 메시지로 구분하되 valid identity가 정확히 하나여야 하는 기존 선택 gate는 유지한다. workflow는 presence 뒤 별도 signing-materials job을 병렬로 실행하고 archive에 기존 네 검증 gate와 새 서명 preflight 성공을 함께 요구한다. 실제 서명 원인 판별과 이 변경의 효과는 새 SHA의 Actions 검증 대기다. 제품 상태·명령·테스트 기대값과 QA 87개 원본은 유지하며 서명 IPA·Release·실기기 수용은 미완료다.
 
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 기록한 `179428d` 실행은 단위 단계 20분·UI 15분 제한이었다. 후속 UI 20분 제한과 종료 정리 변경은 다음 Actions에서 확인하며 시간 제한과 실패 진단은 성공 판정을 대신하지 않는다.
 
 실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다. 개발용 AppIcon과 unsigned CI packaging 결과도 Apple 등록·배포 준비 완료를 뜻하지 않는다.
 
-`179428d`는 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리를 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone 상태 패널은 탭 내용 안에, 입력 저장 버튼은 스크롤 본문 아래 고정 영역에 배치했다. 여섯 시나리오의 원본·계획·Undo assertions를 유지하며 각 SHA의 부분 결과를 위 기록으로 구별한다. 이전 `38d7849`의 iPhone 완료·Undo 통과와 `32b6159`의 실패, 최신 `25515ee`의 Mac 실패·모바일 진행 중 결과를 구분하며 전체 수용은 미완료다. 후속 sameColumn·선택 owner 진단 보완의 효과는 새 SHA의 실제 Actions 검증으로 확인한다.
+`179428d`는 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리를 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone 상태 패널은 탭 내용 안에, 입력 저장 버튼은 스크롤 본문 아래 고정 영역에 배치했다. 여섯 시나리오의 원본·계획·Undo assertions를 유지하며 각 SHA의 부분 결과를 위 기록으로 구별한다. 이전 `25515ee`의 실패·부분 결과와 최신 `2da19a9`의 세 플랫폼 UI 통과를 구분하며 전체 QA·실기기 수용은 미완료다. 후속 서명 preflight·identity 수 진단의 효과는 새 SHA의 실제 Actions 검증으로 확인한다.
