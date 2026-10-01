@@ -350,7 +350,7 @@ for index, bundle in enumerate(bundles):
         entitlements = subprocess.run(['/usr/bin/codesign', '-d', '--entitlements', ':-', str(bundle)],
                                       check=True, stdout=subprocess.PIPE, stderr=diagnostics).stdout
         certificate_prefix = str(private / f'signed-certificate-{index}-')
-        subprocess.run(['/usr/bin/codesign', '-d', '--extract-certificates', certificate_prefix, str(bundle)],
+        subprocess.run(['/usr/bin/codesign', '-d', '--extract-certificates=' + certificate_prefix, str(bundle)],
                        check=True, stdout=diagnostics, stderr=diagnostics)
         embedded = subprocess.run(['/usr/bin/security', 'cms', '-D', '-i', str(bundle / 'embedded.mobileprovision')],
                                   check=True, stdout=subprocess.PIPE, stderr=diagnostics).stdout
