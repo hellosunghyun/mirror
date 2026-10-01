@@ -82,10 +82,14 @@ private final class StoreProbeChild: @unchecked Sendable {
     func cleanup() { killAndReap(process, exitSignal: exitSignal) }
 
     var hasReapedExit: Bool {
-        guard exitSignal.wait(timeout: .now()) == .success else { return false }
-        exitSignal.signal() // cleanup도 같은 종료 완료 신호를 확인한다.
-        return true
+        hasReapedExitSignal(exitSignal)
     }
+}
+
+private func hasReapedExitSignal(_ signal: DispatchSemaphore) -> Bool {
+    guard signal.wait(timeout: .now()) == .success else { return false }
+    signal.signal() // cleanup도 같은 종료 완료 신호를 확인한다.
+    return true
 }
 
 private func killAndReap(_ process: Process, exitSignal: DispatchSemaphore) {
@@ -748,9 +752,12 @@ struct StoreIntegrationTests {
         let exitDeadline = clock.now.advanced(by: .seconds(5))
         while helper.isRunning, clock.now < exitDeadline { try await Task.sleep(for: .milliseconds(10)) }
         try #require(!helper.isRunning, "helper 종료 후에만 생산 명령을 재시도합니다.")
-        try #require(exitSignal.wait(timeout: .now() + 5) == .success,
+        let reapDeadline = clock.now.advanced(by: .seconds(5))
+        while !hasReapedExitSignal(exitSignal), clock.now < reapDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(hasReapedExitSignal(exitSignal),
                      "Python helper의 종료·회수 완료 신호는 5초 이내여야 합니다.")
-        exitSignal.signal()
         #expect(helper.terminationReason == .uncaughtSignal)
 
         let committed = await store.execute(envelope, at: context.capturedAt)
