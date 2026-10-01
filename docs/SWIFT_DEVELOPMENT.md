@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 Actions에서 통과했으며 iPhone의 상세 화면·Undo·UI 집계 실패를 수정·검증하고 있다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `873049b` 검증은 모바일 UI가 진행 중이며 Mac 상세 화면의 완료 Undo 시나리오가 실패했다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -132,7 +132,7 @@ Mac의 실제 UI tree는 여섯 선언 메서드를 모두 `Passed`로 보고했
 
 같은 커밋의 [준비 검사 36793734834](https://github.com/hellosunghyun/mirror/actions/runs/36793734834)은 원본 무결성과 Python 40개 검사를 통과했다. 이는 실제 IPA 서명·GitHub API 게시 결과가 아니다. [추적표](REQUIREMENTS_TRACEABILITY.md#1-현재-증거와-상태)는 최신 메서드별 부분 결과와 QA의 미검증 조건을 유지한다.
 
-최신 검증 커밋 `179428d98dcbfa61470395f7acbd5653b9f25c06`의 [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)은 SwiftPM·Mac·iPad job이 성공했고 iPhone UI 실패로 전체 실행은 실패했다. 세 native 플랫폼의 앱·두 확장 빌드와 필수 unit/integration bundle·구성 검사는 성공했다. 이전 저장 후처리·탭 상태 패널·입력 버튼 배치 수정의 결과와 남은 iPhone 오류를 분리한다.
+이전 완료 검증 커밋 `179428d98dcbfa61470395f7acbd5653b9f25c06`의 [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)은 SwiftPM·Mac·iPad job이 성공했고 iPhone UI 실패로 전체 실행은 실패했다. 세 native 플랫폼의 앱·두 확장 빌드와 필수 unit/integration bundle·구성 검사는 성공했다. 이전 저장 후처리·탭 상태 패널·입력 버튼 배치 수정의 결과와 남은 iPhone 오류를 분리한다.
 
 | 경로 | 실제 단위·통합 결과 | 실제 UI 결과 |
 |---|---|---|
@@ -148,6 +148,12 @@ iPhone의 완료 Undo 검사는 상세 화면이 열린 동안 root의 `task.und
 같은 SHA의 [Ad Hoc 실행 36796647867](https://github.com/hellosunghyun/mirror/actions/runs/36796647867)은 세 Secret의 존재, 원본/배포 도구 회귀, SwiftPM 151개와 Mac 151개·UI 6개 검사를 통과했다. 별도로 실행한 iPhone/iPad UI는 각각 15분 제한으로 중단돼 최종 집계가 없고 archive·publish는 skipped였다. standalone의 iPad 성공을 이 배포 run의 게이트 성공으로 대체하지 않는다. 실제 인증서·개인키 일치·archive/export·IPA 서명은 미검증이며 해당 시점 Release 목록은 0개로 공개 자산 네 개도 게시되지 않았다.
 
 같은 커밋의 [준비 검사 36796647485](https://github.com/hellosunghyun/mirror/actions/runs/36796647485)는 원본 무결성과 Python 40개 검사를 통과했다. 이 증거는 실제 API 게시나 IPA 성공을 뜻하지 않는다.
+
+최신 커밋 `873049b2709de2a97dffbdb49a55706870f33373`의 [Swift 실행 36800192812](https://github.com/hellosunghyun/mirror/actions/runs/36800192812)과 [Ad Hoc 실행 36800189042](https://github.com/hellosunghyun/mirror/actions/runs/36800189042)은 중간 결과다. Mac은 두 실행 모두 단위 151개 통과·UI 6개 중 5개 통과/1개 실패·skip 0개를 보고했다. standalone Mac job은 `110172593081`, Ad Hoc 재사용 Mac job은 `110172582614`다. 모바일 UI는 진행 중으로 결과를 확정하지 않으며 실제 인증서·개인키 일치, archive/export와 Release 게시도 아직 실행하지 않았다.
+
+Mac의 실패는 완료 Undo 시나리오에서 Undo 전 `detail.title`의 enabled=true/hittable=false, frame=(489,29,574,20), window=(-38,31,1100,674)였고 소유 scroll 컨테이너도 없었던 경우다. 이전 `179428d`의 Mac 통과를 최신 상세 화면 수정의 성공으로 대체하지 않는다. 후속 수정은 macOS 상세 Form의 grouped 배치와 사용 가능한 높이/상단 영역을 조정하고, 부모 `status.footer` ID가 `state.feedback`/`task.undo`를 덮는 접근성 식별자 문제를 제거한다. UI scroll fallback도 대상의 상단이 소유 surface 상단보다 위에 있으면 위쪽으로, 나머지는 아래쪽으로 실제 스크롤한다. 좌표 강제 tap이나 assertion/skip 변경으로 실패를 숨기지 않는다. 이 변경의 해결 여부는 다음 SHA의 Actions에서 확인해야 한다.
+
+같은 커밋의 [준비 검사 36800188766](https://github.com/hellosunghyun/mirror/actions/runs/36800188766)은 Python 40개 검사를 통과했다. 준비 검사와 Mac의 부분 결과를 모바일 최종 수용이나 실제 IPA 배포 성공으로 기록하지 않는다.
 
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 기록한 `179428d` 실행은 단위 단계 20분·UI 15분 제한이었다. 후속 UI 20분 제한과 종료 정리 변경은 다음 Actions에서 확인하며 시간 제한과 실패 진단은 성공 판정을 대신하지 않는다.
 

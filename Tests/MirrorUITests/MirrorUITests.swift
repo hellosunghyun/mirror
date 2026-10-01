@@ -316,10 +316,12 @@ final class MirrorUITests: XCTestCase {
                 XCTFail("대상 UI를 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
                 throw UIHarnessError.unhittable(identifier)
             }
+            let isAboveViewport = element.frame.minY < surface.frame.minY
             #if os(macOS)
-            surface.scroll(byDeltaX: 0, deltaY: -250)
+            surface.scroll(byDeltaX: 0, deltaY: isAboveViewport ? 250 : -250)
             #else
-            surface.swipeUp()
+            if isAboveViewport { surface.swipeDown() }
+            else { surface.swipeUp() }
             #endif
         }
         guard element.isHittable && element.isEnabled else {
@@ -411,7 +413,7 @@ final class MirrorUITests: XCTestCase {
             return "appState=\(state.rawValue), 앱 프로세스 종료: hierarchy 조회를 수행하지 않음"
         }
         // UI 테스트는 이 launch에서 직접 입력한 dummy만 사용한다. 앱 데이터나 로그 파일은 읽지 않는다.
-        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state.", "status.", "startup.", "onboarding."]
+        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state.", "startup.", "onboarding."]
         let appIDPredicate = NSCompoundPredicate(orPredicateWithSubpredicates: prefixes.map {
             NSPredicate(format: "identifier BEGINSWITH %@", $0)
         })
@@ -447,11 +449,10 @@ final class MirrorUITests: XCTestCase {
         let windowFrames = app.windows.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
         let sheetFrames = app.sheets.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
         let keyboardFrames = app.keyboards.allElementsBoundByIndex.prefix(1).map { String(describing: $0.frame) }.joined(separator: ", ")
-        let footerFrames = nodes.filter { $0.identifier == "status.footer" }.prefix(1).map { String(describing: $0.frame) }.joined(separator: ", ")
         let tabs = app.tabBars.buttons.allElementsBoundByIndex.prefix(3).map {
             "\($0.label.prefix(30)): selected=\($0.isSelected), frame=\($0.frame)"
         }.joined(separator: ", ")
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], footerFrames=[\(footerFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
         return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }

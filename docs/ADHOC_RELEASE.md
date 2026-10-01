@@ -76,3 +76,7 @@ Release 태그는 adhoc-실행ID다. 실행을 재시도하면 같은 태그의 
 동일 push의 [자동 배포 36796647867](https://github.com/hellosunghyun/mirror/actions/runs/36796647867)은 세 Secret 존재 확인·준비 검사·SwiftPM·Mac을 통과했다. 이 실행의 iPhone/iPad UI는 각각 15분 시간 초과여서 위 별도 Swift 실행의 iPad 통과를 배포 게이트 통과로 대신하지 않는다. Archive와 publish는 건너뛰었고 인증서·개인키·프로파일 일치, 실제 IPA와 GitHub Release는 아직 미검증이다.
 
 후속 변경은 상세 화면 안에 직전 Undo를 고정 배치하고, 검색 결과를 열기 전에 검색 포커스를 해제하며, 활성 화면만 상세 선택을 해제하도록 한다. UI 사례마다 앱을 종료하고 모바일 UI 제한은 20분으로 조정한다. 기존 여섯 사례와 최종 결과 검증은 유지하며 다음 push에서 실제 결과를 확인한다.
+
+이 변경을 포함한 `873049b2709de2a97dffbdb49a55706870f33373`의 [준비 검사 36800188766](https://github.com/hellosunghyun/mirror/actions/runs/36800188766)는 Python 40개를 통과했다. [자동 배포 36800189042](https://github.com/hellosunghyun/mirror/actions/runs/36800189042)는 세 Secret·준비·SwiftPM을 통과했지만 Mac UI에서 5개 통과·1개 실패·skip 0이었다. 실패는 Undo 실행 전 상세 제목 입력란이 창 위쪽에 가려지고 접근 가능한 스크롤 컨테이너가 없었던 편집 단계다. iPhone/iPad UI는 이 기록 시점 진행 중이며 archive·publish는 아직 실행되지 않았다.
+
+후속 수정은 Mac 상세 Form을 grouped 스타일과 가용 높이에 맞춰 스크롤할 수 있게 하고, UI 테스트도 대상이 뷰포트 위에 있으면 위로 스크롤해 실제 접근성을 확인한다. 상태 패널 부모의 진단용 ID가 자식의 오류·Undo ID를 덮는 문제를 제거한다. 숨은 요소의 강제 탭이나 assertion 생략은 추가하지 않으며 새 push의 검증·실제 서명 결과를 확인한다.

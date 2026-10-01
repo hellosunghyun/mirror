@@ -4,7 +4,11 @@
 
 ## 1. 현재 증거와 상태
 
-전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. 최신 검증은 `179428d98dcbfa61470395f7acbd5653b9f25c06`의 [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)이다. SwiftPM과 Mac의 단위·통합 151개(Domain 94, Data 24, System 33), iPhone·iPad 각각 150개(Domain 94, Data 23, System 33)가 완료 보고에서 통과했고 앱·두 확장과 필수 bundle/구성 검사 단계도 성공했다. Mac/iPad는 UI 여섯 Test Case가 모두 Passed, 실패·skip 0개이며 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음이다. iPhone stdout은 capture·긴 제목·정리 Undo·주 패널/부분 종료 4개 passed, 완료 Undo·내일 검색 2개 failed였다. iPhone UI는 15분 제한으로 중단돼 최종 summary/tree/guard를 확보하지 못했고 전체 실행은 실패했다. Xcode 27의 독립 worker 완료 보고를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다.
+최신 커밋 `873049b2709de2a97dffbdb49a55706870f33373`의 [Swift 실행 36800192812](https://github.com/hellosunghyun/mirror/actions/runs/36800192812)과 [Ad Hoc 실행 36800189042](https://github.com/hellosunghyun/mirror/actions/runs/36800189042)은 중간 검증이다. 두 Mac job(`110172593081`/`110172582614`)은 단위 151개 통과, UI 5개 통과·1개 실패·skip 0개다. 실패는 완료 Undo에서 Undo 전 `detail.title`이 enabled=true/hittable=false, frame=(489,29,574,20), window=(-38,31,1100,674)이며 소유 scroll 컨테이너가 없었던 경우다. 모바일 UI는 진행 중이고 실제 인증서·개인키 일치, archive/export와 Release 게시도 미실행이다. [준비 검사 36800188766](https://github.com/hellosunghyun/mirror/actions/runs/36800188766)의 Python 40개 통과를 최종 앱 수용·서명 성공으로 확장하지 않는다.
+
+후속 수정은 macOS 상세 Form의 grouped 배치와 사용 가능한 높이/상단 영역을 확보하고, 부모 `status.footer` ID가 `state.feedback`/`task.undo`를 덮는 접근성 식별자 문제를 제거한다. scroll fallback은 대상이 소유 surface 상단보다 위에 있으면 위쪽, 나머지는 아래쪽으로 실제 스크롤하며 좌표 강제 tap이나 assertion/skip 변경으로 실패를 숨기지 않는다. 해결은 새 SHA의 Actions로 확인해야 한다. 아래 V1~V6와 UI 메서드 표는 마지막 완료 검증 `179428d`의 증거이며 최신 `873049b`의 중간 결과와 구별한다.
+
+전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. 마지막 완료 검증은 `179428d98dcbfa61470395f7acbd5653b9f25c06`의 [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)이다. SwiftPM과 Mac의 단위·통합 151개(Domain 94, Data 24, System 33), iPhone·iPad 각각 150개(Domain 94, Data 23, System 33)가 완료 보고에서 통과했고 앱·두 확장과 필수 bundle/구성 검사 단계도 성공했다. Mac/iPad는 UI 여섯 Test Case가 모두 Passed, 실패·skip 0개이며 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음이다. iPhone stdout은 capture·긴 제목·정리 Undo·주 패널/부분 종료 4개 passed, 완료 Undo·내일 검색 2개 failed였다. iPhone UI는 15분 제한으로 중단돼 최종 summary/tree/guard를 확보하지 못했고 전체 실행은 실패했다. Xcode 27의 독립 worker 완료 보고를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다.
 
 이전 `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)은 Mac UI 6개 통과, 모바일 두 플랫폼은 각각 15분 중단이었다. stdout은 iPhone 여섯 메서드 failed, iPad 3개 passed·3개 failed였지만 최종 모바일 집계를 확보하지 못했다. 최신 standalone의 iPad 6개 및 strict guard 통과와 당시 부분 기록을 구분한다.
 
@@ -32,7 +36,7 @@
 | V2 실제 영속화 | `StoreIntegrationTests`, SwiftPM/Mac Data 24개, iPhone·iPad Data 23개. 실제 SQLite 재시작·원본 후 장애 복구·경쟁 인스턴스·export/import·로컬 삭제·복원·구독 알림. Mac 별도 OS 프로세스 lock 회귀 포함. 두 실제 Core Data writer 프로세스·물리 보호 데이터·migration/대용량 성능은 별도 검증 |
 | V3 시스템 계약 | `SystemContractTests`/`CloudBoundaryTests`, System 33개. 실제 임시 SQLite의 frozen 카드·receipt/토큰·Today 순서·재정리, 알림 planner·안전 딥링크·로컬 계측·Cloud 상태 구독. unhosted OS adapter의 typed 실패를 확인하며 실제 Widget/Siri/권한/CloudKit 성공으로 대신하지 않음 |
 | V4 native 빌드·구성 | `179428d98dcbfa61470395f7acbd5653b9f25c06`, [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352). SwiftPM/Mac 각각 151개, iPhone·iPad 각각 150개 완료 보고 통과와 필수 세 unit bundle 확인. 세 native 플랫폼의 앱·두 확장 및 privacy/라이선스/URL/App Intents 구성 검사 단계 성공. 앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
-| V5 UI 부분 시나리오 | 최신 standalone Mac/iPad UI tree의 선언된 `Test Case` 6개가 모두 `Passed`, 실패·skip 0개. 두 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음. iPhone은 stdout 4개 passed·2개 failed와 15분 중단으로 최종 summary/tree/guard 미확보. 아래 부분 QA 매핑이며 iPhone 최종 집계·skip 0개나 QA 전체 수용 결과를 뜻하지 않음 |
+| V5 UI 부분 시나리오 | 완료 검증 `179428d`의 standalone Mac/iPad UI tree의 선언된 `Test Case` 6개가 모두 `Passed`, 실패·skip 0개. 두 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음. iPhone은 stdout 4개 passed·2개 failed와 15분 중단으로 최종 summary/tree/guard 미확보. 아래 부분 QA 매핑이며 iPhone 최종 집계·skip 0개나 QA 전체 수용 결과를 뜻하지 않음 |
 | V6 준비·배포 로직 | 같은 커밋의 [준비 검사 36796647485](https://github.com/hellosunghyun/mirror/actions/runs/36796647485)에서 원본 무결성과 Python 40개(기존 9 + profile 12 + publisher 19) 통과. Ad Hoc preflight는 Secret 존재만 확인했고 archive/publish는 UI 게이트 실패로 skipped. 실제 키 일치·GitHub API 게시·서명 IPA 배포 결과는 아님 |
 
 | UI 메서드 | 원본 QA의 관련 부분 | Mac | iPhone / iPad |
@@ -46,7 +50,7 @@
 
 UI 부분 시나리오는 실제 임시 Core Data 저장소와 고정 시각 `2026-09-30T03:00:00Z`, 한국어 UI에서 실행한다. 원본 QA의 모든 precondition/steps·기기 표면이나 앱 재실행 후 영속 보존까지 완료한 결과가 아니므로 Q 행 전체 상태를 `pass`로 바꾸지 않는다. Mac UI 시나리오에는 키보드 명령 조작이 없으므로 Q-078 검증 완료를 뜻하지 않는다. iPhone stdout의 passed/failed 기록은 최종 xcresult 집계·skip 0개나 strict guard 통과를 대신하지 않는다. standalone의 Mac/iPad 여섯 시나리오 반복을 서로 다른 수용 테스트로 합산하지 않는다.
 
-최신 standalone iPhone의 실제 실패는 상세 화면이 열린 동안 root의 `task.undo`가 enabled=true/hittable=false이고 소유 scroll 컨테이너가 없었던 완료 Undo, 보관함 row의 실제 tap 뒤 `detail.plan`이 나타나지 않았던 내일 검색이다. 현재 iPhone Mirror IPS는 0개·읽기 실패 0개다. 이전 `4ef52f9`의 중복 Command 단축키 예외와 `1ca1d35`의 입력 초기화/화면 전환 오류를 최신 두 실패와 구분한다. 후속 상세 화면 Undo·검색 row 전환·종료 정리와 UI 제한 변경의 성공은 새 SHA의 Actions 결과로 확인해야 한다.
+완료 검증 `179428d`의 standalone iPhone 실패는 상세 화면이 열린 동안 root의 `task.undo`가 enabled=true/hittable=false이고 소유 scroll 컨테이너가 없었던 완료 Undo, 보관함 row의 실제 tap 뒤 `detail.plan`이 나타나지 않았던 내일 검색이다. 현재 iPhone Mirror IPS는 0개·읽기 실패 0개다. 이전 `4ef52f9`의 중복 Command 단축키 예외와 `1ca1d35`의 입력 초기화/화면 전환 오류를 최신 두 실패와 구분한다. 후속 상세 화면 Undo·검색 row 전환·종료 정리와 UI 제한 변경의 성공은 새 SHA의 Actions 결과로 확인해야 한다.
 
 이전 소스 `542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 GitHub 계정 결제/사용 한도 때문에 모든 job의 실행 단계가 0개였다. 그 실행은 UI/IPS가 생성되지 않은 당시의 `not_run` 기록이며, 현재는 위 최신 실행의 실제 결과로 구분한다. 과거 실행 차단을 현재 UI 실패의 원인으로 쓰지 않는다.
 

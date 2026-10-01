@@ -122,7 +122,6 @@ struct MirrorRootView: View {
                 Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.bar))
-                .accessibilityIdentifier("status.footer")
         }
     }
     private var detailSheet: Binding<MirrorDetailRequest?> {

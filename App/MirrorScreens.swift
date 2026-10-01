@@ -587,6 +587,10 @@ struct MirrorTaskDetail: View {
                     }
                 }
             }
+            #if os(macOS)
+            .formStyle(.grouped)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            #endif
             if model.lastUndo?.taskID == task.taskID {
                 Button("직전 변경 되돌리기") { Task { await model.undo() } }
                     .buttonStyle(.bordered).frame(minHeight: 44)
