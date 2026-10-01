@@ -180,6 +180,8 @@ class AdHocProfileTests(unittest.TestCase):
 
     def test_patch_changes_only_ios_application_configuration_settings(self):
         self.project['objects']['appRelease']['buildSettings']['PROVISIONING_PROFILE_SPECIFIER'] = 'old synthetic name'
+        self.project['objects']['appRelease']['buildSettings']['PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]'] = 'old conditional name'
+        self.project['objects']['appRelease']['buildSettings']['PROVISIONING_PROFILE[sdk=iphoneos*]'] = 'old conditional UUID'
         self.project['objects']['appRelease']['buildSettings']['CODE_SIGN_IDENTITY[sdk=iphoneos*]'] = 'old identity'
         context, _, _ = self.prepare()
         patched = helper.patch(self.project, context)
@@ -190,7 +192,9 @@ class AdHocProfileTests(unittest.TestCase):
                 self.assertEqual(settings['PROVISIONING_PROFILE'], PROFILE_UUID)
                 self.assertEqual(settings['DEVELOPMENT_TEAM'], TEAM)
                 self.assertEqual(settings['CODE_SIGN_IDENTITY'], context['identitySHA1'])
-                self.assertNotIn('PROVISIONING_PROFILE_SPECIFIER', settings)
+                self.assertEqual(settings['PROVISIONING_PROFILE_SPECIFIER'], PROFILE_UUID)
+                self.assertNotIn('PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]', settings)
+                self.assertNotIn('PROVISIONING_PROFILE[sdk=iphoneos*]', settings)
                 self.assertNotIn('CODE_SIGN_IDENTITY[sdk=iphoneos*]', settings)
         for identifier in ('project', 'framework', 'frameworkDebug', 'frameworkRelease', 'mac', 'macDebug', 'macRelease'):
             self.assertEqual(patched['objects'][identifier], self.project['objects'][identifier])

@@ -294,6 +294,8 @@ def patch(project, context):
             for key in list(settings):
                 if key.startswith('PROVISIONING_PROFILE_SPECIFIER') or key.startswith('PROVISIONING_PROFILE[') or key.startswith('CODE_SIGN_IDENTITY['):
                     settings.pop(key)
+            # 현대 Xcode의 선택 키와 기존 UUID 키를 같은 검증된 프로파일로 고정한다.
+            settings['PROVISIONING_PROFILE_SPECIFIER'] = context['profileUUID']
     return result
 
 
