@@ -137,7 +137,8 @@ struct MirrorRootView: View {
         }
     }
     @ViewBuilder private var statusBar: some View {
-        if model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
+        if !model.showCapture,
+            model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
             || model.lastUndo != nil || model.systemProblem != nil || model.cleanupProblem != nil {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center, spacing: 10) {

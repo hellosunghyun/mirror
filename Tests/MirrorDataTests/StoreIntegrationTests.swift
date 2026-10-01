@@ -206,6 +206,14 @@ struct StoreIntegrationTests {
         async let a = first.execute(envelope, at: context.capturedAt)
         async let b = second.execute(envelope, at: context.capturedAt)
         let results = await [a, b]
+        let diagnostic: [String: Any] = [
+            "states": results.map { $0.state.rawValue },
+            "busyResults": results.map {
+                $0.state == .unavailable && $0.safeUserMessage == "다른 변경을 반영 중입니다. 같은 작업을 재시도해 주세요."
+            }
+        ]
+        let diagnosticJSON = try JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys])
+        print("Store dedup result diagnostic: \(String(decoding: diagnosticJSON, as: UTF8.self))")
         #expect(results.filter { $0.state == .locallyCommitted }.count == 1)
         #expect(results.filter { $0.state == .alreadyApplied }.count == 1)
         let left = try await first.snapshot(), right = try await second.snapshot()

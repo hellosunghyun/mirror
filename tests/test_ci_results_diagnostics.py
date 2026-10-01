@@ -1,4 +1,4 @@
-"""UI 시간 진단의 범위·비공개 값 제외·기존 통과 게이트 회귀. Actions에서 실행한다."""
+"""UI·저장 결과 진단의 비공개 값 제외·기존 통과 게이트 회귀. Actions에서 실행한다."""
 
 import contextlib
 import importlib.util
@@ -29,6 +29,8 @@ STAGES = (
 )
 CASE_NOTICE = '::notice::UI case timing: '
 SCREENSHOT_NOTICE = '::notice::UI screenshot timing: '
+STORE_DEDUP_NOTICE = '::notice::Store dedup result diagnostic: '
+STORE_DEDUP_REJECTED_NOTICE = '::notice::Store dedup result diagnostic rejected: '
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -38,6 +40,12 @@ def case_line(method=METHODS[0], event='passed', seconds='12.345', module='Mirro
 
 def screenshot_line(stage='week-picker', milliseconds='123'):
     return f'UI screenshot timing: stage={stage},milliseconds={milliseconds}'
+
+
+def store_dedup_line(payload=None):
+    if payload is None:
+        payload = {'states': ['locallyCommitted', 'unavailable'], 'busyResults': [False, True]}
+    return 'Store dedup result diagnostic: ' + json.dumps(payload)
 
 
 class CIResultsDiagnosticsTests(unittest.TestCase):
@@ -57,6 +65,158 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_store_dedup_valid_report_has_only_fixed_method_scope_states_and_bools(self):
+        log = self.root / 'store-valid.log'
+        log.write_text('fatal: /private/' + PRIVATE + ' ' + store_dedup_line() + '\n')
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [{
+            'method': 'independentInstancesDeduplicate', 'scope': 'stdoutOnly',
+            'states': ['locallyCommitted', 'unavailable'], 'busyResults': [False, True],
+        }])
+        self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [])
+        self.assertNotIn('/private/', output)
+        self.assertNotIn('::error::', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+
+    def test_store_dedup_accepts_each_current_command_result_state(self):
+        expected_states = {
+            'locallyCommitted', 'alreadyApplied', 'requiresConfirmation', 'staleSnapshot',
+            'staleContext', 'alreadyDecided', 'notFound', 'unavailable', 'persistenceFailed',
+            'committedProjectionPending',
+        }
+        self.assertEqual(helper.COMMAND_RESULT_STATES, expected_states)
+        for state in sorted(expected_states):
+            with self.subTest(state=state):
+                payload = {'states': [state, 'alreadyApplied'],
+                           'busyResults': [state == 'unavailable', False]}
+                log = self.root / 'store-state.log'
+                log.write_text(store_dedup_line(payload) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [{
+                    'method': 'independentInstancesDeduplicate', 'scope': 'stdoutOnly', **payload,
+                }])
+                self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [])
+
+    def test_store_dedup_rejects_unknown_state_and_wrong_payload_shapes(self):
+        invalid_payloads = (
+            {'states': ['locallyCommitted', PRIVATE], 'busyResults': [False, False]},
+            {'states': [PRIVATE, 'alreadyApplied'], 'busyResults': [False, False]},
+            {'states': [], 'busyResults': [False, False]},
+            {'states': ['locallyCommitted'], 'busyResults': [False, False]},
+            {'states': ['locallyCommitted', 'alreadyApplied', 'unavailable'], 'busyResults': [False, False]},
+            {'states': 'locallyCommitted', 'busyResults': [False, False]},
+            {'states': [None, 'alreadyApplied'], 'busyResults': [False, False]},
+            {'states': [True, 'alreadyApplied'], 'busyResults': [False, False]},
+            {'states': [{}, 'alreadyApplied'], 'busyResults': [False, False]},
+            {'busyResults': [False, False]},
+            {'states': ['locallyCommitted', 'alreadyApplied']},
+            [], None, True,
+        )
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                log = self.root / 'store-shape.log'
+                # None도 기본 정상 payload가 아니라 실제 JSON null로 입력한다.
+                log.write_text('Store dedup result diagnostic: ' + json.dumps(payload) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [])
+                self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+
+    def test_store_dedup_requires_exactly_two_actual_bool_values(self):
+        invalid_values = (0, 1, 0.0, 1.0, 'true', 'false', None, [], {})
+        invalid_arrays = ([], [False], [False, True, False], 'false,true', None)
+        for value in invalid_values:
+            for index in (0, 1):
+                values = [False, True]
+                values[index] = value
+                invalid_arrays += (values,)
+        for values in invalid_arrays:
+            with self.subTest(busyResults=values):
+                payload = {'states': ['locallyCommitted', 'unavailable'], 'busyResults': values}
+                log = self.root / 'store-bool.log'
+                log.write_text(store_dedup_line(payload) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [])
+                self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+
+    def test_store_dedup_rejects_private_extra_fields_duplicates_and_malformed_json(self):
+        valid = {'states': ['locallyCommitted', 'alreadyApplied'], 'busyResults': [False, False]}
+        private_payload = {**valid, 'private': 'UI row scroll owner: error: /private/' + PRIVATE}
+        duplicate = ('{"states":["' + PRIVATE + '","alreadyApplied"],'
+                     '"states":["locallyCommitted","alreadyApplied"],"busyResults":[false,false]}')
+        lines = [store_dedup_line(private_payload),
+                 'Store dedup result diagnostic: ' + duplicate,
+                 store_dedup_line(valid) + ' error: ' + PRIVATE,
+                 'Store dedup result diagnostic: {' + PRIVATE,
+                 store_dedup_line(valid) + ' Store dedup result diagnostic: ' + PRIVATE,
+                 'Store dedup result diagnostic: ' + json.dumps({**valid, 'private': PRIVATE * 4096}),
+                 'Store dedup result diagnostic: ' + '[' * 1500 + '0' + ']' * 1500]
+        log = self.root / 'store-private.log'
+        log.write_text('\n'.join(lines) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [])
+        self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [{'invalidCount': len(lines)}])
+        self.assertNotIn('/private/', output)
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('::error::', output)
+
+    def test_store_dedup_interleaved_logs_keep_other_diagnostics_and_swift_target_gates(self):
+        log = self.root / 'store-parallel.log'
+        lines = [
+            'Test run with 36 tests passed after 0.2 seconds.',
+            store_dedup_line(),
+            screenshot_line('detail', '123'),
+            'Test run with 94 tests failed after 0.3 seconds.',
+            store_dedup_line({'states': ['locallyCommitted', PRIVATE], 'busyResults': [False, False]}),
+            'error: safe unrelated compiler failure',
+            'Test run with 29 tests passed after 0.1 seconds.',
+        ]
+        log.write_text('\n'.join(lines) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [{
+            'method': 'independentInstancesDeduplicate', 'scope': 'stdoutOnly',
+            'states': ['locallyCommitted', 'unavailable'], 'busyResults': [False, True],
+        }])
+        self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertEqual(self.notices(output, SCREENSHOT_NOTICE), [
+            {'scope': 'stdoutOnly', 'stage': 'detail', 'milliseconds': 123},
+        ])
+        self.assertEqual(self.notices(output, '::notice::Swift Testing completion reports: '), [[
+            {'tests': 36, 'result': 'passed'}, {'tests': 94, 'result': 'failed'},
+            {'tests': 29, 'result': 'passed'},
+        ]])
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        with mock.patch.object(helper.sys, 'argv', ['ci_results.py', 'swift', str(log)]), \
+                mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            with self.assertRaises(ValueError):
+                self.capture(helper.main)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+
+        valid = {'states': ['locallyCommitted', 'alreadyApplied'], 'busyResults': [False, False]}
+        log.write_text('\n'.join([
+            'Test run with 36 tests passed after 0.2 seconds.', store_dedup_line(valid),
+            'Test run with 94 tests passed after 0.3 seconds.',
+            'Test run with 29 tests passed after 0.1 seconds.',
+        ]) + '\n')
+        with mock.patch.object(helper.sys, 'argv', ['ci_results.py', 'swift', str(log)]), \
+                mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}):
+            output = self.capture(helper.main)
+        self.assertEqual(self.notices(output, STORE_DEDUP_NOTICE), [{
+            'method': 'independentInstancesDeduplicate', 'scope': 'stdoutOnly', **valid,
+        }])
+        self.assertIn('"executedTests": 159, "result": "pass"', output)
+        self.assertEqual(output_path.read_text(), 'previous=value\ntests=159\n')
 
     def test_duration_accepts_native_numbers_at_both_inclusive_bounds(self):
         for value in (0, 0.0, 0.001, 1199.999, 1200, 1200.0):

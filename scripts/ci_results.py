@@ -30,6 +30,12 @@ UI_CASE_TIMING_PATTERN = re.compile(
     r'(passed|failed) \(([0-9]{1,6}(?:\.[0-9]{1,9})?) seconds\)\.?\s*$')
 UI_SCREENSHOT_TIMING_PATTERN = re.compile(
     r'UI screenshot timing: stage=([a-z-]{1,32}),milliseconds=([0-9]{1,7})\s*$')
+STORE_DEDUP_DIAGNOSTIC_MARKER = 'Store dedup result diagnostic:'
+COMMAND_RESULT_STATES = frozenset({
+    'locallyCommitted', 'alreadyApplied', 'requiresConfirmation', 'staleSnapshot',
+    'staleContext', 'alreadyDecided', 'notFound', 'unavailable', 'persistenceFailed',
+    'committedProjectionPending',
+})
 
 
 def annotation(message):
@@ -46,6 +52,49 @@ def report_runs(log):
     reports = reported_runs(log)
     if reports:
         print('::notice::Swift Testing completion reports: ' + json.dumps(reports))
+
+
+def report_store_dedup_diagnostics(lines):
+    # 원본 값·경로·메시지 대신 현재 enum 두 상태와 고정 busy 판정 두 개만 공개한다.
+    reports = deque(maxlen=8)
+    invalid_count = 0
+
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError('중복된 진단 필드입니다.')
+            fields[key] = value
+        return fields
+
+    for line in lines:
+        if STORE_DEDUP_DIAGNOSTIC_MARKER not in line:
+            continue
+        try:
+            if line.count(STORE_DEDUP_DIAGNOSTIC_MARKER) != 1:
+                raise ValueError('진단 marker가 하나여야 합니다.')
+            payload = line.partition(STORE_DEDUP_DIAGNOSTIC_MARKER)[2].strip()
+            if len(payload) > 4096:
+                raise ValueError('진단 payload가 너무 깁니다.')
+            report = json.loads(payload, object_pairs_hook=unique_fields)
+            if not isinstance(report, dict) or set(report) != {'states', 'busyResults'}:
+                raise ValueError('진단 필드는 states와 busyResults여야 합니다.')
+            states, busy_results = report['states'], report['busyResults']
+            if (not isinstance(states, list) or len(states) != 2
+                    or any(not isinstance(state, str) or state not in COMMAND_RESULT_STATES
+                           for state in states)
+                    or not isinstance(busy_results, list) or len(busy_results) != 2
+                    or any(type(value) is not bool for value in busy_results)):
+                raise ValueError('진단은 enum 상태 두 개와 bool 두 개여야 합니다.')
+            reports.append({'method': 'independentInstancesDeduplicate', 'scope': 'stdoutOnly',
+                            'states': states, 'busyResults': busy_results})
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    for report in reports:
+        print('::notice::Store dedup result diagnostic: ' + json.dumps(report))
+    if invalid_count:
+        print('::notice::Store dedup result diagnostic rejected: '
+              + json.dumps({'invalidCount': invalid_count}))
 
 
 def valid_ui_duration(value):
@@ -106,6 +155,10 @@ def report_ui_tree_timings(nodes):
 def diagnostics(path):
     log = Path(path).read_text(errors='replace')
     lines = log.splitlines()
+    report_store_dedup_diagnostics(lines)
+    # 유효·무효 진단 marker의 원문은 다른 구조화 출력과 오류 fallback에도 섞지 않는다.
+    lines = [line for line in lines if STORE_DEDUP_DIAGNOSTIC_MARKER not in line]
+    log = '\n'.join(lines)
     report_runs(log)
     # 중단된 xcresult와 stdout의 사례 진행을 구별한다. 게이트 통과 판정에는 사용하지 않는다.
     case_events = []
@@ -229,6 +282,7 @@ def main():
             raise ValueError('필수 세 SwiftPM 테스트 target의 양수 통과 완료 보고가 있어야 합니다.')
         if re.search(r'\btest(?:s)?\b.*\bskipped\b', log, re.I):
             raise ValueError('Swift 테스트에 skipped 결과가 있습니다.')
+        report_store_dedup_diagnostics(log.splitlines())
         record(sum(report['tests'] for report in reports))
     elif mode == 'xcode':
         unit = xcode_count(path)

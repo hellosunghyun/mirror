@@ -35,6 +35,10 @@
 
 [후속 실행36916034507](https://github.com/hellosunghyun/mirror/actions/runs/36916034507), `fae3ac0`·build31은 준비·도메인만 통과했고 세 플랫폼 앱 빌드가 `MirrorApp.swift`의 조건부 modifier와 메뉴바 Scene이 같은 블록에 있는 구문 오류로 실패했다. UI·receipt는 실행되지 않았고 새 자료·앱도 게시되지 않았다. modifier와 별도 Scene의 조건부 블록을 분리하며 이 결과를 UI assertion 실패나 시각 수용으로 계산하지 않는다.
 
+[후속 실행36917186594](https://github.com/hellosunghyun/mirror/actions/runs/36917186594), `e39e2da`·build32는 세 플랫폼 실제 SDK 컴파일·UI 산출물 receipt를 통과했다. Mac UI6개는 모두 통과했고 새 창 경계 검사도 포함한다. iPhone은5개 통과·첫 입력 사례1개 실패이며 `keyboard.keys.firstMatch.isHittable`의 assertion을 확인했다. iPad는4개 통과·입력 및 긴 입력 사례2개 실패와 실제 UI 단계20분 중단을 확인했으나 정확한 assertion 위치는 공개 페이지에서 확인되지 않았다. 별도 SwiftPM의 `independentInstancesDeduplicate`에서 동일 요청의 `.alreadyApplied` 결과 한 개를 기대하는 회귀도 실패했다. 완료 보고의29개 run을29개 실패나 특정 target으로 추정하지 않는다. 새 화면·설치 자료는 게시되지 않았다.
+
+후속 수정은 정확한 키보드 안내를 앱 접근성 범위에서 찾되 실제 키보드 안의 유일한 `Continue`만 닫고, 접근성 목록의 첫 키 대신 키보드 안에서 누를 수 있는 입력 키를 기존15초 안에서 확인한다. 입력 sheet를 열었을 때 배경의 오류 안내를 중복 표시하지 않는다. 독립 저장소 회귀는 기존 assertions를 유지하고 두 반환 state와 고정 busy 안내의 일치 여부만 안전하게 기록한다. 원본·식별자·오류 원문을 공개하지 않으며, 실제 반환 상태가 없는 현재 결과만으로 저장 중복이나 잠금 실패를 단정하지 않는다. 모든 시간 제한·여섯 UI 사례·43개 원본 앱샷을 유지한 새 실행으로 검증한다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |

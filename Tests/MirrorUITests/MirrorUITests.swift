@@ -312,22 +312,42 @@ final class MirrorUITests: XCTestCase {
     private func dismissKeyboardIntroduction(in app: XCUIApplication) throws {
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 15), "입력 캡처에는 실제 키보드가 표시되어야 한다.")
-        let introduction = keyboard.staticTexts.matching(NSPredicate(
+        let introduction = app.staticTexts.matching(NSPredicate(
             format: "label == %@",
             "Speed up your typing by sliding your finger across the letters to compose a word."
         )).firstMatch
         if introduction.exists {
-            let next = keyboard.buttons["Continue"]
-            XCTAssertTrue(next.exists && next.isHittable,
-                          "확인된 시스템 키보드 안내의 Continue만 닫는다.")
-            XCTAssertTrue(keyboard.frame.contains(next.frame), "시스템 안내 버튼은 키보드 안에 있어야 한다.")
+            let keyboardBounds = keyboard.frame
+            let candidates = app.buttons.matching(NSPredicate(format: "label == %@", "Continue"))
+                .allElementsBoundByIndex.filter { $0.exists && $0.isHittable && keyboardBounds.contains($0.frame) }
+            XCTAssertEqual(candidates.count, 1, "확인된 키보드 안내 안의 유일한 Continue만 닫는다.")
+            guard candidates.count == 1 else { throw UIHarnessError.missingElement("keyboardIntroduction.continue") }
+            let next = candidates[0]
             try interact(with: next, in: app)
             let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: introduction)
             XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed)
         }
+        let keyDeadline = Date().addingTimeInterval(15)
         XCTAssertTrue(keyboard.keys.firstMatch.waitForExistence(timeout: 15),
                       "시스템 안내가 아닌 실제 입력 키가 준비된 뒤 캡처한다.")
-        XCTAssertTrue(keyboard.keys.firstMatch.isHittable, "실제 입력 키를 시스템 안내가 가리지 않는다.")
+        var hasVisibleInputKey = false
+        repeat {
+            let bounds = keyboard.frame
+            for key in keyboard.keys.allElementsBoundByIndex {
+                guard Date() < keyDeadline else { break }
+                if key.isHittable {
+                    let frame = key.frame
+                    if frame.width > 0 && frame.height > 0 && bounds.contains(frame), Date() < keyDeadline {
+                        hasVisibleInputKey = true
+                        break
+                    }
+                }
+            }
+            if hasVisibleInputKey { break }
+            RunLoop.current.run(until: min(Date().addingTimeInterval(0.1), keyDeadline))
+        } while Date() < keyDeadline
+        XCTAssertTrue(hasVisibleInputKey, "실제 키보드 안의 입력 키를 시스템 안내가 가리지 않는다.")
+        XCTAssertFalse(introduction.exists, "입력 화면 캡처에 시스템 키보드 안내가 남지 않는다.")
     }
     #endif
 
