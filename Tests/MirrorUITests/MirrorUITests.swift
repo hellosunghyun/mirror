@@ -1,16 +1,31 @@
 import XCTest
+#if os(iOS)
+import UIKit
+#endif
 
 /// 실제 UI 입력과 앱의 Core Data 저장 경로를 사용한다. 테스트 전용 성공 응답이나 seed는 없다.
 /// 같은 소스를 iPhone, iPad, Mac UI scheme에서 실행한다.
 final class MirrorUITests: XCTestCase {
     @MainActor private var lastActionDescription = "없음"
+    @MainActor private var evidenceSequence = 0
 
     @MainActor
-    func testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday() throws {
+    func testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday() async throws {
         let app = try launchApp()
         defer { app.terminate() }
         let title = "UI capture then today"
-        try capture(title, in: app)
+        try recordUI("initial-today", in: app, identifiers: ["today.list", "today.review", "capture.open"])
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            try await captureIPadLandscape(in: app)
+        }
+        #endif
+        try selectDestination("calendar", title: "일정", in: app)
+        _ = try requireElement("calendar.date", in: app)
+        try recordUI("calendar", in: app, identifiers: ["calendar.date", "capture.open", "settings.button"])
+        try showToday(in: app)
+        try captureSettings(in: app)
+        try capture(title, in: app, attachEvidence: true)
 
         try showToday(in: app)
         XCTAssertFalse(taskRow(title, in: app).exists, "Q-001: 미검토 항목은 Today에 들어가지 않는다.")
@@ -18,11 +33,13 @@ final class MirrorUITests: XCTestCase {
         let unassigned = try requireRow(title, in: app)
         XCTAssertTrue(value(of: unassigned).contains("아직 정하지 않음"))
         XCTAssertTrue(value(of: unassigned).contains("미완료"))
+        try recordUI("library", in: app, identifiers: ["library.list", "library.search", "library.batchPlan"])
 
         try showToday(in: app)
         try activate("today.review", in: app)
         let card = try requireElement("review.card", in: app)
         XCTAssertEqual(displayedText(of: card), title)
+        try recordUI("review-card", in: app, identifiers: ["review.card", "review.today", "review.tomorrow", "review.thisWeek", "review.nextWeek", "review.other", "review.finish"])
         try activate("review.today", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
@@ -32,6 +49,7 @@ final class MirrorUITests: XCTestCase {
         let today = try requireRow(title, in: app)
         XCTAssertTrue(value(of: today).contains("9월 30일"))
         XCTAssertTrue(value(of: today).contains("미완료"), "Q-009: 오늘 배치는 완료가 아니다.")
+        try recordUI("today-populated", in: app, identifiers: ["today.list", "today.review", "capture.open", "task.undo"])
     }
 
     @MainActor
@@ -64,8 +82,10 @@ final class MirrorUITests: XCTestCase {
         let future = try requireRow(title, in: app)
         XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
         XCTAssertTrue(value(of: future).contains("미완료"))
+        try recordUI("library-search", in: app, identifiers: ["library.list", "library.search"])
         try interact(with: future, in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
+        try recordUI("detail", in: app, identifiers: ["detail.contentTitle", "detail.plan", "detail.edit", "task.complete", "detail.close"])
         try activate("detail.close", in: app)
         try showToday(in: app)
         XCTAssertFalse(taskRow(title, in: app).exists, "검색은 미래 계획을 Today로 바꾸지 않는다.")
@@ -85,6 +105,7 @@ final class MirrorUITests: XCTestCase {
         let problem = try requireElement("state.error", in: app)
         try waitForLabelContaining("500", element: problem)
         XCTAssertEqual(value(of: field), original, "Q-003: 잘라 저장하거나 입력 원문을 지우면 안 된다.")
+        try recordUI("validation-error", in: app, identifiers: ["capture.title", "capture.save", "capture.close", "state.error"])
 
         try activate("capture.close", in: app)
         try showLibrary(in: app)
@@ -111,6 +132,7 @@ final class MirrorUITests: XCTestCase {
         try waitForLabel(remainingTitle, element: requireElement("review.card", in: app), in: app)
         try activate("review.nextWeek", in: app)
         _ = try requireElement("plan.day.2026-10-05", in: app)
+        try recordUI("week-picker", in: app, identifiers: ["plan.day.2026-10-05", "plan.day.2026-10-11", "plan.weekOnly", "plan.cancel"])
         try activate("plan.cancel", in: app)
         try waitForLabel(remainingTitle, element: requireElement("review.card", in: app), in: app)
         try activate("review.finish", in: app)
@@ -143,6 +165,7 @@ final class MirrorUITests: XCTestCase {
         try activate("detail.edit", in: app)
         let field = try requireElement("detail.title", in: app)
         try replaceText(in: field, with: edited, app: app)
+        try recordUI("detail-edit", in: app, identifiers: ["detail.title", "detail.save", "detail.close"])
         try activate("detail.save", in: app)
         try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app), in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
@@ -150,10 +173,12 @@ final class MirrorUITests: XCTestCase {
         try activate("task.complete", in: app)
         try waitForLabel("완료 취소 · 다시 열기", element: requireElement("task.complete", in: app), in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"), "완료는 계획을 지우지 않는다.")
+        try recordUI("completion", in: app, identifiers: ["detail.contentTitle", "detail.plan", "task.complete", "task.undo", "detail.close"])
         try activate("task.undo", in: app)
         try waitForLabel("완료", element: requireElement("task.complete", in: app), in: app)
         XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
+        try recordUI("undo", in: app, identifiers: ["detail.contentTitle", "detail.plan", "task.complete", "detail.close"])
         try activate("detail.close", in: app)
         try showToday(in: app)
         let reopened = try requireRow(edited, in: app)
@@ -203,15 +228,109 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func capture(_ title: String, in app: XCUIApplication) throws {
+    private func capture(_ title: String, in app: XCUIApplication, attachEvidence: Bool = false) throws {
         try activate("capture.open", in: app)
         let field = try requireElement("capture.title", in: app)
         try replaceText(in: field, with: title, app: app)
+        if attachEvidence {
+            try recordUI("capture-form", in: app, identifiers: ["capture.title", "capture.note", "capture.url", "capture.save", "capture.close"])
+        }
         try activate("capture.save", in: app)
         try waitForValue("", element: field)
         try activate("capture.close", in: app)
         try requireNoElement("capture.title", in: app)
     }
+
+    /// 공개 증거는 이 테스트가 입력한 합성 작업의 앱 화면과 고정 ID의 경계 값만 남긴다.
+    /// 화면 합격 기준은 baseline 검토 뒤 추가하며 기존 기능 assertions는 그대로 유지한다.
+    @MainActor
+    private func recordUI(_ stage: String, in app: XCUIApplication, identifiers: [String]) throws {
+        evidenceSequence += 1
+        let method = name.replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-")).lowercased()
+        let screenshotName = "mirror-ui-\(stage)-\(method)-\(evidenceSequence)"
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = screenshotName
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        func frame(_ value: CGRect) -> [String: Double] {
+            // 접근성 경계를 제공하지 않는 요소도 baseline에서 살펴볼 수 있게 0으로 기록한다.
+            func finite(_ number: CGFloat) -> Double { number.isFinite ? Double(number) : 0 }
+            return ["x": finite(value.origin.x), "y": finite(value.origin.y),
+                    "width": finite(value.width), "height": finite(value.height)]
+        }
+        let nodes: [[String: Any]] = identifiers.map { identifier in
+            let node = element(identifier, in: app, preferButtons: true)
+            let exists = node.exists
+            return ["identifier": identifier, "exists": exists, "hittable": exists && node.isHittable,
+                    "frame": frame(exists ? node.frame : .zero)]
+        }
+        let metadata: [String: Any] = ["formatVersion": 1, "screenshotName": screenshotName,
+                                       "appFrame": frame(app.frame), "elements": nodes]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
+                                       uniformTypeIdentifier: "public.json")
+        attachment.name = "mirror-ui-metadata-\(stage)-\(method)-\(evidenceSequence)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    private func captureSettings(in app: XCUIApplication) throws {
+        try activate("settings.button", in: app)
+        let close = try settingsCloseButton(in: app)
+        try recordUI("settings", in: app, identifiers: ["settings.syncState", "settings.cloudState"])
+        try interact(with: close, in: app)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: close)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed, "설정 화면을 실제로 닫은 뒤 입력한다.")
+    }
+
+    @MainActor
+    private func settingsCloseButton(in app: XCUIApplication) throws -> XCUIElement {
+        let label = NSPredicate(format: "label == %@", "닫기")
+        let deadline = Date().addingTimeInterval(15)
+        repeat {
+            let sheet = app.sheets.firstMatch.buttons.matching(label).allElementsBoundByIndex
+            if let close = sheet.first(where: { $0.exists && $0.isHittable }) { return close }
+            // 원본의 ToolbarItem(cancellationAction)에 한정한다. Mac native window의
+            // traffic-light 닫기는 toolbar/navigation bar 밖이므로 fallback에 포함하지 않는다.
+            let controls = app.navigationBars.buttons.matching(label).allElementsBoundByIndex
+                + app.toolbars.buttons.matching(label).allElementsBoundByIndex
+            if let close = controls.first(where: { $0.exists && $0.isHittable }) { return close }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        XCTFail("실제 설정 sheet 또는 앱 toolbar의 닫기 버튼이 있어야 한다.")
+        throw UIHarnessError.missingElement("settingsCloseButton")
+    }
+
+    #if os(iOS)
+    @MainActor
+    private func captureIPadLandscape(in app: XCUIApplication) async throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        do {
+            try await waitForViewport(in: app, landscape: true)
+            try recordUI("ipad-landscape", in: app, identifiers: ["today.list", "capture.open", "settings.button", "ipad.adjacentCalendar"])
+        } catch {
+            XCUIDevice.shared.orientation = .portrait
+            throw error
+        }
+        XCUIDevice.shared.orientation = .portrait
+        try await waitForViewport(in: app, landscape: false)
+    }
+
+    @MainActor
+    private func waitForViewport(in app: XCUIApplication, landscape: Bool) async throws {
+        let deadline = Date().addingTimeInterval(15)
+        repeat {
+            let bounds = app.frame
+            if bounds.width > 0, bounds.height > 0,
+               (landscape ? bounds.width > bounds.height : bounds.height > bounds.width) { return }
+            try await Task.sleep(for: .milliseconds(100))
+        } while Date() < deadline
+        XCTFail("기기 회전 뒤 실제 앱 viewport가 요청한 방향으로 바뀌어야 한다.")
+        throw UIHarnessError.unexpectedValue("viewportOrientation")
+    }
+    #endif
 
     @MainActor
     private func showToday(in app: XCUIApplication) throws {

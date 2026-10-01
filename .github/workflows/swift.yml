@@ -79,6 +79,7 @@ jobs:
       tests: ${{ steps.test.outputs.tests }}
       unit_tests: ${{ steps.test.outputs.unit_tests }}
       ui_tests: ${{ steps.test.outputs.ui_tests }}
+      ui_evidence_ready: ${{ steps.test.outputs.ui_evidence_ready }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Mac 앱·확장 빌드와 단위·통합·구성 검사
@@ -119,9 +120,21 @@ jobs:
             .build/ci-macos/crash-summary.json
             .build/ci-macos/ui.log
             .build/ci-macos/ui-xcodebuild-help.txt
+            .build/ci-macos/ui-attachments-help.txt
             .build/ci-macos/Tests.xcresult
             .build/ci-macos/UI.xcresult
           include-hidden-files: true
+          retention-days: 7
+
+      - name: 명명된 Mac 앱샷과 안전한 검토 manifest 보존
+        if: ${{ always() && steps.test.outputs.ui_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ui-screenshots-mac-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-macos/ui-screenshots
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   iphone:
@@ -132,6 +145,7 @@ jobs:
       tests: ${{ steps.test.outputs.tests }}
       unit_tests: ${{ steps.test.outputs.unit_tests }}
       ui_tests: ${{ steps.test.outputs.ui_tests }}
+      ui_evidence_ready: ${{ steps.test.outputs.ui_evidence_ready }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: iPhone 앱·확장 빌드와 단위·통합·구성 검사
@@ -172,9 +186,21 @@ jobs:
             .build/ci-iphone/crash-summary.json
             .build/ci-iphone/ui.log
             .build/ci-iphone/ui-xcodebuild-help.txt
+            .build/ci-iphone/ui-attachments-help.txt
             .build/ci-iphone/Tests.xcresult
             .build/ci-iphone/UI.xcresult
           include-hidden-files: true
+          retention-days: 7
+
+      - name: 명명된 iPhone 앱샷과 안전한 검토 manifest 보존
+        if: ${{ always() && steps.test.outputs.ui_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ui-screenshots-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-iphone/ui-screenshots
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   ipad:
@@ -185,6 +211,7 @@ jobs:
       tests: ${{ steps.test.outputs.tests }}
       unit_tests: ${{ steps.test.outputs.unit_tests }}
       ui_tests: ${{ steps.test.outputs.ui_tests }}
+      ui_evidence_ready: ${{ steps.test.outputs.ui_evidence_ready }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: iPad 앱·확장 빌드와 단위·통합·구성 검사
@@ -225,9 +252,21 @@ jobs:
             .build/ci-ipad/crash-summary.json
             .build/ci-ipad/ui.log
             .build/ci-ipad/ui-xcodebuild-help.txt
+            .build/ci-ipad/ui-attachments-help.txt
             .build/ci-ipad/Tests.xcresult
             .build/ci-ipad/UI.xcresult
           include-hidden-files: true
+          retention-days: 7
+
+      - name: 명명된 iPad 앱샷과 안전한 검토 manifest 보존
+        if: ${{ always() && steps.test.outputs.ui_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ui-screenshots-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-ipad/ui-screenshots
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
           retention-days: 7
 
   results:
@@ -250,5 +289,7 @@ jobs:
                   raise SystemExit(f"{name}: 테스트 실행 또는 결과 확인 실패")
               if name != 'domain' and any(int(result['outputs'].get(key, 0)) <= 0 for key in ['unit_tests', 'ui_tests']):
                   raise SystemExit(f"{name}: 필수 단위·통합 또는 UI 테스트 실행 수가 없습니다.")
+              if name != 'domain' and result['outputs'].get('ui_evidence_ready') != 'true':
+                  raise SystemExit(f"{name}: 현재 실행의 필수 UI 앱샷 증거가 없습니다.")
           print('모든 플랫폼의 실제 테스트 실행과 완료를 확인했습니다.')
           PY

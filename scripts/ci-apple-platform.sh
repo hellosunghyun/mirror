@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 
 platform="${1:?macos, iphone 또는 ipad를 지정하세요}"
 mode="${2:-all}"
+build_number="${GITHUB_RUN_NUMBER:-1}"
 case "$mode" in
   unit|ui|all) ;;
   *) echo '지원하지 않는 실행 단계입니다: unit, ui 또는 all을 지정하세요.' >&2; exit 2 ;;
@@ -74,7 +75,7 @@ if test "$mode" != ui; then
     ci_phase='Simulator 시작 전 앱·확장·테스트 빌드'
     if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
       -sdk "$sdk" -destination "$destination" -jobs 2 \
-      -derivedDataPath "$result_dir/DerivedData" CODE_SIGNING_ALLOWED=NO build-for-testing \
+      -derivedDataPath "$result_dir/DerivedData" CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO build-for-testing \
       2>&1 | tee "$result_dir/test.log"; then
       if test "$device_state" != Booted; then
         ci_phase='Simulator 시작'
@@ -94,7 +95,7 @@ if test "$mode" != ui; then
   if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
     -sdk "$sdk" -destination "$destination" -jobs 2 \
     -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/Tests.xcresult" \
-    -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${test_actions[@]}" 2>&1 | tee -a "$result_dir/test.log"; then
+    -parallel-testing-enabled NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO "${test_actions[@]}" 2>&1 | tee -a "$result_dir/test.log"; then
     ci_phase='Xcode 테스트 결과 요약'
     xcrun xcresulttool get test-results summary --path "$result_dir/Tests.xcresult" > "$result_dir/summary.json"
     xcrun xcresulttool get test-results tests --path "$result_dir/Tests.xcresult" > "$result_dir/tests.json"
@@ -109,7 +110,8 @@ directory, platform, scheme, sdk, destination = sys.argv[1:]
 context = {'platform': platform, 'scheme': scheme, 'sdk': sdk, 'destination': destination,
            'run_id': os.environ.get('GITHUB_RUN_ID', ''),
            'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT', ''),
-           'commit': os.environ.get('GITHUB_SHA', '')}
+           'commit': os.environ.get('GITHUB_SHA', ''),
+           'build_number': os.environ.get('GITHUB_RUN_NUMBER', '1')}
 (Path(directory) / 'unit-context.json').write_text(json.dumps(context, ensure_ascii=False) + '\n')
 PY
     if test -n "${GITHUB_OUTPUT:-}"; then
@@ -157,6 +159,8 @@ context = json.loads((directory / 'unit-context.json').read_text())
 for key, variable in [('run_id', 'GITHUB_RUN_ID'), ('run_attempt', 'GITHUB_RUN_ATTEMPT'), ('commit', 'GITHUB_SHA')]:
     if context.get(key) != os.environ.get(variable, ''):
         raise SystemExit('::error::다른 실행의 단위 결과를 UI 검사에 재사용할 수 없습니다.')
+if context.get('build_number') != os.environ.get('GITHUB_RUN_NUMBER', '1'):
+    raise SystemExit('::error::단위 결과의 build가 현재 UI 실행과 다릅니다.')
 expected = ('MirrorMac', 'macosx') if platform == 'macos' else ('MirrorIOS', 'iphonesimulator')
 if context.get('platform') != platform or (context.get('scheme'), context.get('sdk')) != expected:
     raise SystemExit('::error::단위 결과의 플랫폼·scheme·SDK가 UI 대상과 다릅니다.')
@@ -191,7 +195,7 @@ ci_phase='실제 UI 테스트'
 if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
-  -parallel-testing-enabled NO -enableCodeCoverage NO CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
+  -parallel-testing-enabled NO -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO test 2>&1 | tee "$result_dir/ui.log"; then
   ci_phase='UI 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"
@@ -205,6 +209,49 @@ if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Deb
   if test "$bundle_status" -ne 0 || test "$package_status" -ne 0; then
     ci_phase='필수 bundle·packaging 결과'
     exit 1
+  fi
+  ci_phase='실제 UI 빌드와 checkout provenance 확인'
+  python3 - "$result_dir" "$platform" "$build_number" <<'PY'
+import os
+from pathlib import Path
+import plistlib
+import subprocess
+import sys
+
+directory, platform, build = sys.argv[1:]
+if subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() != os.environ.get('GITHUB_SHA'):
+    raise SystemExit('::error::현재 checkout SHA가 UI 실행 SHA와 다릅니다.')
+products = 'Debug' if platform == 'macos' else 'Debug-iphonesimulator'
+app = Path(directory) / 'DerivedData/Build/Products' / products / 'Mirror.app'
+info = app / ('Contents/Info.plist' if platform == 'macos' else 'Info.plist')
+if str(plistlib.loads(info.read_bytes()).get('CFBundleVersion')) != build:
+    raise SystemExit('::error::실제 UI 앱의 build가 현재 실행 build와 다릅니다.')
+print('::notice::현재 checkout SHA와 실제 UI 앱 build가 일치합니다.')
+PY
+  ci_phase='실제 SDK xcresult attachment export 지원 확인'
+  attachments_help="$result_dir/ui-attachments-help.txt"
+  xcrun xcresulttool export attachments --help > "$attachments_help" 2>&1
+  python3 - "$attachments_help" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+help_text = Path(sys.argv[1]).read_text(errors='replace')
+if any(re.search(r'(?<![A-Za-z-])' + option + r'(?=[\s=]|$)', help_text) is None
+       for option in ('--path', '--output-path')):
+    raise SystemExit('::error::실제 xcresulttool 도움말에서 attachment export 옵션을 확인하지 못했습니다.')
+print('::notice::실제 xcresulttool export attachments --help에서 --path/--output-path를 확인했습니다.')
+PY
+  ci_phase='성공한 UI 실행의 명명된 앱샷 export'
+  xcrun xcresulttool export attachments --path "$result_dir/UI.xcresult" --output-path "$result_dir/ui-attachments"
+  evidence_platform="$platform"
+  if test "$platform" = macos; then evidence_platform=mac; fi
+  ci_phase='앱샷 공개 allowlist와 필수 화면 증거 검증'
+  python3 scripts/ci-ui-evidence.py prepare --input "$result_dir/ui-attachments" --output "$result_dir/ui-screenshots" \
+    --platform "$evidence_platform" --sha "${GITHUB_SHA:?}" --build-number "$build_number" \
+    --run-id "${GITHUB_RUN_ID:?}" --attempt "${GITHUB_RUN_ATTEMPT:?}"
+  if test -n "${GITHUB_OUTPUT:-}"; then
+    printf 'ui_evidence_ready=true\n' >> "$GITHUB_OUTPUT"
   fi
 else
   test_status=$?
