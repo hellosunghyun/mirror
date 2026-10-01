@@ -53,6 +53,10 @@
 
 후속 보완은 `ipad-landscape` 단계만 실제 foreground 앱 주 창의 native screenshot을 직접 첨부하고 기존42장의 캡처 경로를 유지한다. 창 존재·유효한 경계·앱 포함·가로 방향을 검사한다. 이미지 회전·crop·렌더링·후처리로 증거를 고치지 않으며 같은 SDK 내부 캡처 경로일 가능성이 있어 새 원본에서 다시 판정한다. 설정 NavigationStack에도 동일한 강조색을 적용한다. 기존6사례·43장·모든 기능 assertions와 시간 제한은 유지한다.
 
+[후속 실행36938485106](https://github.com/hellosunghyun/mirror/actions/runs/36938485106), `fe3dee3`·build36은 준비·도메인159개·Mac 실제 UI6개가 통과했다. Mac SDK 컴파일28초·receipt·UI실행450초를 확인했다. iPhone은 SDK 컴파일125초·receipt 뒤 UI exit65/1192초로 실패했다. 최초 capture 실패는378행의 Continue 후보 수 `XCTAssertEqual`이며, 실제 후보0개·키보드 경계 유효·대기15097ms를 확인했다. overlong 실패와 다른 메서드의 stdout 통과도 관측했으나 최종 xcresult 사례 수로 계산하지 않는다. iPad는 SDK 컴파일102초·receipt와 가로 창 캡처를 포함한 capture 통과를 확인했지만 tomorrow/보관함 검색 사례가40.228초에 실패했다. 다른5개 stdout 통과 뒤 UI20분 제한으로 중단됐으며 최초 위치 진단은 rejected1이라 정확한 줄·종류는 미확정이다. 화면·설치 게시가 모두 skipped되어 새 원본은 없다.
+
+다음 진단은 동작·assertions·시간 제한을 유지한다. 내일 작업 사례에 수행 단계의 고정 enum만 기록하며 각 검사 결과는 별도로 확인한다. Continue 후보는 기존 exists→hittable→enabled→키보드 포함 조회의 단조 감소 수만 집계해 추가 AX 조회 없이 제외 지점을 좁힌다. 가로 한 장에서는 동일 native screenshot의 UIImage 방향 enum·크기·scale·CGImage 크기·정식 PNG hash를 읽고, SDK export 원본과 정제본의 IHDR/IDAT hash 및 제한된 EXIF orientation 숫자만 비교한다. UIImage enum과 EXIF 숫자는 다른 체계이며 직접 등치하지 않는다. 원문 metadata·좌표·제목·추가 자산·이미지 보정은 없다. strict schema·활성 사례 귀속·중복/혼합/손상/개인정보 차단 회귀를 추가하고 테스트 실행은 새 Actions에 남긴다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
@@ -61,7 +65,7 @@
 | iPad | 같은 14장과 실제 기기 회전 후 가로 viewport 화면: 15장 |
 | Mac | 같은 14장: 14장 |
 
-각 화면은 실제 XCUITest 입력과 Core Data 저장 경로의 `XCTAttachment(app.screenshot())`다. 성공 mock·작업 seed·이미지 생성·임의 합성 화면으로 대체하지 않는다. 고정 테스트 날짜와 합성 작업 제목을 사용한다. 실제 기기 전체 화면·영상·원본 attachment JSON·로그는 공개 검토 폴더에서 제외한다.
+각 화면은 실제 XCUITest 입력과 Core Data 저장 경로의 native XCUIScreenshot을 첨부한다. iPad 가로 한 장은 실제 앱 주 창의 `window.screenshot()`이고 나머지는 `app.screenshot()`이다. 성공 mock·작업 seed·이미지 생성·임의 합성 화면으로 대체하지 않는다. 고정 테스트 날짜와 합성 작업 제목을 사용한다. 실제 기기 전체 화면·영상·원본 attachment JSON·로그는 공개 검토 폴더에서 제외한다.
 
 현재 checkout SHA, 실제 앱의 `CFBundleVersion`, Actions run·attempt를 확인한다. 실제 SDK의 `xcresulttool export attachments --help`를 먼저 확인하고 명명된 앱샷만 추출한다. 세 플랫폼·각 필수 화면·PNG 내용·checksum·manifest의 SHA/build/run/attempt가 맞지 않으면 검토 자료를 게시하지 않는다.
 

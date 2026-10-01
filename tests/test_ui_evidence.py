@@ -42,6 +42,19 @@ def chunks(data):
     return result
 
 
+def tiff_orientation(value, *, endian='<', private=b''):
+    """실제 classic TIFF IFD0 구조와 선택적인 비공개 description fixture다."""
+    count = 2 if private else 1
+    data_offset = 8 + 2 + count * 12 + 4
+    description = (struct.pack(endian + 'HHII', 0x010E, 2, len(private), data_offset)
+                   if private else b'')
+    orientation = (struct.pack(endian + 'HHI', 0x0112, 3, 1)
+                   + struct.pack(endian + 'H', value) + b'\0\0')
+    return ((b'II' if endian == '<' else b'MM') + struct.pack(endian + 'HI', 42, 8)
+            + struct.pack(endian + 'H', count) + description + orientation
+            + struct.pack(endian + 'I', 0) + private)
+
+
 def raw_export(directory, *, stages=helper.STAGES, shape='list', image=None):
     directory.mkdir(parents=True)
     attachments = []
@@ -332,6 +345,130 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertNotIn(b'tEXt', cleaned_chunks)
         self.assertNotIn(b'eXIf', cleaned_chunks)
         self.assertEqual(helper.clean_png(cleaned)[0], cleaned)
+
+    def test_ipad_png_provenance_reports_one_safe_notice_without_asset_or_schema_changes(self):
+        source, output = self.root / 'provenance-raw', self.root / 'provenance-out'
+        image = png(((b'tEXt', b'Comment\0' + PRIVATE.encode()),
+                     (b'eXIf', tiff_orientation(8, private=PRIVATE.encode() + b'\0'))))
+        raw_export(source, stages=helper.IPAD_STAGES, image=image)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            manifest = helper.prepare(source, output, 'ipad', IDENTITY)
+        prefix = '::notice::UI PNG provenance diagnostic: '
+        notices = [line[len(prefix):] for line in stdout.getvalue().splitlines() if line.startswith(prefix)]
+        self.assertEqual(len(notices), 1)
+        diagnostic = json.loads(notices[0])
+        self.assertEqual(set(diagnostic), {
+            'platform', 'stage', 'exportWidth', 'exportHeight', 'cleanWidth', 'cleanHeight',
+            'exportPNGHash', 'exportIHDRHash', 'cleanIHDRHash', 'exportIDATHash', 'cleanIDATHash',
+            'exportExifPresent', 'exportExifOrientation', 'cleanExifPresent',
+        })
+        self.assertEqual((diagnostic['platform'], diagnostic['stage']), ('ipad', 'ipad-landscape'))
+        self.assertEqual((diagnostic['exportWidth'], diagnostic['exportHeight'],
+                          diagnostic['cleanWidth'], diagnostic['cleanHeight']), (2, 1, 2, 1))
+        self.assertEqual(diagnostic['exportPNGHash'], helper.digest(image))
+        for channel in ('IHDR', 'IDAT'):
+            self.assertEqual(diagnostic['export' + channel + 'Hash'], diagnostic['clean' + channel + 'Hash'])
+        self.assertIs(diagnostic['exportExifPresent'], True)
+        self.assertEqual(diagnostic['exportExifOrientation'], 8)
+        self.assertIs(diagnostic['cleanExifPresent'], False)
+        self.assertNotIn(PRIVATE, stdout.getvalue())
+        self.assertEqual(len(manifest['screenshots']), 15)
+        self.assertEqual(set(manifest), helper.MANIFEST_KEYS)
+        _, files = helper.validate_directory(output, IDENTITY)
+        self.assertEqual(set(files) - {shot['file'] for shot in manifest['screenshots']}, helper.PREPARE_STATIC)
+        for data in files.values():
+            self.assertNotIn(PRIVATE.encode(), data)
+
+    def test_png_provenance_hashes_all_idat_payloads_in_order_without_pixel_changes(self):
+        compressed = zlib.compress(b'\0\xff\x00\x00\x00\xff\x00')
+        midpoint = len(compressed) // 2
+        original = (helper.PNG_SIGNATURE
+                    + helper.png_chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 1, 8, 2, 0, 0, 0))
+                    + helper.png_chunk(b'eXIf', tiff_orientation(6))
+                    + helper.png_chunk(b'IDAT', compressed[:midpoint])
+                    + helper.png_chunk(b'IDAT', compressed[midpoint:]) + helper.png_chunk(b'IEND', b''))
+        cleaned, _, _ = helper.clean_png(original)
+        diagnostic = helper.png_provenance(original, cleaned)
+        self.assertEqual(diagnostic['exportIDATHash'], helper.digest(compressed))
+        self.assertEqual(diagnostic['cleanIDATHash'], helper.digest(compressed))
+        self.assertEqual(diagnostic['exportIHDRHash'], diagnostic['cleanIHDRHash'])
+        self.assertEqual([payload for kind, payload in chunks(original) if kind == b'IDAT'],
+                         [payload for kind, payload in chunks(cleaned) if kind == b'IDAT'])
+
+    def test_exif_orientation_reads_only_valid_ifd0_short_values_in_both_byte_orders(self):
+        for endian in ('<', '>'):
+            for value in range(1, 9):
+                with self.subTest(endian=endian, value=value):
+                    payload = tiff_orientation(value, endian=endian, private=PRIVATE.encode() + b'\0')
+                    self.assertEqual(helper.exif_orientation(payload), value)
+        empty_ifd = b'II' + struct.pack('<HIHI', 42, 8, 0, 0)
+        self.assertIsNone(helper.exif_orientation(empty_ifd))
+
+    def test_malformed_or_unsupported_exif_reports_null_without_changing_png_acceptance(self):
+        valid = tiff_orientation(8)
+        wrong_kind = valid[:12] + struct.pack('<H', 4) + valid[14:]
+        wrong_count = valid[:14] + struct.pack('<I', 2) + valid[18:]
+        bad_offset = valid[:4] + struct.pack('<I', 0xffffffff) + valid[8:]
+        too_many_entries = valid[:8] + struct.pack('<H', 257) + valid[10:]
+        duplicate = (valid[:8] + struct.pack('<H', 2) + valid[10:22] * 2
+                     + struct.pack('<I', 0))
+        private = tiff_orientation(8, private=PRIVATE.encode() + b'\0')
+        private_offset = private[:18] + struct.pack('<I', 0xffffffff) + private[22:]
+        unsupported_type = private[:12] + struct.pack('<H', 99) + private[14:]
+        bad_next_ifd = valid[:-4] + struct.pack('<I', len(valid) + 100)
+        cases = (PRIVATE.encode(), valid[:-1], b'ZZ' + valid[2:],
+                 valid[:2] + struct.pack('<H', 43) + valid[4:],
+                 tiff_orientation(0), tiff_orientation(9), wrong_kind, wrong_count,
+                 bad_offset, too_many_entries, duplicate, private_offset, unsupported_type,
+                 bad_next_ifd, valid + b'\0' * (1024 * 1024))
+        for index, payload in enumerate(cases):
+            with self.subTest(index=index):
+                self.assertIsNone(helper.exif_orientation(payload))
+                original = png(((b'eXIf', payload),))
+                cleaned, _, _ = helper.clean_png(original)
+                diagnostic = helper.png_provenance(original, cleaned)
+                self.assertIs(diagnostic['exportExifPresent'], True)
+                self.assertIsNone(diagnostic['exportExifOrientation'])
+                self.assertIs(diagnostic['cleanExifPresent'], False)
+                self.assertNotIn(PRIVATE, json.dumps(diagnostic))
+                self.assertEqual(diagnostic['exportIDATHash'], diagnostic['cleanIDATHash'])
+
+    def test_duplicate_exif_chunks_do_not_select_one_orientation(self):
+        original = png(((b'eXIf', tiff_orientation(3)), (b'eXIf', tiff_orientation(8))))
+        cleaned, _, _ = helper.clean_png(original)
+        diagnostic = helper.png_provenance(original, cleaned)
+        self.assertIs(diagnostic['exportExifPresent'], True)
+        self.assertIsNone(diagnostic['exportExifOrientation'])
+        self.assertIs(diagnostic['cleanExifPresent'], False)
+        absent = helper.png_provenance(png(), png())
+        self.assertIs(absent['exportExifPresent'], False)
+        self.assertIsNone(absent['exportExifOrientation'])
+
+    def test_png_provenance_is_not_reported_for_other_platforms_or_failed_gates(self):
+        prefix = 'UI PNG provenance diagnostic: '
+        for platform in ('iphone', 'mac'):
+            with self.subTest(platform=platform):
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.prepare_platform(platform)
+                self.assertNotIn(prefix, stdout.getvalue())
+        missing = self.root / 'missing-landscape'
+        raw_export(missing)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.expect_error('missingCoverage', lambda: helper.prepare(missing, self.root / 'missing-out', 'ipad', IDENTITY))
+        self.assertNotIn(prefix, stdout.getvalue())
+        corrupt = self.root / 'corrupt-provenance'
+        raw_export(corrupt, stages=helper.IPAD_STAGES)
+        landscape = corrupt / ('export-' + str(len(helper.IPAD_STAGES)) + '.png')
+        damaged = landscape.read_bytes()
+        landscape.write_bytes(damaged[:30] + bytes([damaged[30] ^ 1]) + damaged[31:])
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.expect_error('invalidPNG', lambda: helper.prepare(corrupt, self.root / 'corrupt-out', 'ipad', IDENTITY))
+        self.assertNotIn(prefix, stdout.getvalue())
+        self.assertNotIn(PRIVATE, stdout.getvalue())
 
     def test_icc_profile_bytes_are_preserved_and_compression_is_bounded(self):
         profile = bytearray(132)

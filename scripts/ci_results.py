@@ -52,6 +52,28 @@ UI_FAILURE_CASE_PATTERN = re.compile(
     r'^[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]\s*:\s*(.*)$')
 UI_VIEWPORT_DIAGNOSTIC_MARKER = 'UI viewport diagnostic:'
 UI_KEYBOARD_DIAGNOSTIC_MARKER = 'UI keyboard introduction diagnostic:'
+UI_PHASE_DIAGNOSTIC_MARKER = 'UI test phase diagnostic:'
+UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER = 'UI native screenshot diagnostic:'
+STRUCTURED_DIAGNOSTIC_MARKERS = frozenset({
+    STORE_DEDUP_DIAGNOSTIC_MARKER, UI_VIEWPORT_DIAGNOSTIC_MARKER,
+    UI_KEYBOARD_DIAGNOSTIC_MARKER, UI_PHASE_DIAGNOSTIC_MARKER,
+    UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER,
+})
+UI_PHASE_METHOD = 'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary'
+UI_PHASE_NAMES = (
+    'started', 'launched', 'captured', 'reviewOpened', 'tomorrowAssigned', 'reviewClosed',
+    'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
+    'futureRowVerified', 'searchTitleVerified', 'libraryScreenshotRecorded', 'detailOpened',
+    'detailPlanVerified', 'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
+)
+UI_NATIVE_SCREENSHOT_METHOD = 'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday'
+UI_IMAGE_ORIENTATIONS = frozenset({
+    'up', 'down', 'left', 'right', 'upMirrored', 'downMirrored', 'leftMirrored', 'rightMirrored',
+})
+UI_KEYBOARD_COUNT_FIELDS = (
+    'continueQueryCount', 'continueExistingCount', 'continueHittableCount',
+    'continueEnabledCount', 'continueInKeyboardCount',
+)
 UI_VIEWPORT_CHECK_NAMES = frozenset({
     'foreground', 'appBoundsValid', 'appOrientationMatches', 'windowExists', 'todayExists',
     'reviewExists', 'windowInApp', 'windowOrientationMatches', 'todayInWindow', 'reviewInToday',
@@ -76,6 +98,121 @@ def report_runs(log):
         print('::notice::Swift Testing completion reports: ' + json.dumps(reports))
 
 
+def mixed_structured_diagnostic(line, marker):
+    return (any(other in line for other in STRUCTURED_DIAGNOSTIC_MARKERS if other != marker)
+            or is_ui_failure_candidate(line))
+
+
+def fixed_diagnostic_json(line, marker):
+    # 고정 계약의 모든 JSON 객체에서 중복 키를 거절한다. 원문은 출력하지 않는다.
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError('중복된 진단 필드입니다.')
+            fields[key] = value
+        return fields
+
+    if mixed_structured_diagnostic(line, marker) or UI_ANY_CASE_EVENT_PATTERN.search(line):
+        raise ValueError('서로 다른 진단이나 테스트 event를 한 줄에서 연결하지 않습니다.')
+    if line.count(marker) != 1:
+        raise ValueError('진단 marker가 하나여야 합니다.')
+    payload = line.partition(marker)[2].strip()
+    if len(payload.encode('utf-8')) > 4096:
+        raise ValueError('진단 payload가 너무 깁니다.')
+    return json.loads(payload, object_pairs_hook=unique_fields)
+
+
+def track_active_ui_cases(line, active_cases):
+    # 구조화 원문 속에 삽입한 가짜 event로 활성 테스트를 바꾸지 않는다.
+    if any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS) or is_ui_failure_candidate(line):
+        return
+    event = UI_ANY_CASE_EVENT_PATTERN.search(line)
+    if event:
+        case = (event[1], event[2])
+        if event[3] == 'started':
+            active_cases.add(case)
+        else:
+            active_cases.discard(case)
+    elif re.search(r'\bTest\s+Case\b', line):
+        active_cases.clear()
+
+
+def unique_active_ui_method(active_cases, method):
+    if len(active_cases) != 1:
+        return False
+    owner, actual_method = next(iter(active_cases))
+    return ((owner == 'MirrorUITests' or owner.endswith('.MirrorUITests'))
+            and actual_method == method)
+
+
+def report_ui_phase_diagnostics(lines):
+    active_cases = set()
+    reports = []
+    invalid_count = 0
+    for line in lines:
+        if UI_PHASE_DIAGNOSTIC_MARKER not in line:
+            track_active_ui_cases(line, active_cases)
+            continue
+        try:
+            report = fixed_diagnostic_json(line, UI_PHASE_DIAGNOSTIC_MARKER)
+            if (not isinstance(report, dict) or set(report) != {'method', 'phase'}
+                    or report['method'] != UI_PHASE_METHOD
+                    or not isinstance(report['phase'], str)
+                    or not unique_active_ui_method(active_cases, UI_PHASE_METHOD)
+                    or len(reports) >= len(UI_PHASE_NAMES)
+                    or report['phase'] != UI_PHASE_NAMES[len(reports)]):
+                raise ValueError('UI phase는 실제 유일한 baseline 사례의 순서 있는 prefix여야 합니다.')
+            reports.append({'scope': 'stdoutOnly', **report})
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    # malformed·중복·순서 오류가 하나라도 있으면 그 transcript의 prefix도 추정하지 않는다.
+    if invalid_count:
+        print('::notice::UI test phase diagnostic rejected: ' + json.dumps({'invalidCount': invalid_count}))
+    else:
+        for report in reports:
+            print('::notice::UI test phase diagnostic: ' + json.dumps(report))
+
+
+def report_ui_native_screenshot_diagnostics(lines):
+    active_cases = set()
+    report = None
+    invalid_count = 0
+    def positive_number(value, upper):
+        return (type(value) in (int, float) and 0 < value <= upper and math.isfinite(value))
+
+    for line in lines:
+        if UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER not in line:
+            track_active_ui_cases(line, active_cases)
+            continue
+        try:
+            candidate = fixed_diagnostic_json(line, UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER)
+            if (not isinstance(candidate, dict) or set(candidate) != {
+                    'method', 'stage', 'orientation', 'imageWidth', 'imageHeight', 'imageScale',
+                    'cgImageWidth', 'cgImageHeight', 'pngSHA256'}
+                    or candidate['method'] != UI_NATIVE_SCREENSHOT_METHOD
+                    or candidate['stage'] != 'ipad-landscape'
+                    or not isinstance(candidate['orientation'], str)
+                    or candidate['orientation'] not in UI_IMAGE_ORIENTATIONS
+                    or not positive_number(candidate['imageWidth'], 16384)
+                    or not positive_number(candidate['imageHeight'], 16384)
+                    or not positive_number(candidate['imageScale'], 8)
+                    or any(type(candidate[key]) is not int or not 1 <= candidate[key] <= 16384
+                           for key in ('cgImageWidth', 'cgImageHeight'))
+                    or not isinstance(candidate['pngSHA256'], str)
+                    or re.fullmatch(r'[0-9a-f]{64}', candidate['pngSHA256']) is None
+                    or not unique_active_ui_method(active_cases, UI_NATIVE_SCREENSHOT_METHOD)
+                    or report is not None):
+                raise ValueError('native screenshot은 실제 baseline 사례의 고정 일회성 metadata여야 합니다.')
+            report = {'scope': 'stdoutOnly', **candidate}
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    if invalid_count:
+        print('::notice::UI native screenshot diagnostic rejected: ' + json.dumps({'invalidCount': invalid_count}))
+    elif report is not None:
+        print('::notice::UI native screenshot diagnostic: ' + json.dumps(report))
+
+
 def report_store_dedup_diagnostics(lines):
     # 원본 값·경로·메시지 대신 현재 enum 두 상태와 고정 busy 판정 두 개만 공개한다.
     reports = deque(maxlen=8)
@@ -93,8 +230,7 @@ def report_store_dedup_diagnostics(lines):
         if STORE_DEDUP_DIAGNOSTIC_MARKER not in line:
             continue
         try:
-            if (UI_VIEWPORT_DIAGNOSTIC_MARKER in line or UI_KEYBOARD_DIAGNOSTIC_MARKER in line
-                    or is_ui_failure_candidate(line)):
+            if mixed_structured_diagnostic(line, STORE_DEDUP_DIAGNOSTIC_MARKER):
                 raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
             if line.count(STORE_DEDUP_DIAGNOSTIC_MARKER) != 1:
                 raise ValueError('진단 marker가 하나여야 합니다.')
@@ -208,8 +344,7 @@ def report_ui_keyboard_diagnostics(lines):
         if UI_KEYBOARD_DIAGNOSTIC_MARKER not in line:
             continue
         try:
-            if (STORE_DEDUP_DIAGNOSTIC_MARKER in line or UI_VIEWPORT_DIAGNOSTIC_MARKER in line
-                    or is_ui_failure_candidate(line)):
+            if mixed_structured_diagnostic(line, UI_KEYBOARD_DIAGNOSTIC_MARKER):
                 raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
             if line.count(UI_KEYBOARD_DIAGNOSTIC_MARKER) != 1:
                 raise ValueError('keyboard marker가 하나여야 합니다.')
@@ -217,8 +352,9 @@ def report_ui_keyboard_diagnostics(lines):
             if len(payload.encode('utf-8')) > 4096:
                 raise ValueError('keyboard payload가 너무 깁니다.')
             report = json.loads(payload, object_pairs_hook=unique_fields)
-            if not isinstance(report, dict) or set(report) != {
-                    'phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds'}:
+            basic_fields = {'phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds'}
+            if (not isinstance(report, dict)
+                    or set(report) not in (basic_fields, basic_fields | set(UI_KEYBOARD_COUNT_FIELDS))):
                 raise ValueError('keyboard 필드가 고정 계약과 다릅니다.')
             count, milliseconds = report['continueCandidateCount'], report['elapsedMilliseconds']
             if (report['phase'] not in ('continueReadiness', 'introductionDismissal')
@@ -226,6 +362,12 @@ def report_ui_keyboard_diagnostics(lines):
                     or type(report['keyboardBoundsValid']) is not bool
                     or type(milliseconds) is not int or not 0 <= milliseconds <= 1200000):
                 raise ValueError('keyboard 수치·phase가 고정 계약과 다릅니다.')
+            if set(report) != basic_fields:
+                counts = [report[key] for key in UI_KEYBOARD_COUNT_FIELDS]
+                if (any(type(value) is not int or not 0 <= value <= 100 for value in counts)
+                        or any(previous < current for previous, current in zip(counts, counts[1:]))
+                        or counts[-1] != count):
+                    raise ValueError('keyboard count는 기존 AX 조회 순서의 단조 감소이며 최종 후보 수와 같아야 합니다.')
             reports.append({'scope': 'stdoutOnly', **report})
         except (ValueError, TypeError, RecursionError):
             invalid_count += 1
@@ -252,8 +394,7 @@ def report_ui_viewport_diagnostics(lines):
         if UI_VIEWPORT_DIAGNOSTIC_MARKER not in line:
             continue
         try:
-            if (STORE_DEDUP_DIAGNOSTIC_MARKER in line or UI_KEYBOARD_DIAGNOSTIC_MARKER in line
-                    or is_ui_failure_candidate(line)):
+            if mixed_structured_diagnostic(line, UI_VIEWPORT_DIAGNOSTIC_MARKER):
                 raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
             if line.count(UI_VIEWPORT_DIAGNOSTIC_MARKER) != 1:
                 raise ValueError('viewport marker가 하나여야 합니다.')
@@ -332,9 +473,11 @@ def report_ui_tree_timings(nodes):
 def diagnostics(path):
     log = Path(path).read_text(errors='replace')
     raw_lines = log.splitlines()
-    lines = [line for line in raw_lines if STORE_DEDUP_DIAGNOSTIC_MARKER not in line
-             and UI_VIEWPORT_DIAGNOSTIC_MARKER not in line and UI_KEYBOARD_DIAGNOSTIC_MARKER not in line]
+    lines = [line for line in raw_lines
+             if not any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)]
     report_ui_first_failure(lines)
+    report_ui_phase_diagnostics(raw_lines)
+    report_ui_native_screenshot_diagnostics(raw_lines)
     report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)
     report_store_dedup_diagnostics(raw_lines)

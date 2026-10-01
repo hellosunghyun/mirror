@@ -1,6 +1,7 @@
 import XCTest
 #if os(iOS)
 import UIKit
+import CryptoKit
 #endif
 
 /// 실제 UI 입력과 앱의 Core Data 저장 경로를 사용한다. 테스트 전용 성공 응답이나 seed는 없다.
@@ -55,43 +56,64 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     func testTomorrowStaysOutOfTodayAndIsSearchableInLibrary() throws {
+        recordTomorrowPhase(.started)
         let app = try launchApp()
         defer { app.terminate() }
+        recordTomorrowPhase(.launched)
         let title = "UI tomorrow is searchable"
         try capture(title, in: app)
+        recordTomorrowPhase(.captured)
         try activate("today.review", in: app)
         XCTAssertEqual(displayedText(of: try requireElement("review.card", in: app)), title)
+        recordTomorrowPhase(.reviewOpened)
         try activate("review.tomorrow", in: app)
         try requireNoElement("review.card", in: app)
+        recordTomorrowPhase(.tomorrowAssigned)
         try activate("review.finish", in: app)
         try requireNoElement("review.finish", in: app)
+        recordTomorrowPhase(.reviewClosed)
         _ = try requireElement("today.list", in: app)
         XCTAssertFalse(taskRow(title, in: app).exists)
+        recordTomorrowPhase(.todayExcluded)
 
         #if os(macOS)
         lastActionDescription = "Mac Cmd+F로 보관함 검색"
         app.typeKey("f", modifierFlags: .command)
+        recordTomorrowPhase(.searchNavigationRequested)
         let search = try requireElement("library.search", in: app)
+        recordTomorrowPhase(.searchReady)
         app.typeText("tomorrow is searchable")
         try waitForValue("tomorrow is searchable", element: search)
         XCTAssertEqual(value(of: search), "tomorrow is searchable", "Cmd+F는 검색 입력란으로 포커스를 옮긴다.")
         #else
         try showLibrary(in: app)
+        recordTomorrowPhase(.searchNavigationRequested)
         let search = try requireElement("library.search", in: app)
+        recordTomorrowPhase(.searchReady)
         try replaceText(in: search, with: "tomorrow is searchable", app: app)
         #endif
+        recordTomorrowPhase(.searchEntered)
         let future = try requireRow(title, in: app)
         XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
         XCTAssertTrue(value(of: future).contains("미완료"))
+        recordTomorrowPhase(.futureRowVerified)
         XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "검색 결과",
                        "범위를 넓힌 검색 결과를 날짜 미정 목록으로 표시하지 않는다.")
+        recordTomorrowPhase(.searchTitleVerified)
         try recordUI("library-search", in: app, identifiers: ["library.list", "library.search"])
+        recordTomorrowPhase(.libraryScreenshotRecorded)
         try interact(with: future, in: app)
+        recordTomorrowPhase(.detailOpened)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
+        recordTomorrowPhase(.detailPlanVerified)
         try recordUI("detail", in: app, identifiers: ["detail.contentTitle", "detail.plan", "detail.edit", "task.complete", "detail.close"])
+        recordTomorrowPhase(.detailScreenshotRecorded)
         try activate("detail.close", in: app)
+        recordTomorrowPhase(.detailClosed)
         try showToday(in: app)
         XCTAssertFalse(taskRow(title, in: app).exists, "검색은 미래 계획을 Today로 바꾸지 않는다.")
+        recordTomorrowPhase(.todayRechecked)
+        recordTomorrowPhase(.complete)
     }
 
     @MainActor
@@ -274,7 +296,19 @@ final class MirrorUITests: XCTestCase {
         try requireNoElement("capture.title", in: app)
     }
 
-    /// 합성 작업의 실제 앱 화면만 남긴다. 추가 AX 경계·진단 JSON은 조회하지 않는다.
+    private enum TomorrowPhase: String {
+        case started, launched, captured, reviewOpened, tomorrowAssigned, reviewClosed, todayExcluded
+        case searchNavigationRequested, searchReady, searchEntered, futureRowVerified, searchTitleVerified
+        case libraryScreenshotRecorded, detailOpened, detailPlanVerified, detailScreenshotRecorded
+        case detailClosed, todayRechecked, complete
+    }
+
+    private func recordTomorrowPhase(_ phase: TomorrowPhase) {
+        // 실제 수행한 단계만 기록한다. 검사 결과는 별도이고 제목·오류 원문·추가 AX 조회는 없다.
+        print("UI test phase diagnostic: {\"method\":\"testTomorrowStaysOutOfTodayAndIsSearchableInLibrary\",\"phase\":\"\(phase.rawValue)\"}")
+    }
+
+    /// 합성 작업의 실제 앱 화면만 남긴다. 추가 AX 경계는 조회하지 않는다.
     /// 화면 합격 기준은 baseline 검토 뒤 추가하며 기존 기능 assertions는 그대로 유지한다.
     @MainActor
     private func recordUI(_ stage: String, in app: XCUIApplication, identifiers _: [String]) throws {
@@ -319,6 +353,9 @@ final class MirrorUITests: XCTestCase {
         screenshot.name = screenshotName
         screenshot.lifetime = .keepAlways
         add(screenshot)
+        #if os(iOS)
+        if stage == "ipad-landscape" { recordNativeScreenshotDiagnostic(appScreenshot) }
+        #endif
 
         let elapsed = started.duration(to: clock.now).components
         let milliseconds = Int(Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15)
@@ -326,6 +363,44 @@ final class MirrorUITests: XCTestCase {
     }
 
     #if os(iOS)
+    @MainActor
+    private func recordNativeScreenshotDiagnostic(_ screenshot: XCUIScreenshot) {
+        // 동일 native screenshot의 scalar와 원본 PNG hash만 읽는다. 픽셀을 변환하지 않는다.
+        let native = screenshot.image
+        guard let bitmap = native.cgImage else { return }
+        let orientation: String
+        switch native.imageOrientation {
+        case .up: orientation = "up"
+        case .down: orientation = "down"
+        case .left: orientation = "left"
+        case .right: orientation = "right"
+        case .upMirrored: orientation = "upMirrored"
+        case .downMirrored: orientation = "downMirrored"
+        case .leftMirrored: orientation = "leftMirrored"
+        case .rightMirrored: orientation = "rightMirrored"
+        @unknown default: return
+        }
+        let width = Double(native.size.width), height = Double(native.size.height)
+        let scale = Double(native.scale)
+        guard width.isFinite, height.isFinite, scale.isFinite,
+              width > 0, width <= 16_384, height > 0, height <= 16_384,
+              scale > 0, scale <= 8,
+              bitmap.width > 0, bitmap.width <= 16_384,
+              bitmap.height > 0, bitmap.height <= 16_384 else { return }
+        let diagnostic: [String: Any] = [
+            "method": "testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday",
+            "stage": "ipad-landscape", "orientation": orientation,
+            "imageWidth": width, "imageHeight": height, "imageScale": scale,
+            "cgImageWidth": bitmap.width, "cgImageHeight": bitmap.height,
+            "pngSHA256": SHA256.hash(data: screenshot.pngRepresentation)
+                .map { String(format: "%02x", $0) }.joined(),
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            print("UI native screenshot diagnostic: \(json)")
+        }
+    }
+
     @MainActor
     private func dismissKeyboardIntroduction(in app: XCUIApplication) throws {
         let keyboard = app.keyboards.firstMatch
@@ -340,14 +415,26 @@ final class MirrorUITests: XCTestCase {
             let introductionDeadline = introductionStarted.addingTimeInterval(15)
             let continueButtons = app.buttons.matching(NSPredicate(format: "label == %@", "Continue"))
             var candidates: [XCUIElement] = []
+            var continueQueryCount = 0
+            var continueExistingCount = 0
+            var continueHittableCount = 0
+            var continueEnabledCount = 0
+            var continueInKeyboardCount = 0
             var keyboardBoundsValid = false
             var continueReady = false
             func printIntroductionDiagnostic(phase: String) {
                 // 이미 샘플한 값만 사용한다. 실패 진단 때문에 AX를 다시 조회하지 않는다.
-                guard (0...100).contains(candidates.count) else { return }
+                guard [candidates.count, continueQueryCount, continueExistingCount,
+                       continueHittableCount, continueEnabledCount, continueInKeyboardCount]
+                    .allSatisfy({ (0...100).contains($0) }) else { return }
                 let diagnostic: [String: Any] = [
                     "phase": phase,
                     "continueCandidateCount": candidates.count,
+                    "continueQueryCount": continueQueryCount,
+                    "continueExistingCount": continueExistingCount,
+                    "continueHittableCount": continueHittableCount,
+                    "continueEnabledCount": continueEnabledCount,
+                    "continueInKeyboardCount": continueInKeyboardCount,
                     "keyboardBoundsValid": keyboardBoundsValid,
                     "elapsedMilliseconds": Int(min(1_200_000, max(0, Date().timeIntervalSince(introductionStarted) * 1_000))),
                 ]
@@ -362,11 +449,27 @@ final class MirrorUITests: XCTestCase {
                 keyboardBoundsValid = keyboardBounds.width > 0 && keyboardBounds.height > 0
                     && keyboardBounds.minX.isFinite && keyboardBounds.minY.isFinite
                     && keyboardBounds.width.isFinite && keyboardBounds.height.isFinite
-                candidates = keyboardBoundsValid ? continueButtons.allElementsBoundByIndex.filter {
-                    guard $0.exists && $0.isHittable && $0.isEnabled else { return false }
-                    let frame = $0.frame
-                    return frame.width > 0 && frame.height > 0 && keyboardBounds.contains(frame)
-                } : []
+                continueQueryCount = 0
+                continueExistingCount = 0
+                continueHittableCount = 0
+                continueEnabledCount = 0
+                continueInKeyboardCount = 0
+                if keyboardBoundsValid {
+                    let buttons = continueButtons.allElementsBoundByIndex
+                    continueQueryCount = buttons.count
+                    candidates = buttons.filter {
+                        guard $0.exists else { return false }
+                        continueExistingCount += 1
+                        guard $0.isHittable else { return false }
+                        continueHittableCount += 1
+                        guard $0.isEnabled else { return false }
+                        continueEnabledCount += 1
+                        let frame = $0.frame
+                        guard frame.width > 0 && frame.height > 0 && keyboardBounds.contains(frame) else { return false }
+                        continueInKeyboardCount += 1
+                        return true
+                    }
+                } else { candidates = [] }
                 continueReady = candidates.count == 1 && Date() < introductionDeadline
                 if continueReady { break }
                 let remaining = introductionDeadline.timeIntervalSinceNow

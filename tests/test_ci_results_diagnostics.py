@@ -37,6 +37,18 @@ UI_VIEWPORT_NOTICE = '::notice::UI viewport diagnostic: '
 UI_VIEWPORT_REJECTED_NOTICE = '::notice::UI viewport diagnostic rejected: '
 UI_KEYBOARD_NOTICE = '::notice::UI keyboard introduction diagnostic: '
 UI_KEYBOARD_REJECTED_NOTICE = '::notice::UI keyboard introduction diagnostic rejected: '
+UI_PHASE_NOTICE = '::notice::UI test phase diagnostic: '
+UI_PHASE_REJECTED_NOTICE = '::notice::UI test phase diagnostic rejected: '
+UI_NATIVE_SCREENSHOT_NOTICE = '::notice::UI native screenshot diagnostic: '
+UI_NATIVE_SCREENSHOT_REJECTED_NOTICE = '::notice::UI native screenshot diagnostic rejected: '
+PHASE_METHOD = METHODS[4]
+NATIVE_SCREENSHOT_METHOD = METHODS[0]
+PHASES = (
+    'started', 'launched', 'captured', 'reviewOpened', 'tomorrowAssigned', 'reviewClosed',
+    'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
+    'futureRowVerified', 'searchTitleVerified', 'libraryScreenshotRecorded', 'detailOpened',
+    'detailPlanVerified', 'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
+)
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -69,6 +81,24 @@ def keyboard_line(payload):
     return 'UI keyboard introduction diagnostic: ' + json.dumps(payload)
 
 
+def phase_line(payload):
+    return 'UI test phase diagnostic: ' + json.dumps(payload)
+
+
+def native_screenshot_line(payload):
+    return 'UI native screenshot diagnostic: ' + json.dumps(payload)
+
+
+def started_line(method, owner='MirrorIOSUITests.MirrorUITests'):
+    return f"Test Case '-[{owner} {method}]' started."
+
+
+def native_screenshot_payload():
+    return {'method': NATIVE_SCREENSHOT_METHOD, 'stage': 'ipad-landscape', 'orientation': 'left',
+            'imageWidth': 1376.0, 'imageHeight': 1032.0, 'imageScale': 2.0,
+            'cgImageWidth': 2752, 'cgImageHeight': 2064, 'pngSHA256': 'a' * 64}
+
+
 class CIResultsDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -87,6 +117,205 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
 
+    def test_phase_diagnostic_accepts_actual_unique_case_and_only_ordered_prefixes(self):
+        log = self.root / 'phase-prefix.log'
+        self.assertEqual(helper.UI_PHASE_NAMES, PHASES)
+        for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'):
+            for length in range(1, len(PHASES) + 1):
+                with self.subTest(owner=owner, length=length):
+                    payloads = [{'method': PHASE_METHOD, 'phase': phase} for phase in PHASES[:length]]
+                    log.write_text('\n'.join([started_line(PHASE_METHOD, owner)]
+                                             + ['fatal: /private/' + PRIVATE + ' ' + phase_line(payload)
+                                                for payload in payloads]
+                                             + [case_line(PHASE_METHOD, event='failed')]) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_PHASE_NOTICE),
+                                     [{'scope': 'stdoutOnly', **payload} for payload in payloads])
+                    self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [])
+                    self.assertNotIn('/private/', output)
+                    self.assertNotIn('::error::', output)
+
+    def test_phase_diagnostic_rejects_ambiguous_finished_foreign_and_forged_active_cases(self):
+        valid = {'method': PHASE_METHOD, 'phase': 'started'}
+        prefixes = [[], [started_line(METHODS[0])], [started_line(PHASE_METHOD, 'OtherTests')],
+                    [started_line(PHASE_METHOD), started_line(METHODS[0])],
+                    [started_line(PHASE_METHOD), case_line(PHASE_METHOD)],
+                    [started_line(PHASE_METHOD), "Test Case '-[broken]' started."],
+                    [phase_line({**valid, 'private': started_line(PHASE_METHOD) + PRIVATE})]]
+        log = self.root / 'phase-active.log'
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                log.write_text('\n'.join(prefix + [phase_line(valid)]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_PHASE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE),
+                                 [{'invalidCount': 2 if len(prefix) == 1 and prefix[0].startswith('UI test') else 1}])
+        # 다른 실제 사례가 끝난 뒤 유일한 대상 사례의 prefix는 계속 진단할 수 있다.
+        log.write_text('\n'.join([started_line(PHASE_METHOD), started_line(METHODS[0]),
+                                  case_line(METHODS[0]), phase_line(valid)]) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_PHASE_NOTICE), [{'scope': 'stdoutOnly', **valid}])
+
+    def test_phase_diagnostic_rejects_wrong_order_duplicate_schema_and_byte_limit_as_whole_transcript(self):
+        valid = {'method': PHASE_METHOD, 'phase': 'started'}
+        invalid_payloads = [{**valid, 'phase': value} for value in (PRIVATE, 'complete', None, True, 1, [], {})]
+        invalid_payloads += [{**valid, 'method': value} for value in (METHODS[0], PRIVATE, None, True, [], {})]
+        invalid_payloads += [{**valid, 'private': PRIVATE}, {'phase': 'started'},
+                             {'method': PHASE_METHOD}, [], None]
+        log = self.root / 'phase-invalid.log'
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                log.write_text('\n'.join([started_line(PHASE_METHOD), phase_line(payload)]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_PHASE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+        bad_lines = [phase_line(valid), phase_line({**valid, 'phase': 'captured'}),
+                     phase_line({'method': PHASE_METHOD, 'phase': 'launched', 'private': PRIVATE}),
+                     phase_line(valid) + ' error: ' + PRIVATE,
+                     phase_line(valid) + ' UI test phase diagnostic: ' + PRIVATE,
+                     'UI test phase diagnostic: {' + PRIVATE,
+                     'UI test phase diagnostic: ' + '[' * 1500 + '0' + ']' * 1500,
+                     'UI test phase diagnostic: {"method":"' + PHASE_METHOD + '","phase":"'
+                     + PRIVATE + '","phase":"launched"}']
+        for bad in bad_lines:
+            with self.subTest(bad=bad):
+                log.write_text('\n'.join([started_line(PHASE_METHOD), phase_line(valid), bad]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_PHASE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+            output = self.capture(helper.report_ui_phase_diagnostics,
+                                  [started_line(PHASE_METHOD), 'UI test phase diagnostic: ' + over_limit])
+        self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_native_screenshot_diagnostic_accepts_fixed_orientation_and_actual_numeric_boundaries(self):
+        log = self.root / 'native-valid.log'
+        orientations = {'up', 'down', 'left', 'right', 'upMirrored', 'downMirrored', 'leftMirrored', 'rightMirrored'}
+        self.assertEqual(helper.UI_IMAGE_ORIENTATIONS, orientations)
+        for orientation in orientations:
+            for size, scale, pixel in ((0.01, 0.01, 1), (1, 1, 1), (16384.0, 8.0, 16384)):
+                with self.subTest(orientation=orientation, size=size, scale=scale):
+                    payload = {**native_screenshot_payload(), 'orientation': orientation,
+                               'imageWidth': size, 'imageHeight': size, 'imageScale': scale,
+                               'cgImageWidth': pixel, 'cgImageHeight': pixel}
+                    log.write_text('\n'.join([started_line(NATIVE_SCREENSHOT_METHOD),
+                                              'fatal: /private/' + PRIVATE + ' ' + native_screenshot_line(payload),
+                                              case_line(NATIVE_SCREENSHOT_METHOD)]) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE),
+                                     [{'scope': 'stdoutOnly', **payload}])
+                    self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [])
+                    self.assertNotIn('/private/', output)
+                    self.assertNotIn('::error::', output)
+
+    def test_native_screenshot_diagnostic_rejects_unknown_schema_nonfinite_bool_and_private_hash(self):
+        valid = native_screenshot_payload()
+        invalid = []
+        for key, upper in (('imageWidth', 16384), ('imageHeight', 16384), ('imageScale', 8)):
+            invalid += [{**valid, key: value} for value in
+                        (0, -1, upper + 0.001, True, False, '1', None, [], {},
+                         float('nan'), float('inf'), float('-inf'), 10 ** 400)]
+        for key in ('cgImageWidth', 'cgImageHeight'):
+            invalid += [{**valid, key: value} for value in (0, -1, 16385, True, False, 1.0, '1', None, [], {})]
+        invalid += [{**valid, 'orientation': value} for value in (PRIVATE, 'unknown', None, True, [], {})]
+        invalid += [{**valid, 'pngSHA256': value} for value in
+                    ('A' * 64, 'a' * 63, 'a' * 65, 'g' * 64, PRIVATE, 'a' * 64 + '\n', None, True, [], {})]
+        invalid += [{**valid, 'method': PHASE_METHOD}, {**valid, 'stage': 'calendar'},
+                    {**valid, 'private': PRIVATE}, {key: value for key, value in valid.items() if key != 'imageScale'},
+                    [], None]
+        log = self.root / 'native-invalid.log'
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                log.write_text('\n'.join([started_line(NATIVE_SCREENSHOT_METHOD), native_screenshot_line(payload)]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+
+    def test_native_screenshot_diagnostic_requires_unique_active_case_and_rejects_duplicate_or_malformed_transcript(self):
+        valid = native_screenshot_payload()
+        log = self.root / 'native-transcript.log'
+        prefixes = [[], [started_line(PHASE_METHOD)], [started_line(NATIVE_SCREENSHOT_METHOD, 'OtherTests')],
+                    [started_line(NATIVE_SCREENSHOT_METHOD), started_line(PHASE_METHOD)],
+                    [started_line(NATIVE_SCREENSHOT_METHOD), case_line(NATIVE_SCREENSHOT_METHOD)],
+                    [started_line(NATIVE_SCREENSHOT_METHOD), "Test Case '-[broken]' started."]]
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                log.write_text('\n'.join(prefix + [native_screenshot_line(valid)]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [{'invalidCount': 1}])
+        malformed = [native_screenshot_line(valid), native_screenshot_line(valid) + ' error: ' + PRIVATE,
+                     native_screenshot_line(valid) + ' UI native screenshot diagnostic: ' + PRIVATE,
+                     'UI native screenshot diagnostic: {' + PRIVATE,
+                     'UI native screenshot diagnostic: ' + '[' * 1500 + '0' + ']' * 1500,
+                     native_screenshot_line(valid).replace('"orientation": "left"',
+                                                           '"orientation":"' + PRIVATE + '","orientation":"left"')]
+        for bad in malformed:
+            with self.subTest(bad=bad):
+                log.write_text('\n'.join([started_line(NATIVE_SCREENSHOT_METHOD), native_screenshot_line(valid), bad]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [{'invalidCount': 1}])
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+            output = self.capture(helper.report_ui_native_screenshot_diagnostics,
+                                  [started_line(NATIVE_SCREENSHOT_METHOD), 'UI native screenshot diagnostic: ' + over_limit])
+        self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_new_diagnostics_reject_cross_channel_markers_and_never_change_existing_gates_or_raw_fallback(self):
+        phase = {'method': PHASE_METHOD, 'phase': 'started'}
+        native = native_screenshot_payload()
+        keyboard = {'phase': 'continueReadiness', 'continueCandidateCount': 1,
+                    'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000}
+        viewport = {'orientation': 'landscape', 'stableSamples': 0, 'elapsedMilliseconds': 15000, 'checks': {}}
+        other_lines = [store_dedup_line(), keyboard_line(keyboard), viewport_line(viewport), ui_failure_line()]
+        for new in (phase_line(phase), native_screenshot_line(native)):
+            for old in other_lines:
+                with self.subTest(new=new, old=old):
+                    log = self.root / 'new-mixed.log'
+                    log.write_text('\n'.join([started_line(PHASE_METHOD), new + ' ' + old,
+                                              'error: safe unrelated compiler failure']) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    for prefix in (UI_PHASE_NOTICE, UI_NATIVE_SCREENSHOT_NOTICE, UI_KEYBOARD_NOTICE,
+                                   UI_VIEWPORT_NOTICE, STORE_DEDUP_NOTICE, UI_FIRST_FAILURE_NOTICE):
+                        self.assertEqual(self.notices(output, prefix), [])
+                    self.assertIn('"invalidCount": 1', output)
+                    self.assertIn('::error::error: safe unrelated compiler failure', output)
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999'))
+        log = self.root / 'new-private-gates.log'
+        log.write_text('\n'.join([
+            started_line(PHASE_METHOD), phase_line({**phase, 'private': private}),
+            native_screenshot_line({**native, 'private': private}),
+            phase_line(phase) + ' ' + native_screenshot_line(native),
+            'UI test phase diagnostic: {' + PRIVATE, 'UI native screenshot diagnostic: {' + PRIVATE,
+            case_line(PHASE_METHOD, event='failed'), screenshot_line('detail', '123'),
+            'error: safe unrelated compiler failure',
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_PHASE_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [{'invalidCount': 3}])
+        self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [{'invalidCount': 3}])
+        self.assertEqual(self.notices(output, SCREENSHOT_NOTICE), [{'scope': 'stdoutOnly', 'stage': 'detail', 'milliseconds': 123}])
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+
     def test_keyboard_diagnostic_accepts_only_safe_fields_at_both_bounds_and_phases(self):
         log = self.root / 'keyboard-valid.log'
         for phase in ('continueReadiness', 'introductionDismissal'):
@@ -101,6 +330,69 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                         self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
                         self.assertNotIn('/private/', output)
                         self.assertNotIn('::error::', output)
+
+    def test_extended_keyboard_diagnostic_preserves_actual_decreasing_counts_and_old_schema(self):
+        log = self.root / 'keyboard-extended-valid.log'
+        count_fields = ('continueQueryCount', 'continueExistingCount', 'continueHittableCount',
+                        'continueEnabledCount', 'continueInKeyboardCount')
+        self.assertEqual(helper.UI_KEYBOARD_COUNT_FIELDS, count_fields)
+        for phase in ('continueReadiness', 'introductionDismissal'):
+            for counts in ((0, 0, 0, 0, 0), (100, 100, 100, 100, 100), (5, 4, 3, 2, 1), (1, 1, 0, 0, 0)):
+                with self.subTest(phase=phase, counts=counts):
+                    basic = {'phase': phase, 'continueCandidateCount': counts[-1],
+                             'keyboardBoundsValid': True, 'elapsedMilliseconds': 15097}
+                    extended = {**basic, **dict(zip(count_fields, counts))}
+                    log.write_text('\n'.join([keyboard_line(basic), keyboard_line(extended)]) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE),
+                                     [{'scope': 'stdoutOnly', **basic}, {'scope': 'stdoutOnly', **extended}])
+                    self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
+                    self.assertNotIn('::error::', output)
+
+    def test_extended_keyboard_diagnostic_rejects_noninteger_nonmonotonic_mismatch_and_partial_fields(self):
+        fields = ('continueQueryCount', 'continueExistingCount', 'continueHittableCount',
+                  'continueEnabledCount', 'continueInKeyboardCount')
+        valid = {'phase': 'continueReadiness', 'continueCandidateCount': 1,
+                 'keyboardBoundsValid': True, 'elapsedMilliseconds': 15097,
+                 **dict(zip(fields, (5, 4, 3, 2, 1)))}
+        invalid = []
+        for key in fields:
+            invalid += [{**valid, key: value} for value in (-1, 101, True, False, 1.0, '1', None, [], {})]
+            invalid.append({name: value for name, value in valid.items() if name != key})
+        for counts in ((1, 2, 1, 1, 1), (3, 2, 3, 1, 1), (4, 3, 2, 3, 1), (5, 4, 3, 2, 3)):
+            invalid.append({**valid, **dict(zip(fields, counts))})
+        invalid += [{**valid, 'continueCandidateCount': 0}, {**valid, 'continueCandidateCount': 2},
+                    {**valid, 'private': PRIVATE}]
+        log = self.root / 'keyboard-extended-invalid.log'
+        log.write_text('\n'.join(keyboard_line(payload) for payload in invalid) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(invalid)}])
+        self.assertNotIn('::error::', output)
+
+    def test_extended_keyboard_diagnostic_rejects_duplicate_counts_and_private_mixed_markers(self):
+        valid = {'phase': 'continueReadiness', 'continueCandidateCount': 0,
+                 'keyboardBoundsValid': True, 'elapsedMilliseconds': 15097,
+                 'continueQueryCount': 1, 'continueExistingCount': 1, 'continueHittableCount': 0,
+                 'continueEnabledCount': 0, 'continueInKeyboardCount': 0}
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999'))
+        lines = [keyboard_line({**valid, 'private': private}),
+                 keyboard_line(valid).replace('"continueQueryCount": 1',
+                                              '"continueQueryCount":"' + PRIVATE + '","continueQueryCount":1'),
+                 keyboard_line(valid) + ' ' + phase_line({'method': PHASE_METHOD, 'phase': 'started'}),
+                 keyboard_line(valid) + ' ' + native_screenshot_line(native_screenshot_payload())]
+        log = self.root / 'keyboard-extended-private.log'
+        log.write_text('\n'.join(lines) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(lines)}])
+        self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertNotIn('::error::', output)
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
 
     def test_keyboard_diagnostic_rejects_unknown_phase_wrong_types_and_nonexact_fields(self):
         valid = {'phase': 'continueReadiness', 'continueCandidateCount': 1,

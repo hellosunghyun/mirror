@@ -309,6 +309,93 @@ def clean_png(data):
     return PNG_SIGNATURE + b''.join(chunks), width, height
 
 
+def exif_orientation(payload):
+    """한정된 classic TIFF IFD0의 orientation 숫자만 읽고 원문은 반환하지 않는다.
+
+    미지원·손상 구조와 중복 태그는 None이다. 이는 진단의 판독 범위이며 기존
+    PNG 정제·수용 조건을 바꾸지 않는다. 다른 IFD와 태그 문자열은 따라가지 않는다.
+    """
+    if not 14 <= len(payload) <= 1024 * 1024:
+        return None
+    endian = '<' if payload[:2] == b'II' else '>' if payload[:2] == b'MM' else None
+    if endian is None or struct.unpack_from(endian + 'H', payload, 2)[0] != 42:
+        return None
+    offset = struct.unpack_from(endian + 'I', payload, 4)[0]
+    if offset < 8 or offset % 2 or offset + 2 > len(payload):
+        return None
+    count = struct.unpack_from(endian + 'H', payload, offset)[0]
+    end = offset + 2 + count * 12
+    if count > 256 or end + 4 > len(payload):
+        return None
+    next_ifd = struct.unpack_from(endian + 'I', payload, end)[0]
+    if next_ifd and (next_ifd < 8 or next_ifd % 2 or next_ifd == offset
+                     or next_ifd + 2 > len(payload)):
+        return None
+    sizes = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2,
+             9: 4, 10: 8, 11: 4, 12: 8, 13: 4}
+    orientation = None
+    for index in range(count):
+        entry = offset + 2 + index * 12
+        tag, kind, items = struct.unpack_from(endian + 'HHI', payload, entry)
+        if kind not in sizes or items == 0:
+            return None
+        size = sizes[kind] * items
+        if size > 4:
+            value_offset = struct.unpack_from(endian + 'I', payload, entry + 8)[0]
+            if value_offset < 8 or value_offset + size > len(payload):
+                return None
+        if tag == 0x0112:
+            if orientation is not None or kind != 3 or items != 1:
+                return None
+            value = struct.unpack_from(endian + 'H', payload, entry + 8)[0]
+            if not 1 <= value <= 8:
+                return None
+            orientation = value
+    return orientation
+
+
+def png_provenance_parts(data):
+    """clean_png가 이미 검증한 PNG의 원래 chunk payload만 비교용으로 읽는다."""
+    position = 8
+    ihdr = None
+    idat = hashlib.sha256()
+    exif_count = 0
+    exif = None
+    view = memoryview(data)
+    while position < len(data):
+        length = struct.unpack_from('>I', data, position)[0]
+        kind = data[position + 4:position + 8]
+        payload = view[position + 8:position + 8 + length]
+        if kind == b'IHDR':
+            ihdr = payload
+        elif kind == b'IDAT':
+            # 나뉜 모든 IDAT payload를 순서대로 연결한 SHA256이며 재압축하지 않는다.
+            idat.update(payload)
+        elif kind == b'eXIf':
+            exif_count += 1
+            if exif_count == 1 and length <= 1024 * 1024:
+                exif = payload
+        position += length + 12
+    width, height = struct.unpack_from('>II', ihdr)
+    return {'width': width, 'height': height, 'ihdrHash': digest(ihdr),
+            'idatHash': idat.hexdigest(), 'exifPresent': exif_count > 0,
+            'exifOrientation': exif_orientation(exif) if exif_count == 1 and exif is not None else None}
+
+
+def png_provenance(exported, cleaned):
+    """실제 iPad 가로 한 장의 고정 scalar/hash 진단이며 공개 자산은 추가하지 않는다."""
+    original, public = png_provenance_parts(exported), png_provenance_parts(cleaned)
+    return {'platform': 'ipad', 'stage': 'ipad-landscape',
+            'exportWidth': original['width'], 'exportHeight': original['height'],
+            'cleanWidth': public['width'], 'cleanHeight': public['height'],
+            'exportPNGHash': digest(exported),
+            'exportIHDRHash': original['ihdrHash'], 'cleanIHDRHash': public['ihdrHash'],
+            'exportIDATHash': original['idatHash'], 'cleanIDATHash': public['idatHash'],
+            'exportExifPresent': original['exifPresent'],
+            'exportExifOrientation': original['exifOrientation'],
+            'cleanExifPresent': public['exifPresent']}
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -453,13 +540,17 @@ def prepare(source, output, platform, expected):
     for path in files:
         by_basename.setdefault(path.name, []).append(path)
     images, shots, used_names, used_exports = {}, [], set(), set()
+    landscape_provenance = None
     for name, basename in entries:
         require(name not in used_names and basename not in used_exports, 'duplicateScreenshot')
         used_names.add(name)
         used_exports.add(basename)
         candidates = by_basename.get(basename, [])
         require(len(candidates) == 1, 'missingScreenshot')
-        data, width, height = clean_png(read_regular(candidates[0], MAX_PNG_BYTES))
+        exported_data = read_regular(candidates[0], MAX_PNG_BYTES)
+        data, width, height = clean_png(exported_data)
+        if platform == 'ipad' and SHOT_PATTERN.fullmatch(name)[1] == 'ipad-landscape':
+            landscape_provenance = png_provenance(exported_data, data)
         filename = 'screenshots/' + name + '.png'
         images[filename] = data
         shots.append({'name': name, 'stage': SHOT_PATTERN.fullmatch(name)[1], 'file': filename,
@@ -469,6 +560,8 @@ def prepare(source, output, platform, expected):
                 'screenshots': sorted(shots, key=lambda shot: (ALL_STAGES.index(shot['stage']), shot['name']))}
     validate_manifest(manifest, expected)
     write_directory(output, payload(manifest, images), expected)
+    if landscape_provenance is not None:
+        print('::notice::UI PNG provenance diagnostic: ' + json.dumps(landscape_provenance, sort_keys=True))
     return manifest
 
 
