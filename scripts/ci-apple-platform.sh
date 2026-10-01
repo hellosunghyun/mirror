@@ -64,6 +64,11 @@ if test "$mode" != ui; then
   fi
 
   test_actions=(build test)
+  if test "$platform" = macos; then
+    ci_phase='실제 저장 writer 프로세스 helper 빌드'
+    swift build --scratch-path .build/process-probe --product MirrorStoreProbe
+    swift build --scratch-path .build/process-probe --show-bin-path > .build/process-probe/bin-path.txt
+  fi
   if test "$platform" != macos; then
     # 컴파일 오류는 Simulator를 시작하기 전에 확인한다. build-for-testing은 테스트를 실행하지 않는다.
     ci_phase='Simulator 시작 전 앱·확장·테스트 빌드'

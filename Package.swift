@@ -9,7 +9,8 @@ let package = Package(
         .library(name: "MirrorDomain", targets: ["MirrorDomain"]),
         .library(name: "MirrorData", targets: ["MirrorData"]),
         .library(name: "MirrorSystem", targets: ["MirrorSystem"]),
-        .library(name: "MirrorDesign", targets: ["MirrorDesign"])
+        .library(name: "MirrorDesign", targets: ["MirrorDesign"]),
+        .executable(name: "MirrorStoreProbe", targets: ["MirrorStoreProbe"])
     ],
     targets: [
         .target(name: "MirrorDomain", path: "Sources/MirrorDomain", swiftSettings: [.defaultIsolation(nil)]),
@@ -20,6 +21,8 @@ let package = Package(
         .target(name: "MirrorDesign", path: "Sources/MirrorDesign",
                 resources: [.copy("SwiftPieces/LICENSE.swiftpieces"), .copy("SwiftPieces/PROVENANCE.md")],
                 swiftSettings: [.defaultIsolation(nil)]),
+        .executableTarget(name: "MirrorStoreProbe", dependencies: ["MirrorDomain", "MirrorData"],
+                          path: "Tests/Support/MirrorStoreProbe", swiftSettings: [.defaultIsolation(nil)]),
         .testTarget(name: "MirrorDomainTests", dependencies: ["MirrorDomain"], path: "Tests/MirrorDomainTests",
                     swiftSettings: [.defaultIsolation(nil)]),
         .testTarget(name: "MirrorDataTests", dependencies: ["MirrorDomain", "MirrorData"], path: "Tests/MirrorDataTests",

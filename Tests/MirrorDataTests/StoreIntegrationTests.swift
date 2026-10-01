@@ -3,6 +3,10 @@ import MirrorDomain
 @testable import MirrorData
 import Testing
 
+#if os(macOS)
+import Darwin
+#endif
+
 private let testDeviceID = "11111111-1111-4111-8111-111111111111"
 
 private func fixedContext(day: String = "2026-09-30") throws -> PlanningContext {
@@ -39,6 +43,81 @@ private func nextChange(in stream: AsyncStream<StoreChangeEvent>, timeout: Durat
         return try await group.next() ?? nil
     }
 }
+
+#if os(macOS)
+private struct StoreProbeReport: Decodable {
+    let state: CommandResultState
+    let operationID: String?
+    let taskCount: Int?
+    let recordCount: Int?
+}
+
+private final class StoreProbeChild: @unchecked Sendable {
+    let process = Process()
+    private let exitSignal = DispatchSemaphore(value: 0)
+
+    init(mode: String, directory: URL, envelope: URL, ready: URL, start: URL, report: URL) throws {
+        // SwiftPM의 공식 --show-bin-path 결과를 사용해 native XCTest의 환경 변수 전달에 의존하지 않는다.
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let scratch = root.appendingPathComponent(".build/process-probe", isDirectory: true)
+        let manifest = scratch.appendingPathComponent("bin-path.txt")
+        try #require(FileManager.default.fileExists(atPath: manifest.path),
+                     "CI는 프로세스 helper를 명시적으로 build하고 bin-path.txt를 준비해야 합니다.")
+        let binPath = try String(contentsOf: manifest, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let binary = URL(fileURLWithPath: binPath, isDirectory: true).appendingPathComponent("MirrorStoreProbe")
+        try #require(binary.standardizedFileURL.path.hasPrefix(scratch.standardizedFileURL.path + "/"),
+                     "helper 실행 파일은 현재 저장소의 process-probe scratch 안에 있어야 합니다.")
+        try #require(FileManager.default.isExecutableFile(atPath: binary.path),
+                     "실제 MirrorStoreProbe 실행 파일이 없으면 프로세스 회귀를 완료할 수 없습니다.")
+        process.executableURL = binary
+        process.arguments = [mode, directory.path, envelope.path, ready.path, start.path, report.path]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        let signal = exitSignal
+        process.terminationHandler = { _ in signal.signal() }
+    }
+
+    func run() throws { try process.run() }
+    func cleanup() { killAndReap(process, exitSignal: exitSignal) }
+
+    var hasReapedExit: Bool {
+        guard exitSignal.wait(timeout: .now()) == .success else { return false }
+        exitSignal.signal() // cleanup도 같은 종료 완료 신호를 확인한다.
+        return true
+    }
+}
+
+private func killAndReap(_ process: Process, exitSignal: DispatchSemaphore) {
+    guard process.processIdentifier > 0 else { return }
+    if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+    // 종료 handler는 Foundation이 자식을 회수한 뒤 호출된다. timeout이면 검증 실패를 남긴다.
+    guard exitSignal.wait(timeout: .now() + 5) == .success else {
+        Issue.record("SIGKILL 이후 5초 안에 helper 종료·회수를 확인하지 못했습니다.")
+        return
+    }
+    if process.isRunning { Issue.record("종료 handler 이후에도 helper가 실행 중입니다.") }
+}
+
+private func waitForProbeReady(_ children: [StoreProbeChild], files: [URL]) async throws {
+    let clock = ContinuousClock(), deadline = clock.now.advanced(by: .seconds(15))
+    while !files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
+        try #require(children.allSatisfy { $0.process.isRunning }, "ready 이전에 helper가 종료됐습니다.")
+        try #require(clock.now < deadline, "helper ready 대기는 15초 이내여야 합니다.")
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(children.allSatisfy { $0.process.isRunning }, "ready는 실행 중인 실제 helper가 보내야 합니다.")
+}
+
+private func waitForProbeExit(_ children: [StoreProbeChild]) async throws {
+    let clock = ContinuousClock(), deadline = clock.now.advanced(by: .seconds(15))
+    while children.contains(where: { !$0.hasReapedExit }) {
+        try #require(clock.now < deadline, "helper 종료 대기는 15초 이내여야 합니다.")
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(children.allSatisfy { !$0.process.isRunning }, "종료 handler는 자식 종료를 확인해야 합니다.")
+}
+#endif
 
 @Suite("실제 Core Data SQLite 저장과 복구")
 struct StoreIntegrationTests {
@@ -537,6 +616,94 @@ struct StoreIntegrationTests {
     }
 
     #if os(macOS)
+    @Test("두 실제 Swift writer 프로세스의 같은 봉투·토큰은 작업과 원본을 한 번만 저장한다", .timeLimit(.minutes(2)))
+    func separateSwiftProcessesDeduplicateSameEnvelope() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        let taskID = UUID()
+        let envelope = try capture(id: taskID, key: "swift-process-shared-decision", title: "프로세스 경합 회귀", context: context)
+        let envelopeURL = configuration.directory.appendingPathComponent("ProbeEnvelope.json")
+        try CanonicalDigest.data(envelope).write(to: envelopeURL, options: .atomic)
+        let start = configuration.directory.appendingPathComponent("ProbeStart")
+        let readyFiles = (0..<2).map { configuration.directory.appendingPathComponent("ProbeReady-\($0)") }
+        let reportFiles = (0..<2).map { configuration.directory.appendingPathComponent("ProbeReport-\($0).json") }
+        let first = try StoreProbeChild(mode: "race", directory: configuration.directory, envelope: envelopeURL,
+                                        ready: readyFiles[0], start: start, report: reportFiles[0])
+        defer { first.cleanup() }
+        let second = try StoreProbeChild(mode: "race", directory: configuration.directory, envelope: envelopeURL,
+                                         ready: readyFiles[1], start: start, report: reportFiles[1])
+        defer { second.cleanup() }
+        try first.run()
+        try second.run()
+        try await waitForProbeReady([first, second], files: readyFiles)
+        #expect(first.process.processIdentifier != second.process.processIdentifier)
+        #expect(first.process.processIdentifier != ProcessInfo.processInfo.processIdentifier)
+        #expect(second.process.processIdentifier != ProcessInfo.processInfo.processIdentifier)
+        try Data("start".utf8).write(to: start, options: .atomic)
+        try await waitForProbeExit([first, second])
+        try #require(first.process.terminationReason == .exit && first.process.terminationStatus == 0)
+        try #require(second.process.terminationReason == .exit && second.process.terminationStatus == 0)
+        let reports = try reportFiles.map { try JSONDecoder().decode(StoreProbeReport.self, from: Data(contentsOf: $0)) }
+        #expect(reports.filter { $0.state == .locallyCommitted }.count == 1)
+        #expect(reports.filter { $0.state == .alreadyApplied }.count == 1)
+        let operationID = try #require(reports[0].operationID)
+        #expect(reports[1].operationID == operationID)
+        #expect(reports.allSatisfy { $0.taskCount == 1 && $0.recordCount == 1 })
+        let snapshot = try await store.snapshot()
+        #expect(snapshot.tasks.count == 1)
+        #expect(snapshot.tasks.first?.taskID == taskID)
+        #expect(snapshot.records.count == 1)
+        #expect(snapshot.records.first?.operationID == operationID)
+        let retry = await store.execute(envelope, at: context.capturedAt)
+        #expect(retry.state == .alreadyApplied)
+        #expect(retry.operationID == operationID)
+    }
+
+    @Test("실제 Swift writer의 원본 저장 뒤 SIGKILL은 같은 요청으로 한 번 복구된다", .timeLimit(.minutes(2)))
+    func separateSwiftProcessCanonicalCommitSurvivesSIGKILL() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        try FileManager.default.createDirectory(at: configuration.directory, withIntermediateDirectories: true)
+        let context = try fixedContext()
+        let taskID = UUID()
+        let envelope = try capture(id: taskID, key: "swift-process-canonical-kill", title: "원본 종료 복구 회귀", context: context)
+        let envelopeURL = configuration.directory.appendingPathComponent("ProbeEnvelope.json")
+        try CanonicalDigest.data(envelope).write(to: envelopeURL, options: .atomic)
+        let ready = configuration.directory.appendingPathComponent("ProbeCanonicalReady")
+        let reportURL = configuration.directory.appendingPathComponent("ProbeCanonicalReport.json")
+        let child = try StoreProbeChild(mode: "after-canonical", directory: configuration.directory, envelope: envelopeURL,
+            ready: ready, start: configuration.directory.appendingPathComponent("UnusedStart"), report: reportURL)
+        defer { child.cleanup() }
+        try child.run()
+        try await waitForProbeReady([child], files: [ready])
+        let report = try JSONDecoder().decode(StoreProbeReport.self, from: Data(contentsOf: reportURL))
+        try #require(report.state == .committedProjectionPending)
+        let committedOperationID = try #require(report.operationID)
+        #expect(report.taskCount == nil && report.recordCount == nil)
+        #expect(child.process.processIdentifier != ProcessInfo.processInfo.processIdentifier)
+        try #require(Darwin.kill(child.process.processIdentifier, SIGKILL) == 0)
+        try await waitForProbeExit([child])
+        #expect(child.process.terminationReason == .uncaughtSignal)
+        #expect(child.process.terminationStatus == SIGKILL)
+
+        let reopened = try await MirrorStore(configuration: configuration)
+        let recovered = try await reopened.snapshot()
+        #expect(recovered.tasks.count == 1)
+        #expect(recovered.tasks.first?.taskID == taskID)
+        #expect(recovered.records.count == 1)
+        #expect(recovered.records.first?.operationID == committedOperationID)
+        let tomorrow = try fixedContext(day: "2026-10-01")
+        let retry = await reopened.execute(envelope, at: tomorrow.capturedAt)
+        #expect(retry.state == .alreadyApplied)
+        #expect(retry.operationID == committedOperationID)
+        let final = try await reopened.snapshot()
+        #expect(final.tasks.count == 1)
+        #expect(final.tasks.first?.taskID == taskID)
+        #expect(final.records.count == 1)
+    }
+
     @Test("별도 OS 프로세스의 잠금 중 원본은 늘지 않고 종료 뒤 같은 요청을 한 번 저장한다")
     func separateProcessWriteGateAndTerminationRelease() async throws {
         let configuration = temporaryConfiguration()
@@ -557,11 +724,10 @@ struct StoreIntegrationTests {
         """, lockURL.path, readyURL.path]
         helper.standardOutput = Pipe()
         helper.standardError = Pipe()
+        let exitSignal = DispatchSemaphore(value: 0)
+        helper.terminationHandler = { _ in exitSignal.signal() }
         try helper.run()
-        defer {
-            if helper.isRunning { helper.terminate() }
-            helper.waitUntilExit()
-        }
+        defer { killAndReap(helper, exitSignal: exitSignal) }
         let clock = ContinuousClock()
         let readyDeadline = clock.now.advanced(by: .seconds(5))
         while helper.isRunning, !FileManager.default.fileExists(atPath: readyURL.path), clock.now < readyDeadline {
@@ -582,7 +748,9 @@ struct StoreIntegrationTests {
         let exitDeadline = clock.now.advanced(by: .seconds(5))
         while helper.isRunning, clock.now < exitDeadline { try await Task.sleep(for: .milliseconds(10)) }
         try #require(!helper.isRunning, "helper 종료 후에만 생산 명령을 재시도합니다.")
-        helper.waitUntilExit()
+        try #require(exitSignal.wait(timeout: .now() + 5) == .success,
+                     "Python helper의 종료·회수 완료 신호는 5초 이내여야 합니다.")
+        exitSignal.signal()
         #expect(helper.terminationReason == .uncaughtSignal)
 
         let committed = await store.execute(envelope, at: context.capturedAt)
