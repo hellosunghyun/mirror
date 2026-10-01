@@ -41,7 +41,7 @@ App Intents 전체를 설정 막힘으로 분류하지 않는다. 본 앱 프로
 
 ## 병행 UI 변경과 남은 검증
 
-기준 커밋의 일정 화면은 날짜별 작업을 `MirrorTaskRow`로 표시하며 실제 마감 배지/독립 영역이 빠져 있었다([기준 일정:31–57](https://github.com/hellosunghyun/mirror/blob/d7a3630121904a66546d554f2867bf00ebf8955c/App/MirrorCalendarSettings.swift#L31)). 2026-10-01 병행 UI 수정의 작업 트리에는 `dayCard`의 날짜별 “이 날의 실제 마감”과 `taskRows`의 실제 마감 배지가 추가됐다([현재 MirrorCalendarSettings.swift](../App/MirrorCalendarSettings.swift), 확인 시점 95–131·150–159행). **이 항목은 현재 구현 코드가 생겼으며 새 커밋의 원격 빌드·UI 실행은 미검증**이다. FR-014/018/021과 [원본 02 S-09](../postpone-app-docs/02_UX_AND_SCREEN_SPEC.md)의 계획·마감 분리를 확인해야 한다.
+기준 커밋의 일정 화면은 날짜별 작업을 `MirrorTaskRow`로 표시하며 실제 마감 배지/독립 영역이 빠져 있었다([기준 일정:31–57](https://github.com/hellosunghyun/mirror/blob/d7a3630121904a66546d554f2867bf00ebf8955c/App/MirrorCalendarSettings.swift#L31)). 2026-10-01 병행 UI 수정의 작업 트리에는 `dayCard`의 날짜별 “이 날의 실제 마감”과 `taskRows`의 실제 마감 배지가 추가됐다([현재 MirrorCalendarSettings.swift](../App/MirrorCalendarSettings.swift), 확인 시점 95–131·150–159행). **이 항목은 UI 수정 커밋 `6d6ef3b`에서 구현했고 세 플랫폼의 원격 앱 빌드·단위 검사와 각각 UI 6개는 통과했다.** 실제 마감이 있는 일정의 배지·별도 영역 시각 수용은 추가 증거가 필요하다. FR-014/018/021과 [원본 02 S-09](../postpone-app-docs/02_UX_AND_SCREEN_SPEC.md)의 계획·마감 분리를 확인해야 한다.
 
 다음은 코드 작성 여부와 별도로 필요한 수용 증거다.
 

@@ -69,6 +69,11 @@ if test "$mode" != ui; then
     ci_phase='실제 저장 writer 프로세스 helper 빌드'
     swift build --scratch-path .build/process-probe --product MirrorStoreProbe
     swift build --scratch-path .build/process-probe --show-bin-path > .build/process-probe/bin-path.txt
+    # PATH의 python3와 XCTest가 직접 실행하는 Apple interpreter는 다를 수 있다.
+    # 실제 helper 의존성을 준비한 뒤 기존 5초 잠금 획득 계약을 그대로 검사한다.
+    ci_phase='실제 OS 잠금 helper의 Python 의존성 준비'
+    /usr/bin/python3 -u -c 'import fcntl, pathlib, signal, sys; assert callable(fcntl.flock) and callable(signal.pause)'
+    echo '::notice::실제 /usr/bin/python3 잠금 helper 의존성을 확인했습니다.'
   fi
   if test "$platform" != macos; then
     # 컴파일 오류는 Simulator를 시작하기 전에 확인한다. build-for-testing은 테스트를 실행하지 않는다.
@@ -168,6 +173,41 @@ print(context['scheme'], context['sdk'], context['destination'], sep='\t')
 PY
 )
 IFS=$'\t' read -r scheme sdk destination <<< "$context_values"
+
+if test "$platform" != macos; then
+  ci_phase='UI 직전 같은 Simulator runtime·기기 상태 확인'
+  simulator_values=$(python3 - "$destination" <<'PY'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+match = re.fullmatch(r'platform=iOS Simulator,id=([0-9A-Fa-f-]{36})', sys.argv[1])
+if match is None:
+    raise SystemExit('::error::단위 결과의 Simulator 대상 형식이 잘못됐습니다.')
+expected = json.loads(Path('development-baseline.json').read_text())['observedToolchain']['iOSSimulatorRuntime']
+runtimes = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '--json']))
+runtime = next((item for item in runtimes['runtimes'] if item['version'] == expected
+                and item['identifier'].startswith('com.apple.CoreSimulator.SimRuntime.iOS-')
+                and item.get('isAvailable')), None)
+if runtime is None:
+    raise SystemExit('::error::현재 UI 실행의 필수 Simulator runtime이 없습니다.')
+devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))
+matches = [item for item in devices['devices'].get(runtime['identifier'], []) if item['udid'] == match[1]]
+if len(matches) != 1 or matches[0]['state'] not in ('Booted', 'Shutdown'):
+    raise SystemExit('::error::단위 검사와 같은 UI Simulator의 준비 상태를 확인할 수 없습니다.')
+print(matches[0]['udid'], matches[0]['state'])
+PY
+  )
+  read -r device_id device_state <<< "$simulator_values"
+  if test "$device_state" = Shutdown; then
+    xcrun simctl boot "$device_id"
+  fi
+  ci_phase='UI 직전 Simulator 준비 완료 확인'
+  xcrun simctl bootstatus "$device_id" -b
+  echo '::notice::단위 검사와 같은 runtime·Simulator의 UI 실행 준비를 확인했습니다.'
+fi
 
 ci_phase='실제 Xcode UI coverage 옵션 지원 확인'
 help_path="$result_dir/ui-xcodebuild-help.txt"

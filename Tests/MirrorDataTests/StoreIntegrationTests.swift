@@ -734,15 +734,22 @@ struct StoreIntegrationTests {
         let envelope = try capture(key: "process-boundary-decision", context: context)
         let lockURL = configuration.directory.appendingPathComponent("Writer.lock")
         let readyURL = configuration.directory.appendingPathComponent("HelperReady")
+        let entryURL = configuration.directory.appendingPathComponent("HelperEntry")
+        let beforeLockURL = configuration.directory.appendingPathComponent("HelperBeforeLock")
         let helper = Process()
         helper.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         helper.arguments = ["-u", "-c", """
-        import fcntl, pathlib, signal, sys
+        import sys
+        with open(sys.argv[3], "w") as marker:
+            marker.write("entry")
+        import fcntl, pathlib, signal
         with open(sys.argv[1], "a+b") as handle:
+            with open(sys.argv[4], "w") as marker:
+                marker.write("before-lock")
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             pathlib.Path(sys.argv[2]).write_text("locked", encoding="utf-8")
             signal.pause()
-        """, lockURL.path, readyURL.path]
+        """, lockURL.path, readyURL.path, entryURL.path, beforeLockURL.path]
         helper.standardOutput = Pipe()
         helper.standardError = Pipe()
         let exitSignal = DispatchSemaphore(value: 0)
@@ -754,8 +761,11 @@ struct StoreIntegrationTests {
         while helper.isRunning, !FileManager.default.fileExists(atPath: readyURL.path), clock.now < readyDeadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(helper.isRunning, "잠금 helper가 실제 별도 프로세스에서 실행되어야 합니다.")
-        try #require(FileManager.default.fileExists(atPath: readyURL.path), "helper의 잠금 획득을 확인해야 합니다.")
+        let lifecycle = helper.isRunning ? "running" :
+            "reason=\(helper.terminationReason.rawValue),status=\(helper.terminationStatus)"
+        let stage = "entry=\(FileManager.default.fileExists(atPath: entryURL.path)),beforeLock=\(FileManager.default.fileExists(atPath: beforeLockURL.path)),\(lifecycle)"
+        try #require(helper.isRunning, "잠금 helper가 실제 별도 프로세스에서 실행되어야 합니다. \(stage)")
+        try #require(FileManager.default.fileExists(atPath: readyURL.path), "helper의 잠금 획득을 확인해야 합니다. \(stage)")
         #expect(helper.processIdentifier != ProcessInfo.processInfo.processIdentifier)
 
         let blocked = await store.execute(envelope, at: context.capturedAt)

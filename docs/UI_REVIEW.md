@@ -19,7 +19,11 @@
 
 테스트와 앱 빌드는 GitHub Actions에서만 실행한다. [수정 전 화면 실행](https://github.com/hellosunghyun/mirror/actions/runs/36881520763)은 UI 캡처 변경 `728d682`를 사용하며 앱 화면 소스는 이전 배포와 같다. Mac·iPhone은 각각 실제 UI 6개와 guard를 통과했으나 SDK export 이름의 파싱에서 실패했다. iPad는 완료한 두 사례 통과 뒤 UI 20분 제한으로 중단되어 전체 UI 결과·필수 앱샷 완료를 확보하지 못했다. 수정 전 전체 시각 검증 통과로 기록하지 않는다.
 
-[UI 수정본 실행](https://github.com/hellosunghyun/mirror/actions/runs/36883100875)의 Mac·iPhone은 실제 단위 및 UI 6개·guard를 통과했다. Mac의 새 버튼 크기·미저장 편집 회귀도 포함한다. iPad는 Simulator의 테스트 runner를 실행하지 못해 UI 여섯 사례가 실행되지 않았다. 이 결과를 제품 UI assertion 실패나 통과로 기록하지 않는다. 앱샷 게시의 SDK 이름 문제는 별도로 확인한다. 후속 변경은 실제 PNG와 모든 기능 assertions·실행 제한을 유지하고, 캡처마다 반복하던 추가 접근성 진단 조회를 없애 viewport만 기록한다. 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
+[UI 수정본 실행](https://github.com/hellosunghyun/mirror/actions/runs/36883100875)의 Mac·iPhone은 실제 단위 및 UI 6개·guard를 통과했다. Mac의 새 버튼 크기·미저장 편집 회귀도 포함한다. iPad는 Simulator의 테스트 runner를 실행하지 못해 UI 여섯 사례가 실행되지 않았다. 이 결과를 제품 UI assertion 실패나 통과로 기록하지 않는다. 앱샷 게시의 SDK 이름 문제는 별도로 확인한다. 후속 변경은 실제 PNG와 모든 기능 assertions·실행 제한을 유지하고, 캡처마다 반복하던 추가 접근성 진단 조회를 없애 viewport만 기록한다. [후속 실행 36886881234](https://github.com/hellosunghyun/mirror/actions/runs/36886881234)에서 동일 UI 소스의 Mac·iPhone·iPad 모두 단위 검사 및 UI 6개·guard를 통과했다. iPad의 runner 기동 실패는 재현되지 않았고 기존 20분 제한 안에서 완료됐다. 이 실행은 이전 attachment parser를 사용해 PNG 준비 단계에서 실패했다. 별도 [SDK 검사 36888814412](https://github.com/hellosunghyun/mirror/actions/runs/36888814412)는 실제 SDK suffix와 Mac PNG 14개의 이름·내용·필수 화면 정규화를 확인했고, 새 parser 회귀를 포함한 준비 검사 120개가 통과했다.
+
+새 전체 실행에서 Mac 단위 검사의 별도 Python 잠금 helper가 5초 안에 준비 신호를 보내지 못한 사례도 있었다. 원인 구분을 위해 실제 `/usr/bin/python3` 의존성 준비와 진입·잠금 직전의 고정 marker 진단을 추가했다. 원래 5초 획득·종료·회수 계약과 PID·SIGTERM·원본·멱등성 assertions는 유지한다. 모바일 UI 직전에는 단위 검사와 같은 runtime·Simulator의 준비 상태를 다시 확인하며 공유 기기를 강제로 재부팅하지 않는다.
+
+목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
 |---|---|
