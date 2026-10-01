@@ -1,0 +1,206 @@
+name: 실제 SDK 앱샷 이름 진단
+
+on:
+  push:
+    paths:
+      - '.github/workflows/ui-sdk-diagnostics.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ui-sdk-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  names:
+    name: 보존된 baseline의 실제 SDK 이름 형태 확인
+    runs-on: xcode-27
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      BASELINE_RUN_ID: '36881520763'
+      BASELINE_RUN_ATTEMPT: '1'
+      BASELINE_BUILD: '24'
+      BASELINE_SHA: '728d682c668663baf31b16a3b2c37944f9ebcf89'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 기존 Mac 결과를 같은 실행에서 다운로드
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: macos-36881520763-1
+          run-id: 36881520763
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/mirror-ui-sdk-baseline
+      - name: 실제 결과와 SDK 이름의 안전한 형태만 진단
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import contextlib
+          import importlib.util
+          import io
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import tempfile
+          from urllib.request import Request, urlopen
+
+          phase = 'baseline provenance'
+
+          def need(condition):
+              if not condition:
+                  raise ValueError('fixed diagnostic validation failed')
+
+          def load_module(name, filename):
+              spec = importlib.util.spec_from_file_location(name, filename)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              return module
+
+          def api(endpoint):
+              request = Request('https://api.github.com/repos/hellosunghyun/mirror/' + endpoint,
+                                headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                                         'Accept': 'application/vnd.github+json',
+                                         'X-GitHub-Api-Version': '2022-11-28'})
+              with urlopen(request, timeout=30) as response:
+                  data = response.read(2 * 1024 * 1024 + 1)
+              need(len(data) <= 2 * 1024 * 1024)
+              return json.loads(data)
+
+          def native(arguments, output):
+              # SDK 예외·경로·원문은 runner 임시 파일에만 남긴다.
+              with output.open('wb') as stdout, output.with_suffix('.stderr').open('wb') as stderr:
+                  status = subprocess.run(['xcrun', 'xcresulttool', *arguments],
+                                          stdout=stdout, stderr=stderr, check=False).returncode
+              need(status == 0)
+
+          def suffix_runs(value):
+              def kind(char):
+                  if 'a' <= char <= 'z':
+                      return 'lower'
+                  if 'A' <= char <= 'Z':
+                      return 'upper'
+                  if '0' <= char <= '9':
+                      return 'digit'
+                  return {'-': 'hyphen', '_': 'underscore', '.': 'dot'}.get(char, 'other')
+              runs = []
+              for char in value:
+                  category = kind(char)
+                  if runs and runs[-1]['kind'] == category:
+                      runs[-1]['length'] += 1
+                  else:
+                      runs.append({'kind': category, 'length': 1})
+              return runs[:32], len(runs) > 32
+
+          try:
+              need(os.environ['GITHUB_REPOSITORY'] == 'hellosunghyun/mirror')
+              source_run = api('actions/runs/' + os.environ['BASELINE_RUN_ID'])
+              need(str(source_run.get('id')) == os.environ['BASELINE_RUN_ID']
+                   and source_run.get('head_sha') == os.environ['BASELINE_SHA']
+                   and str(source_run.get('run_number')) == os.environ['BASELINE_BUILD']
+                   and str(source_run.get('run_attempt')) == os.environ['BASELINE_RUN_ATTEMPT'])
+              root = Path(os.environ['RUNNER_TEMP']) / 'mirror-ui-sdk-baseline'
+              bundles = [path for path in root.rglob('UI.xcresult') if path.is_dir() and not path.is_symlink()]
+              need(len(bundles) == 1)
+              result = bundles[0]
+              context = json.loads((result.parent / 'unit-context.json').read_text())
+              need(context.get('platform') == 'macos' and context.get('scheme') == 'MirrorMac'
+                   and context.get('run_id') == os.environ['BASELINE_RUN_ID']
+                   and context.get('run_attempt') == os.environ['BASELINE_RUN_ATTEMPT']
+                   and context.get('commit') == os.environ['BASELINE_SHA']
+                   and context.get('build_number') == os.environ['BASELINE_BUILD'])
+              print('::notice::Baseline API SHA/build24/run/attempt와 보존된 UI context가 일치합니다.')
+
+              phase = 'actual UI summary and guard'
+              work = Path(tempfile.mkdtemp(prefix='mirror-ui-sdk-', dir=os.environ['RUNNER_TEMP']))
+              summary_path, tree_path = work / 'summary.json', work / 'tests.json'
+              native(['get', 'test-results', 'summary', '--path', str(result)], summary_path)
+              native(['get', 'test-results', 'tests', '--path', str(result)], tree_path)
+              summary = json.loads(summary_path.read_text())
+              need(all(type(summary.get(key)) is int and summary[key] == expected
+                       for key, expected in (('totalTestCount', 6), ('passedTests', 6),
+                                             ('failedTests', 0), ('skippedTests', 0))))
+              tree = json.loads(tree_path.read_text())
+              bundle_results, case_results = [], []
+
+              def visit(node, selected=False):
+                  if isinstance(node, dict):
+                      if node.get('nodeType') == 'UI test bundle':
+                          selected = node.get('name') == 'MirrorMacUITests'
+                          if selected:
+                              bundle_results.append(node.get('result'))
+                      if selected and node.get('nodeType') == 'Test Case':
+                          case_results.append(node.get('result'))
+                      for value in node.values():
+                          visit(value, selected)
+                  elif isinstance(node, list):
+                      for value in node:
+                          visit(value, selected)
+
+              visit(tree)
+              need(bundle_results == ['Passed'] and case_results == ['Passed'] * 6)
+              results = load_module('mirror_sdk_results', 'scripts/ci_results.py')
+              with contextlib.redirect_stdout(io.StringIO()):
+                  results.ui_guard(tree_path, 'MirrorMacUITests', 'Tests/MirrorUITests')
+              print('::notice::Baseline actual UI summary 6/6, bundle1 Passed, cases6 Passed, guard 통과.')
+
+              phase = 'actual SDK attachments help and export'
+              help_path = work / 'help.txt'
+              native(['export', 'attachments', '--help'], help_path)
+              help_text = help_path.read_text(errors='replace')
+              need(all(re.search(r'(?<![A-Za-z-])' + option + r'(?=[\s=]|$)', help_text)
+                       for option in ('--path', '--output-path')))
+              print('::notice::실제 SDK27 export attachments --path/--output-path 지원 확인.')
+              exported = work / 'attachments'
+              native(['export', 'attachments', '--path', str(result), '--output-path', str(exported)],
+                     work / 'export.txt')
+              helper = load_module('mirror_sdk_evidence', 'scripts/ci-ui-evidence.py')
+              manifests = [path for path in exported.rglob('manifest.json') if path.is_file()]
+              need(len(manifests) == 1)
+              manifest = helper.strict_json(manifests[0].read_bytes())
+              need(isinstance(manifest, list) and manifest
+                   and all(isinstance(record, dict) and isinstance(record.get('attachments'), list)
+                           for record in manifest))
+
+              phase = 'fixed manual attachment name shape'
+              count, samples = 0, 0
+              for record in manifest:
+                  for attachment in record['attachments']:
+                      need(isinstance(attachment, dict))
+                      name = attachment.get('suggestedHumanReadableName', attachment.get('name'))
+                      if not isinstance(name, str) or not name.startswith('mirror-ui-') or name.startswith('mirror-ui-metadata-'):
+                          continue
+                      need(len(name) <= 4096)
+                      count += 1
+                      if samples == 5:
+                          continue
+                      normalized = name[:-4] if name.endswith('.png') else name
+                      match = helper.SHOT_PATTERN.match(normalized)
+                      suffix = normalized[match.end():] if match else ''
+                      runs, truncated = suffix_runs(suffix)
+                      known_stage = next((stage for stage in sorted(helper.ALL_STAGES, key=len, reverse=True)
+                                          if name.startswith('mirror-ui-' + stage + '-')), None)
+                      other_name = attachment.get('name')
+                      samples += 1
+                      shape = {'sample': samples, 'length': len(name), 'normalizedLength': len(normalized),
+                               'basePatternMatches': helper.SHOT_PATTERN.fullmatch(normalized) is not None,
+                               'leadingBasePatternMatches': match is not None, 'knownStage': known_stage,
+                               'leadingPrefixTrue': True, 'pngExtensionCount': name.count('.png'),
+                               'hasName': 'name' in attachment, 'nameIsString': isinstance(other_name, str),
+                               'nameEqualsNormalizedSuggested': other_name == normalized,
+                               'nameEqualsNormalizedSuggestedPlusPNG': other_name == normalized + '.png',
+                               'suffixLength': len(suffix), 'suffixRuns': runs, 'suffixRunsTruncated': truncated}
+                      print('::notice::UI attachment name shape: ' + json.dumps(shape, sort_keys=True))
+              need(count > 0 and samples > 0)
+              print('::notice::UI SDK diagnostics: ' + json.dumps({'manualAttachmentCount': count,
+                                                                 'safeNameShapeSamples': samples}, sort_keys=True))
+          except Exception:
+              # 예외에 든 비공개 값·경로·URL·토큰을 출력하지 않는다.
+              print('::error::UI SDK 진단 실패 (' + phase + ').')
+              raise SystemExit(1)
+          PY

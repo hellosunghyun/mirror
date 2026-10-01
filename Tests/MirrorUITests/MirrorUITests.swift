@@ -259,7 +259,7 @@ final class MirrorUITests: XCTestCase {
         try requireNoElement("capture.title", in: app)
     }
 
-    /// 공개 증거는 이 테스트가 입력한 합성 작업의 앱 화면과 고정 ID의 경계 값만 남긴다.
+    /// 합성 작업의 실제 앱 화면을 남긴다. 기능 검사의 AX 조회를 캡처마다 반복하지 않는다.
     /// 화면 합격 기준은 baseline 검토 뒤 추가하며 기존 기능 assertions는 그대로 유지한다.
     @MainActor
     private func recordUI(_ stage: String, in app: XCUIApplication, identifiers: [String]) throws {
@@ -278,14 +278,10 @@ final class MirrorUITests: XCTestCase {
             return ["x": finite(value.origin.x), "y": finite(value.origin.y),
                     "width": finite(value.width), "height": finite(value.height)]
         }
-        let nodes: [[String: Any]] = identifiers.map { identifier in
-            let node = element(identifier, in: app, preferButtons: true)
-            let exists = node.exists
-            return ["identifier": identifier, "exists": exists, "hittable": exists && node.isHittable,
-                    "frame": frame(exists ? node.frame : .zero)]
-        }
+        // 버튼 활성 여부·원문·배치는 각 흐름의 기존 assertions/실제 조작에서 검사한다.
+        // 추가 AX snapshot은 iPad 실행 시간을 크게 늘려, 캡처 진단은 viewport로 한정한다.
         let metadata: [String: Any] = ["formatVersion": 1, "screenshotName": screenshotName,
-                                       "appFrame": frame(app.frame), "elements": nodes]
+                                       "appFrame": frame(app.frame), "expectedIdentifiers": identifiers]
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]),
                                        uniformTypeIdentifier: "public.json")
         attachment.name = "mirror-ui-metadata-\(stage)-\(method)-\(evidenceSequence)"

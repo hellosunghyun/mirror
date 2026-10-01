@@ -628,10 +628,12 @@ def main(argv=None):
         if error.metadata is not None:
             summary['metadata'] = error.metadata
             print('::error::UI attachment export 구조 미확인: ' + json.dumps(error.metadata, sort_keys=True))
+        print('::error::UI 화면 증거 검증 실패: ' + error.code)
         print(json.dumps(summary, sort_keys=True))
         return 1
     except Exception:
         # SDK JSON/IO/API 예외 메시지에는 비공개 원문·경로·토큰이 들어갈 수 있다.
+        print('::error::UI 화면 증거 처리 실패: processingFailed')
         print(json.dumps({'command': command, 'status': 'processingFailed'}, sort_keys=True))
         return 1
 
