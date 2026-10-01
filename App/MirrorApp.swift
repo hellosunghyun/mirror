@@ -35,6 +35,8 @@ struct MirrorApp: App {
                               height: min(idealSize.height, visibleRect.height))
             return WindowPlacement(size: size)
         }
+        #endif
+        #if os(macOS)
         MenuBarExtra("미러", systemImage: "sun.max") {
             MirrorMenuBarContent().environment(model)
         }.menuBarExtraStyle(.window)

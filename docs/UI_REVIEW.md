@@ -33,6 +33,8 @@
 
 후속 수정은 화면에 맞춘 Mac 새 창·Zoom과 inspector의 탐색 최소 폭, 명시적인 선택행 색, 검색 제목, grouped Form·모달 강조색, 키보드 위 고정 오류·저장 footer를 적용한다. 실제 Mac 창 경계·검색 제목·오류와 저장의 표시 회귀를 추가한다. iPad 회전은 기존15초 안에서 실제 창·열·날짜 제어의 안정된 배치를 확인하고, iPhone은 정확한 키보드 안내와 Continue가 함께 있을 때만 닫는다. 기존 여섯 사례와 모든 기능 assertions·guard·실행 제한·원본 앱샷43개를 유지하며 새 실제 PNG로 다시 확인한다.
 
+[후속 실행36916034507](https://github.com/hellosunghyun/mirror/actions/runs/36916034507), `fae3ac0`·build31은 준비·도메인만 통과했고 세 플랫폼 앱 빌드가 `MirrorApp.swift`의 조건부 modifier와 메뉴바 Scene이 같은 블록에 있는 구문 오류로 실패했다. UI·receipt는 실행되지 않았고 새 자료·앱도 게시되지 않았다. modifier와 별도 Scene의 조건부 블록을 분리하며 이 결과를 UI assertion 실패나 시각 수용으로 계산하지 않는다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
