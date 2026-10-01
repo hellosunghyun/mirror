@@ -36,6 +36,27 @@ COMMAND_RESULT_STATES = frozenset({
     'staleContext', 'alreadyDecided', 'notFound', 'unavailable', 'persistenceFailed',
     'committedProjectionPending',
 })
+UI_FAILURE_SOURCE_FILE = 'Tests/MirrorUITests/MirrorUITests.swift'
+UI_ASSERTION_KINDS = frozenset({
+    'XCTAssert', 'XCTAssertTrue', 'XCTAssertFalse', 'XCTAssertEqual', 'XCTAssertNotEqual',
+    'XCTAssertGreaterThan', 'XCTAssertGreaterThanOrEqual', 'XCTAssertLessThan',
+    'XCTAssertLessThanOrEqual', 'XCTAssertNil', 'XCTAssertNotNil', 'XCTAssertIdentical',
+    'XCTAssertNotIdentical', 'XCTAssertThrowsError', 'XCTAssertNoThrow', 'XCTFail',
+})
+UI_ANY_CASE_EVENT_PATTERN = re.compile(
+    r"Test Case '[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]' "
+    r'(started|passed|failed|skipped)(?=[\s.]|$)')
+UI_FAILURE_SOURCE_PATTERN = re.compile(
+    r'^\s*(.+?\.swift):([0-9]{1,5})(?::[0-9]{1,5})?:\s*error:\s*(.*)$')
+UI_FAILURE_CASE_PATTERN = re.compile(
+    r'^[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]\s*:\s*(.*)$')
+UI_VIEWPORT_DIAGNOSTIC_MARKER = 'UI viewport diagnostic:'
+UI_VIEWPORT_CHECK_NAMES = frozenset({
+    'foreground', 'appBoundsValid', 'appOrientationMatches', 'windowExists', 'todayExists',
+    'reviewExists', 'windowInApp', 'windowOrientationMatches', 'todayInWindow', 'reviewInToday',
+    'adjacentExists', 'calendarDateExists', 'adjacentInWindow', 'dateInAdjacent',
+    'columnsSeparate', 'portraitAdjacentAbsent', 'reviewHittable', 'dateHittable', 'insideDeadline',
+})
 
 
 def annotation(message):
@@ -71,6 +92,8 @@ def report_store_dedup_diagnostics(lines):
         if STORE_DEDUP_DIAGNOSTIC_MARKER not in line:
             continue
         try:
+            if UI_VIEWPORT_DIAGNOSTIC_MARKER in line or is_ui_failure_candidate(line):
+                raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
             if line.count(STORE_DEDUP_DIAGNOSTIC_MARKER) != 1:
                 raise ValueError('진단 marker가 하나여야 합니다.')
             payload = line.partition(STORE_DEDUP_DIAGNOSTIC_MARKER)[2].strip()
@@ -101,6 +124,113 @@ def valid_ui_duration(value):
     # bool과 범위 밖 정수는 float 변환 전에 제외한다. 진단 수치를 통과 게이트로 쓰지 않는다.
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and 0 <= value <= 1200 and math.isfinite(value))
+
+
+def is_ui_failure_candidate(line):
+    # 미지의 source·assertion도 원문 fallback에 넘기지 않는다. 일반 컴파일 오류는 유지한다.
+    return bool(re.search(r':\s*error:', line)
+                and (re.search(r'[-+]\[(?:[^\s\]\r\n]+\.)?MirrorUITests\s', line)
+                     or re.search(r'\bXCTAssert[A-Za-z_]*\s+failed(?=[:\s-]|$)', line)
+                     or 'failed -' in line))
+
+
+def report_ui_first_failure(lines):
+    active_cases = set()
+    first_failure = None
+    invalid_count = 0
+
+    def own_case(case):
+        return ((case[0] == 'MirrorUITests' or case[0].endswith('.MirrorUITests'))
+                and case[1] in UI_BASELINE_METHODS)
+
+    for line in lines:
+        if not is_ui_failure_candidate(line):
+            event = UI_ANY_CASE_EVENT_PATTERN.search(line)
+            if event:
+                case = (event[1], event[2])
+                if event[3] == 'started':
+                    active_cases.add(case)
+                else:
+                    active_cases.discard(case)
+            elif re.search(r'\bTest\s+Case\b', line):
+                # 파손된 이름·event 이후에는 앞 테스트를 활성 상태로 추정하지 않는다.
+                active_cases.clear()
+            continue
+        source = UI_FAILURE_SOURCE_PATTERN.match(line)
+        if not source or not (source[1] in ('MirrorUITests.swift', UI_FAILURE_SOURCE_FILE)
+                              or source[1].endswith('/' + UI_FAILURE_SOURCE_FILE)):
+            invalid_count += 1
+            continue
+        line_number = int(source[2])
+        if not 1 <= line_number <= 10000:
+            invalid_count += 1
+            continue
+        payload = source[3].strip()
+        explicit = UI_FAILURE_CASE_PATTERN.match(payload)
+        if explicit:
+            case = (explicit[1], explicit[2])
+            payload = explicit[3]
+        elif payload.startswith(('-[', '+[')):
+            invalid_count += 1
+            continue
+        else:
+            case = next(iter(active_cases)) if len(active_cases) == 1 else None
+        assertion = re.match(r'^(XCTAssert[A-Za-z]*)\s+failed(?=[:\s-]|$)', payload)
+        kind = assertion[1] if assertion else 'XCTFail' if payload.startswith('failed -') else None
+        if case is None or not own_case(case) or kind not in UI_ASSERTION_KINDS:
+            invalid_count += 1
+            continue
+        if first_failure is None:
+            first_failure = {'scope': 'stdoutOnly', 'method': case[1],
+                             'sourceFile': UI_FAILURE_SOURCE_FILE, 'line': line_number,
+                             'assertionKind': kind}
+    if first_failure is not None:
+        print('::notice::UI first failure: ' + json.dumps(first_failure))
+    if invalid_count:
+        print('::notice::UI first failure rejected: ' + json.dumps({'invalidCount': invalid_count}))
+
+
+def report_ui_viewport_diagnostics(lines):
+    reports = deque(maxlen=8)
+    invalid_count = 0
+
+    def unique_fields(pairs):
+        fields = {}
+        for key, value in pairs:
+            if key in fields:
+                raise ValueError('중복된 viewport 필드입니다.')
+            fields[key] = value
+        return fields
+
+    for line in lines:
+        if UI_VIEWPORT_DIAGNOSTIC_MARKER not in line:
+            continue
+        try:
+            if STORE_DEDUP_DIAGNOSTIC_MARKER in line or is_ui_failure_candidate(line):
+                raise ValueError('서로 다른 진단을 한 줄에서 연결하지 않습니다.')
+            if line.count(UI_VIEWPORT_DIAGNOSTIC_MARKER) != 1:
+                raise ValueError('viewport marker가 하나여야 합니다.')
+            payload = line.partition(UI_VIEWPORT_DIAGNOSTIC_MARKER)[2].strip()
+            if len(payload) > 4096:
+                raise ValueError('viewport payload가 너무 깁니다.')
+            report = json.loads(payload, object_pairs_hook=unique_fields)
+            if not isinstance(report, dict) or set(report) != {
+                    'orientation', 'stableSamples', 'elapsedMilliseconds', 'checks'}:
+                raise ValueError('viewport 필드가 고정 계약과 다릅니다.')
+            samples, milliseconds, checks = report['stableSamples'], report['elapsedMilliseconds'], report['checks']
+            if (report['orientation'] not in ('landscape', 'portrait')
+                    or type(samples) is not int or not 0 <= samples <= 10000
+                    or type(milliseconds) is not int or not 0 <= milliseconds <= 1200000
+                    or not isinstance(checks, dict) or not set(checks).issubset(UI_VIEWPORT_CHECK_NAMES)
+                    or any(type(value) is not bool for value in checks.values())):
+                raise ValueError('viewport 수치·check가 고정 계약과 다릅니다.')
+            reports.append({'scope': 'stdoutOnly', **report})
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    for report in reports:
+        print('::notice::UI viewport diagnostic: ' + json.dumps(report))
+    if invalid_count:
+        print('::notice::UI viewport diagnostic rejected: ' + json.dumps({'invalidCount': invalid_count}))
 
 
 def report_ui_timing_diagnostics(lines):
@@ -154,10 +284,14 @@ def report_ui_tree_timings(nodes):
 
 def diagnostics(path):
     log = Path(path).read_text(errors='replace')
-    lines = log.splitlines()
-    report_store_dedup_diagnostics(lines)
-    # 유효·무효 진단 marker의 원문은 다른 구조화 출력과 오류 fallback에도 섞지 않는다.
-    lines = [line for line in lines if STORE_DEDUP_DIAGNOSTIC_MARKER not in line]
+    raw_lines = log.splitlines()
+    lines = [line for line in raw_lines if STORE_DEDUP_DIAGNOSTIC_MARKER not in line
+             and UI_VIEWPORT_DIAGNOSTIC_MARKER not in line]
+    report_ui_first_failure(lines)
+    report_ui_viewport_diagnostics(raw_lines)
+    report_store_dedup_diagnostics(raw_lines)
+    # 유효·무효 구조화 원문은 다른 진단·오류 fallback에도 섞지 않는다.
+    lines = [line for line in lines if not is_ui_failure_candidate(line)]
     log = '\n'.join(lines)
     report_runs(log)
     # 중단된 xcresult와 stdout의 사례 진행을 구별한다. 게이트 통과 판정에는 사용하지 않는다.

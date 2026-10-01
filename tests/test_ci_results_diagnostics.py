@@ -31,6 +31,10 @@ CASE_NOTICE = '::notice::UI case timing: '
 SCREENSHOT_NOTICE = '::notice::UI screenshot timing: '
 STORE_DEDUP_NOTICE = '::notice::Store dedup result diagnostic: '
 STORE_DEDUP_REJECTED_NOTICE = '::notice::Store dedup result diagnostic rejected: '
+UI_FIRST_FAILURE_NOTICE = '::notice::UI first failure: '
+UI_FIRST_FAILURE_REJECTED_NOTICE = '::notice::UI first failure rejected: '
+UI_VIEWPORT_NOTICE = '::notice::UI viewport diagnostic: '
+UI_VIEWPORT_REJECTED_NOTICE = '::notice::UI viewport diagnostic rejected: '
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -46,6 +50,17 @@ def store_dedup_line(payload=None):
     if payload is None:
         payload = {'states': ['locallyCommitted', 'unavailable'], 'busyResults': [False, True]}
     return 'Store dedup result diagnostic: ' + json.dumps(payload)
+
+
+def ui_failure_line(method=METHODS[0], source='Tests/MirrorUITests/MirrorUITests.swift',
+                    line='475', kind='XCTAssertTrue', explicit=True):
+    assertion = 'failed -' if kind == 'XCTFail' else kind + ' failed -'
+    owner = f'-[MirrorIOSUITests.MirrorUITests {method}] : ' if explicit else ''
+    return f'{source}:{line}: error: {owner}{assertion} expected/actual=/private/{PRIVATE}'
+
+
+def viewport_line(payload):
+    return 'UI viewport diagnostic: ' + json.dumps(payload)
 
 
 class CIResultsDiagnosticsTests(unittest.TestCase):
@@ -65,6 +80,172 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_first_ui_failure_is_safe_first_and_precedes_viewport_events_and_timings(self):
+        viewport = {'orientation': 'landscape', 'stableSamples': 2, 'elapsedMilliseconds': 15000,
+                    'checks': {'foreground': True, 'windowOrientationMatches': False}}
+        log = self.root / 'ui-first.log'
+        log.write_text('\n'.join([
+            f"Test Case '-[MirrorIOSUITests.MirrorUITests {METHODS[0]}]' started.",
+            ui_failure_line(source='/private/' + PRIVATE + '/Tests/MirrorUITests/MirrorUITests.swift', kind='XCTFail'),
+            'fatal: /private/' + PRIVATE + ' ' + viewport_line(viewport),
+            ui_failure_line(method=METHODS[1], line='110'),
+            case_line(event='failed', seconds='35.848'), screenshot_line('calendar', '123'),
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[0],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475, 'assertionKind': 'XCTFail',
+        }])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_NOTICE), [{'scope': 'stdoutOnly', **viewport}])
+        self.assertLess(output.index(UI_FIRST_FAILURE_NOTICE), output.index(UI_VIEWPORT_NOTICE))
+        self.assertLess(output.index(UI_VIEWPORT_NOTICE), output.index('::notice::UI stdout diagnostics: '))
+        self.assertLess(output.index(UI_VIEWPORT_NOTICE), output.index(CASE_NOTICE))
+        self.assertNotIn('/private/', output)
+        self.assertNotIn('expected/actual', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+
+    def test_first_ui_failure_uses_only_a_unique_active_case_and_never_a_finished_one(self):
+        start = lambda method, owner='MirrorIOSUITests.MirrorUITests': f"Test Case '-[{owner} {method}]' started."
+        log = self.root / 'ui-active.log'
+        log.write_text('\n'.join([
+            start(METHODS[0]), start(METHODS[1]), ui_failure_line(explicit=False, line='100'),
+            case_line(METHODS[1]), ui_failure_line(explicit=False, line='101'),
+            case_line(METHODS[0], event='failed'), ui_failure_line(explicit=False, line='102'),
+        ]) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[0],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 101, 'assertionKind': 'XCTAssertTrue',
+        }])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 2}])
+        for prefix in ([], [start('test' + PRIVATE)], [start(METHODS[0], 'OtherTests')],
+                       [start(METHODS[0]), case_line(METHODS[0])],
+                       [start(METHODS[0]), "Test Case '-[broken]' started."]):
+            with self.subTest(prefix=prefix):
+                log.write_text('\n'.join(prefix + [ui_failure_line(explicit=False)]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_first_ui_failure_accepts_only_source_line_and_assertion_contract(self):
+        log = self.root / 'ui-contract.log'
+        for source, line in (('MirrorUITests.swift', '1'), ('Tests/MirrorUITests/MirrorUITests.swift', '10000')):
+            for kind in helper.UI_ASSERTION_KINDS:
+                with self.subTest(source=source, line=line, kind=kind):
+                    log.write_text(ui_failure_line(source=source, line=line, kind=kind) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': METHODS[0],
+                        'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift',
+                        'line': int(line), 'assertionKind': kind,
+                    }])
+        invalid_lines = [ui_failure_line(line=value) for value in ('0', '10001', '-1', '\u0661', '1.5', '1e2', '123456')]
+        invalid_lines += [ui_failure_line(source=value) for value in (
+            '/private/' + PRIVATE + '/OtherTests.swift', '/private/' + PRIVATE + '/MirrorUITests.swift',
+            'Tests/OtherTests/MirrorUITests.swift', 'Tests/MirrorUITests/MirrorUITests.swift.backup')]
+        invalid_lines += [ui_failure_line(kind='XCTAssert' + PRIVATE), ui_failure_line(method='test' + PRIVATE),
+                          ui_failure_line().replace('.MirrorUITests ', '.OtherTests ')]
+        log.write_text('\n'.join(invalid_lines) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': len(invalid_lines)}])
+        self.assertNotIn('::error::', output)
+
+    def test_ui_assertion_filter_preserves_real_swift_compiler_error_in_the_same_source(self):
+        line = "Tests/MirrorUITests/MirrorUITests.swift:12:5: error: cannot find 'SyntheticCompilerAPI' in scope"
+        log = self.root / 'ui-compile.log'
+        log.write_text(line + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertIn('::error::' + line, output)
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [])
+
+    def test_viewport_preserves_sparse_checks_and_exact_numeric_boundaries(self):
+        log = self.root / 'viewport-valid.log'
+        for orientation in ('portrait', 'landscape'):
+            for samples, milliseconds in ((0, 0), (10000, 1200000)):
+                for checks in ({}, {'foreground': True, 'insideDeadline': False},
+                               {name: True for name in helper.UI_VIEWPORT_CHECK_NAMES}):
+                    with self.subTest(orientation=orientation, checks=checks):
+                        payload = {'orientation': orientation, 'stableSamples': samples,
+                                   'elapsedMilliseconds': milliseconds, 'checks': checks}
+                        log.write_text(viewport_line(payload) + '\n')
+                        output = self.capture(helper.diagnostics, log)
+                        self.assertEqual(self.notices(output, UI_VIEWPORT_NOTICE), [{'scope': 'stdoutOnly', **payload}])
+                        self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [])
+
+    def test_viewport_rejects_wrong_types_unknown_checks_and_nonexact_json(self):
+        valid = {'orientation': 'landscape', 'stableSamples': 3, 'elapsedMilliseconds': 15000,
+                 'checks': {'foreground': True}}
+        invalid = [{**valid, 'orientation': value} for value in ('unknown', PRIVATE, None, True, [])]
+        for key, upper in (('stableSamples', 10000), ('elapsedMilliseconds', 1200000)):
+            invalid += [{**valid, key: value} for value in (-1, upper + 1, True, False, 1.0, '1', None)]
+        invalid += [{**valid, 'checks': {PRIVATE: True}}, {**valid, 'checks': {'foreground': 1}},
+                    {**valid, 'checks': {'foreground': 'true'}}, {**valid, 'checks': []},
+                    {**valid, 'private': PRIVATE}, {key: value for key, value in valid.items() if key != 'checks'},
+                    [], None]
+        lines = [viewport_line(payload) for payload in invalid]
+        lines += [viewport_line(valid) + ' error: ' + PRIVATE,
+                  viewport_line(valid) + ' UI viewport diagnostic: ' + PRIVATE,
+                  'UI viewport diagnostic: {' + PRIVATE,
+                  'UI viewport diagnostic: ' + json.dumps({**valid, 'private': PRIVATE * 4096}),
+                  'UI viewport diagnostic: ' + '[' * 1500 + '0' + ']' * 1500,
+                  'UI viewport diagnostic: {"orientation":"' + PRIVATE + '","orientation":"landscape",'
+                  '"stableSamples":3,"elapsedMilliseconds":15000,"checks":{}}',
+                  'UI viewport diagnostic: {"orientation":"landscape","stableSamples":3,'
+                  '"elapsedMilliseconds":15000,"checks":{"foreground":true,"foreground":false}}']
+        log = self.root / 'viewport-invalid.log'
+        log.write_text('\n'.join(lines) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_VIEWPORT_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [{'invalidCount': len(lines)}])
+        self.assertNotIn('::error::', output)
+
+    def test_ui_failure_and_viewport_payloads_never_enter_other_diagnostic_channels(self):
+        private = ("error: UI row scroll owner: /private/" + PRIVATE
+                   + " Test run with 999 tests passed Test Case '-[MirrorIOSUITests.MirrorUITests "
+                   + METHODS[1] + "]' started. UI screenshot timing: stage=detail,milliseconds=999")
+        viewport = {'orientation': 'landscape', 'stableSamples': 0, 'elapsedMilliseconds': 15000,
+                    'checks': {}, 'private': private}
+        failure = ui_failure_line(line='111') + ' ' + private
+        log = self.root / 'ui-mixed.log'
+        log.write_text('\n'.join([
+            f"Test Case '-[MirrorIOSUITests.MirrorUITests {METHODS[0]}]' started.",
+            viewport_line(viewport), failure, store_dedup_line(),
+            ui_failure_line(line='112') + ' ' + store_dedup_line(),
+            store_dedup_line() + ' ' + viewport_line({
+                'orientation': 'portrait', 'stableSamples': 0, 'elapsedMilliseconds': 15000, 'checks': {},
+            }),
+            case_line(event='failed'), screenshot_line('detail', '123'),
+            'error: safe unrelated compiler failure',
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[0],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 111, 'assertionKind': 'XCTAssertTrue',
+        }])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [{'invalidCount': 2}])
+        self.assertEqual(len(self.notices(output, STORE_DEDUP_NOTICE)), 1)
+        self.assertEqual(self.notices(output, STORE_DEDUP_REJECTED_NOTICE), [{'invalidCount': 2}])
+        self.assertEqual(self.notices(output, SCREENSHOT_NOTICE), [
+            {'scope': 'stdoutOnly', 'stage': 'detail', 'milliseconds': 123},
+        ])
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
 
     def test_store_dedup_valid_report_has_only_fixed_method_scope_states_and_bools(self):
         log = self.root / 'store-valid.log'

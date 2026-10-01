@@ -398,7 +398,8 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func waitForViewport(in app: XCUIApplication, landscape: Bool) async throws {
-        let deadline = Date().addingTimeInterval(15)
+        let started = Date()
+        let deadline = started.addingTimeInterval(15)
         let window = app.windows.firstMatch
         let today = app.descendants(matching: .any).matching(identifier: "today.list").firstMatch
         let review = app.buttons.matching(identifier: "today.review").firstMatch
@@ -407,6 +408,14 @@ final class MirrorUITests: XCTestCase {
         var stableFrames: [CGRect]?
         var stableSince: Date?
         var stableSamples = 0
+        var lastChecks: [String: Bool] = [:]
+
+        // 기존 조건을 평가한 bool만 남긴다. 진단을 위해 AX를 추가 조회하지 않는다.
+        // 마지막 샘플에서 아직 평가하지 않은 조건은 포함하지 않는다.
+        func remember(_ name: String, _ result: Bool) -> Bool {
+            lastChecks[name] = result
+            return result
+        }
 
         func isUsable(_ frame: CGRect) -> Bool {
             !frame.isNull && !frame.isInfinite && frame.width > 0 && frame.height > 0
@@ -422,32 +431,39 @@ final class MirrorUITests: XCTestCase {
         }
 
         repeat {
+            lastChecks.removeAll(keepingCapacity: true)
             let bounds = app.frame
             var frames: [CGRect] = []
-            var ready = app.state == .runningForeground && isUsable(bounds)
-                && (landscape ? bounds.width > bounds.height : bounds.height > bounds.width)
-                && window.exists && today.exists && review.exists
+            var ready = remember("foreground", app.state == .runningForeground)
+                && remember("appBoundsValid", isUsable(bounds))
+                && remember("appOrientationMatches", landscape ? bounds.width > bounds.height : bounds.height > bounds.width)
+                && remember("windowExists", window.exists)
+                && remember("todayExists", today.exists)
+                && remember("reviewExists", review.exists)
             if ready {
                 let windowBounds = window.frame
                 let todayBounds = today.frame
                 let reviewBounds = review.frame
-                ready = contains(bounds, windowBounds)
-                    && (landscape ? windowBounds.width > windowBounds.height : windowBounds.height > windowBounds.width)
-                    && contains(windowBounds, todayBounds) && contains(todayBounds, reviewBounds)
+                ready = remember("windowInApp", contains(bounds, windowBounds))
+                    && remember("windowOrientationMatches", landscape ? windowBounds.width > windowBounds.height : windowBounds.height > windowBounds.width)
+                    && remember("todayInWindow", contains(windowBounds, todayBounds))
+                    && remember("reviewInToday", contains(todayBounds, reviewBounds))
                 frames = [bounds, windowBounds, todayBounds, reviewBounds]
                 if landscape {
-                    ready = ready && adjacent.exists && calendarDate.exists
+                    ready = ready && remember("adjacentExists", adjacent.exists)
+                        && remember("calendarDateExists", calendarDate.exists)
                     if ready {
                         let adjacentBounds = adjacent.frame
                         let dateBounds = calendarDate.frame
                         // 기기 frame만 먼저 회전한 상태는 통과시키지 않는다. 실제 두 열과
                         // 일정 입력 제어가 같은 viewport 안에 겹치지 않고 배치되어야 한다.
-                        ready = contains(windowBounds, adjacentBounds) && contains(adjacentBounds, dateBounds)
-                            && adjacentBounds.minX >= todayBounds.maxX - 1
+                        ready = remember("adjacentInWindow", contains(windowBounds, adjacentBounds))
+                            && remember("dateInAdjacent", contains(adjacentBounds, dateBounds))
+                            && remember("columnsSeparate", adjacentBounds.minX >= todayBounds.maxX - 1)
                         frames += [adjacentBounds, dateBounds]
                     }
                 } else {
-                    ready = ready && !adjacent.exists
+                    ready = ready && remember("portraitAdjacentAbsent", !adjacent.exists)
                 }
             }
             let sampledAt = Date()
@@ -462,7 +478,9 @@ final class MirrorUITests: XCTestCase {
                 if stableSamples >= 3, let stableSince, sampledAt.timeIntervalSince(stableSince) >= 0.5 {
                     // List/ScrollView 자체는 조작 버튼이 아니다. 안정된 실제 열의 경계와
                     // 그 안의 정리/날짜 제어가 터치 가능한지 확인한 뒤 캡처한다.
-                    if review.isHittable && (!landscape || calendarDate.isHittable), Date() < deadline { return }
+                    if remember("reviewHittable", review.isHittable)
+                        && (!landscape || remember("dateHittable", calendarDate.isHittable))
+                        && remember("insideDeadline", Date() < deadline) { return }
                 }
             } else {
                 stableFrames = nil
@@ -472,6 +490,16 @@ final class MirrorUITests: XCTestCase {
             let remaining = deadline.timeIntervalSinceNow
             if remaining > 0 { try await Task.sleep(for: .seconds(min(0.25, remaining))) }
         } while Date() < deadline
+        let diagnostic: [String: Any] = [
+            "orientation": landscape ? "landscape" : "portrait",
+            "stableSamples": stableSamples,
+            "elapsedMilliseconds": Int(max(0, Date().timeIntervalSince(started) * 1_000)),
+            "checks": lastChecks,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            print("UI viewport diagnostic: \(json)")
+        }
         XCTFail(landscape
             ? "15초 안에 실제 iPad 가로 화면과 인접 일정이 표시되고 0.5초 이상 3회 연속 안정되어야 한다."
             : "15초 안에 실제 iPad 세로 화면으로 복귀하고 0.5초 이상 3회 연속 안정되어야 한다.")
