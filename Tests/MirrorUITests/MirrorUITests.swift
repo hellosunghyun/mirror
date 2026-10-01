@@ -308,20 +308,27 @@ final class MirrorUITests: XCTestCase {
         // 숨은 요소를 좌표로 누르거나 disabled 행동을 통과시키지 않는다.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true AND enabled == true"), object: element)
         _ = XCTWaiter.wait(for: [ready], timeout: 3)
+        let identifier = element.identifier
+        // 38d7849 iPhone 실제 AX: 행 중심 y=434, 목록 하단 y=403인데 hittable=true였다.
+        // 작업 행은 소유 목록의 표시 영역 안으로 실제 스크롤한 뒤 일반 tap을 수행한다.
+        let rowSurface = identifier.hasPrefix("task.row.") ? scrollContainer(containing: element, in: app) : nil
+        if identifier.hasPrefix("task.row."), rowSurface == nil {
+            printFailurePrefix("작업 행을 포함하는 스크롤 컨테이너가 없다")
+            XCTFail("작업 행을 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
+            throw UIHarnessError.unhittable(identifier)
+        }
         // Form 아래쪽의 완료/Undo도 실제 스크롤로 도달한다. 숨겨진 요소의 좌표를 강제로 누르지 않는다.
-        for _ in 0..<8 where !element.isHittable {
-            let surfaces = app.scrollViews.allElementsBoundByIndex
-                + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
-            let identifier = element.identifier
+        for _ in 0..<8 {
+            let rowNeedsScroll = rowSurface.map { !rowCenterIsVisible(element, in: $0) } ?? false
+            guard !element.isHittable || rowNeedsScroll else { break }
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
-            guard let surface = surfaces.first(where: { candidate in
-                candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
-            }) else {
+            guard let surface = rowSurface ?? scrollContainer(containing: element, in: app) else {
                 printFailurePrefix("대상 UI를 포함하는 스크롤 컨테이너가 없다")
                 XCTFail("대상 UI를 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
                 throw UIHarnessError.unhittable(identifier)
             }
-            let isAboveViewport = element.frame.minY < surface.frame.minY
+            let isAboveViewport = rowSurface == nil ? element.frame.minY < surface.frame.minY
+                : element.frame.midY < surface.frame.minY
             #if os(macOS)
             surface.scroll(byDeltaX: 0, deltaY: isAboveViewport ? 250 : -250)
             #else
@@ -329,16 +336,35 @@ final class MirrorUITests: XCTestCase {
             else { surface.swipeUp() }
             #endif
         }
-        guard element.isHittable && element.isEnabled else {
+        let rowCenterIsInside = rowSurface.map { rowCenterIsVisible(element, in: $0) } ?? true
+        guard element.isHittable && element.isEnabled && rowCenterIsInside else {
             printFailurePrefix("UI 요소에 도달할 수 없다")
             XCTFail("UI 요소에 도달할 수 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.unhittable(element.identifier)
         }
+        if rowSurface != nil { lastActionDescription = describe(element) }
         #if os(macOS)
         element.click()
         #else
         element.tap()
         #endif
+    }
+
+    @MainActor
+    private func scrollContainer(containing element: XCUIElement, in app: XCUIApplication) -> XCUIElement? {
+        let surfaces = app.scrollViews.allElementsBoundByIndex
+            + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
+        let identifier = element.identifier
+        return surfaces.first { candidate in
+            candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
+        }
+    }
+
+    @MainActor
+    private func rowCenterIsVisible(_ element: XCUIElement, in surface: XCUIElement) -> Bool {
+        let frame = element.frame
+        let viewport = surface.frame
+        return !frame.isEmpty && !viewport.isEmpty && viewport.contains(CGPoint(x: frame.midX, y: frame.midY))
     }
 
     @MainActor

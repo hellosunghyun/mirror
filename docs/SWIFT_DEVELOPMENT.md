@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `027a8cb`의 Mac/iPad UI 여섯 사례는 통과했지만 iPhone은 stdout 4개 통과·2개 실패 뒤 20분 제한으로 중단됐다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 이전 완료 검증 `179428d`에서 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 통과했다. 최신 `38d7849` Ad Hoc의 Mac UI 여섯 사례는 통과했고 iPhone 완료·Undo도 stdout Passed를 확인했다. 모바일 UI는 iPhone 5개 통과·1개 실패, iPad 4개 통과·2개 실패 뒤 모두 20분 제한으로 중단됐다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -163,7 +163,7 @@ Mac의 실패는 완료 Undo 시나리오에서 Undo 전 `detail.title`의 enabl
 
 후속 수정은 상세 Form 하단 상태 section의 완료 primary를 기존 Undo footer로 옮겨 44pt 라벨의 borderedProminent 고정 영역에 배치한다. 삭제된 작업에는 완료 버튼을 제공하지 않으며 기존 명령·task.complete ID·isSaving guard·receipt 조건과 휴지통 복원/이력을 보존한다. 기존 여섯 UI 사례와 모든 assertions와 통과 판정도 유지한다. 실제 해결 여부는 다음 SHA의 Actions에서 확인하며 stdout 진단을 수용 통과로 대신하지 않는다.
 
-최신 커밋 `027a8cbce6842973ba7ad986ec411251483ce7c5`의 [Ad Hoc 실행 36805275410](https://github.com/hellosunghyun/mirror/actions/runs/36805275410)은 최종 failure다. Mac 단위 151개/UI 6개와 iPad 단위 150개/UI 6개는 실제 summary와 strict guard에서 통과했다. 두 UI guard는 bundle 1개/case 6개, missingMethods·nonPassedMethods 없음이며 실패·skip 0개다. 이전 Mac 완료 Undo 실패와 최신 Mac/iPad의 여섯 사례 통과를 구분한다.
+이전 커밋 `027a8cbce6842973ba7ad986ec411251483ce7c5`의 [Ad Hoc 실행 36805275410](https://github.com/hellosunghyun/mirror/actions/runs/36805275410)은 최종 failure다. Mac 단위 151개/UI 6개와 iPad 단위 150개/UI 6개는 실제 summary와 strict guard에서 통과했다. 두 UI guard는 bundle 1개/case 6개, missingMethods·nonPassedMethods 없음이며 실패·skip 0개다. 이전 Mac 완료 Undo 실패와 최신 Mac/iPad의 여섯 사례 통과를 구분한다.
 
 iPhone job `110188133795`는 단위 150개를 통과했지만 UI가 20분 제한으로 중단됐다. stdoutOnly에는 여섯 case의 시작/완료, capture·긴 제목·정리 Undo·주 패널 4개 passed와 완료 Undo·내일 검색 2개 failed가 있다. suite는 6 tests/2 failures/0 unexpected, 920.990초를 보고했으며 xcodeCompletionReported=false다. 최종 UI summary/tree/strict guard는 없으므로 stdout 4/6을 최종 xcresult 통과·skip 0으로 바꾸지 않는다. assertion·selector·AX 오류 본문이 확보되지 않아 원인도 미확정이다. archive와 publish는 skipped여서 실제 인증서·개인키 일치와 IPA 서명/export·Release 게시 성공은 미검증이다.
 
@@ -171,10 +171,20 @@ iPhone job `110188133795`는 단위 150개를 통과했지만 UI가 20분 제한
 
 별도 실행의 완료 Undo 사례는 편집 제목 입력까지 정상이고 `detail.save`가 존재하지만 hittable=false였다. CollectionView frame=(0,62,402,350)에서 swipeUp 한 번 뒤 `detail.save` 버튼의 NoMatches snapshot 오류로 실패했다. 실제 저장 탭·완료·Undo 이전 실패이므로 완료 명령이나 Undo의 실패 원인으로 단정하지 않는다. 내일 검색 사례는 row를 실제 탭한 뒤 keyboard frame=(0,590,402,226)이 남고 `detail.plan`이 없었다. 자동 저장이나 overlay를 원인으로 확정하지 않으며 두 실패의 실제 동작 원인은 후속 검증이 필요하다.
 
-후속 변경은 상세 편집의 저장·취소를 Form 밖 고정 footer의 우선 영역에 44pt 높이로 배치한다. 삭제 작업 편집도 포함하며 기존 snapshot·접근성 ID·isSaving guard를 보존한다. compact 탭의 NavigationStack에는 content와 statusBar를 VStack 형제로 배치해 높이를 나누며 regular 배치·navigation tag·공통 toolbar·sheet 소유권은 유지한다. UI 진단 출력 prefix와 진단용 hittability 조회, 결과 파서의 단수 failure 인식을 수정하고 실제 xcodebuild help의 지원을 확인해 UI 단계에만 coverage 비활성화를 적용한다. collect diagnostics·case timeout과 기존 여섯 UI 사례의 모든 assertions·통과 판정은 유지한다. 시간 초과나 stdout 결과를 테스트 성공으로 바꾸지 않으며 이 제품·CI 변경은 새 push 검증 대기다. 확인되지 않은 HEAD/run ID를 추정하지 않는다.
+최신 커밋 `38d78498ff56781b9762893c0d96b77cf253176d`의 [Ad Hoc 실행 36808965234](https://github.com/hellosunghyun/mirror/actions/runs/36808965234)은 최종 failure다. 세 서명 Secret의 존재·준비 Python 40개·SwiftPM 151개는 통과했다. Mac 단위 151개/UI 6개도 통과했고 UI strict guard는 bundle 1개/case 6개, 실패·skip 0개다. iPhone/iPad 단위는 각각 150개 통과했다.
+
+iPhone UI stdout은 완료·Undo를 포함한 5개 통과와 내일 검색 1개 실패, suite 971.203초다. iPad UI stdout은 4개 통과와 내일 검색·주 패널 부분 종료 2개 실패, suite 1017.165초다. 두 모바일 모두 xcodeCompletionReported=false이며 UI가 20분 제한으로 중단됐다. 최종 UI summary/tree/strict gate를 확보하지 못했으므로 stdout 결과를 최종 xcresult 통과·skip 0이나 전체 UI 수용으로 기록하지 않는다. archive·publish는 skipped이고 실제 P12 암호 검증·인증서/개인키/프로파일 일치·서명된 IPA와 Release 게시는 미검증이다. 이 실행 후 확인한 Release API 목록은 0개다.
+
+같은 커밋의 [별도 Swift 실행 36808970265](https://github.com/hellosunghyun/mirror/actions/runs/36808970265)은 최종 failure다. Mac 단위 151개/UI 6개와 SwiftPM 151개는 통과했다. iPad job `110199559968`도 단위 150개/UI 6개 통과, UI summary 실패·skip 0개와 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음을 확인했다. iPhone은 stdout 5개 통과·내일 검색 1개 실패, suite 765.085초와 20분 UI 제한 중단으로 실패했다. 별도 실행의 iPad 최종 통과와 Ad Hoc iPad의 stdout 4개 통과·2개 실패/집계 중단을 구분하며 별도 결과로 배포 게이트 실패를 대신하지 않는다.
+
+`38d7849`에는 상세 편집 저장·취소를 Form 밖 고정 footer의 우선 영역에 44pt 높이로 배치하고 compact content/statusBar에 형제 높이를 할당한 변경이 포함됐다. 기존 snapshot·접근성 ID·isSaving guard와 여섯 UI 사례의 모든 assertions·통과 판정은 유지했다. iPhone의 완료·Undo 실제 case Passed는 확인했지만 이를 전체 UI나 QA 87개 완료로 확대하지 않는다. 실제 SDK help의 -enableCodeCoverage 지원과 두 모바일 UI의 coverage NO notice도 확인했으나 결과 마감 문제 해결은 입증되지 않았다. 시간 초과나 stdout 결과를 테스트 성공으로 바꾸지 않는다.
+
+확보한 별도 실행 전체 로그의 최초 내일 검색 실패에서 직전 검색행 frame=(16,383,370,102)의 중심 Y는 434이고, 진단 시 유일한 보관함 CollectionView frame=(0,0,402,403)의 하단보다 31pt 아래였다. 실제 행 Tap/Synthesize 뒤 키보드가 남고 `detail.plan`이 없었으며 `state.feedback`은 `완료했어요.`였다. 캐시된 행 좌표와 실패 진단 시 표시 영역의 관측은 접근 geometry 보완의 근거이며 전체 원인 확정을 뜻하지 않는다.
+
+후속 보완은 `task.row.*`에만 적용한다. 실제 descendant ID로 소유 scroll/table/collection을 찾고 최대 8회 실제 스크롤한 뒤 행 중심이 표시 영역 안에 있고 hittable/enabled를 모두 만족해야 일반 tap을 실행한다. 고정 좌표 tap이나 행동 재시도는 추가하지 않으며 기대값·기존 여섯 사례·15초 대기·최종 xcresult/strict guard 판정은 유지한다. 제품 소스와 상태·명령은 변경하지 않는다. 이 보완의 효과는 새 SHA의 실제 Actions 검증 대기다.
 
 native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 기록한 `179428d` 실행은 단위 단계 20분·UI 15분 제한이었다. 후속 UI 20분 제한과 종료 정리 변경은 다음 Actions에서 확인하며 시간 제한과 실패 진단은 성공 판정을 대신하지 않는다.
 
 실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다. 개발용 AppIcon과 unsigned CI packaging 결과도 Apple 등록·배포 준비 완료를 뜻하지 않는다.
 
-`179428d`는 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리를 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone 상태 패널은 탭 내용 안에, 입력 저장 버튼은 스크롤 본문 아래 고정 영역에 배치했다. 여섯 시나리오의 원본·계획·Undo assertions를 유지하며 Mac/iPad 결과와 iPhone의 남은 두 실패를 위 기록으로 구별한다. 상세 편집 고정 footer·compact 내용/상태 패널 높이 배분과 CI 진단·coverage 변경의 성공은 새 push의 Actions로 확인하며 현재는 검증 대기다.
+`179428d`는 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리를 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone 상태 패널은 탭 내용 안에, 입력 저장 버튼은 스크롤 본문 아래 고정 영역에 배치했다. 여섯 시나리오의 원본·계획·Undo assertions를 유지하며 각 SHA의 부분 결과를 위 기록으로 구별한다. 최신 iPhone 완료·Undo 사례는 통과했지만 모바일 전체 수용은 미완료다. 후속 행 표시 영역 확인 보완의 효과는 새 SHA의 실제 Actions 검증으로 확인한다.

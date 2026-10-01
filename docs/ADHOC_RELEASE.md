@@ -4,7 +4,7 @@
 
 ## 서명 자료 등록
 
-[GitHub Actions Secrets](https://github.com/hellosunghyun/mirror/settings/secrets/actions)에 다음 세 값을 등록한다. 프로파일·인증서·비밀번호를 공개 저장소나 채팅 본문에 넣지 않는다. 현재 연결 앱의 Secret 쓰기 요청은 HTTP 403으로 거부되어 저장소 관리자가 직접 등록해야 한다.
+[GitHub Actions Secrets](https://github.com/hellosunghyun/mirror/settings/secrets/actions)에 다음 세 값을 등록한다. 프로파일·인증서·비밀번호를 공개 저장소나 채팅 본문에 넣지 않는다. 연결 앱의 Secret 쓰기 HTTP 403은 과거 기록이며 이후 사용자가 등록한 세 Secret의 존재는 최신 배포 실행에서 확인했다. 실제 서명 자료의 일치와 P12 암호는 별도 archive 검증이 필요하다.
 
 | Secret | 값 |
 |---|---|
@@ -99,4 +99,14 @@ iPhone 단위 150개는 통과했지만 UI는 20분 제한으로 중단됐다. s
 
 별도 실행의 완료 Undo 사례는 편집 제목 입력까지 정상이고 `detail.save`가 존재하지만 hittable=false였다. CollectionView frame=(0,62,402,350)에서 swipeUp 한 번 뒤 `detail.save` 버튼의 NoMatches snapshot 오류로 실패했다. 실제 저장 탭·완료·Undo 이전 실패이므로 완료 명령이나 Undo의 실패 원인으로 단정하지 않는다. 내일 검색 사례는 row를 실제 탭한 뒤 keyboard frame=(0,590,402,226)이 남고 `detail.plan`이 없었다. 자동 저장이나 overlay를 원인으로 확정하지 않으며 두 실패의 실제 동작 원인은 후속 검증이 필요하다.
 
-후속 변경은 상세 편집의 저장·취소를 Form 밖 고정 footer의 우선 영역에 44pt 높이로 배치한다. 삭제 작업 편집도 포함하며 기존 snapshot·접근성 ID·isSaving guard를 보존한다. compact 탭의 NavigationStack에는 content와 statusBar를 VStack 형제로 배치해 높이를 나누며 regular 배치·navigation tag·공통 toolbar·sheet 소유권은 유지한다. UI 진단 출력 prefix와 진단용 hittability 조회, 결과 파서의 단수 failure 인식을 수정하고 실제 xcodebuild help의 지원을 확인해 UI 단계에만 coverage 비활성화를 적용한다. collect diagnostics·case timeout과 기존 여섯 UI 사례의 모든 assertions·통과 판정은 유지한다. 시간 초과나 stdout 결과를 테스트 성공으로 바꾸지 않으며 이 제품·CI 변경은 새 push 검증 대기다. 확인되지 않은 HEAD/run ID를 추정하지 않는다.
+최신 커밋 `38d78498ff56781b9762893c0d96b77cf253176d`의 [Ad Hoc 실행 36808965234](https://github.com/hellosunghyun/mirror/actions/runs/36808965234)은 최종 failure다. 세 서명 Secret의 존재·준비 Python 40개·SwiftPM 151개는 통과했다. Mac 단위 151개/UI 6개도 통과했고 UI strict guard는 bundle 1개/case 6개, 실패·skip 0개다. iPhone/iPad 단위는 각각 150개 통과했다.
+
+iPhone UI stdout은 완료·Undo를 포함한 5개 통과와 내일 검색 1개 실패, suite 971.203초다. iPad UI stdout은 4개 통과와 내일 검색·주 패널 부분 종료 2개 실패, suite 1017.165초다. 두 모바일 모두 xcodeCompletionReported=false이며 UI가 20분 제한으로 중단됐다. 최종 UI summary/tree/strict gate를 확보하지 못했으므로 stdout 결과를 최종 xcresult 통과·skip 0이나 전체 UI 수용으로 기록하지 않는다. archive·publish는 skipped이고 실제 P12 암호 검증·인증서/개인키/프로파일 일치·서명된 IPA와 Release 게시는 미검증이다. 이 실행 후 확인한 Release API 목록은 0개다.
+
+같은 커밋의 [별도 Swift 실행 36808970265](https://github.com/hellosunghyun/mirror/actions/runs/36808970265)은 최종 failure다. Mac 단위 151개/UI 6개와 SwiftPM 151개는 통과했다. iPad job `110199559968`도 단위 150개/UI 6개 통과, UI summary 실패·skip 0개와 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음을 확인했다. iPhone은 stdout 5개 통과·내일 검색 1개 실패, suite 765.085초와 20분 UI 제한 중단으로 실패했다. 별도 실행의 iPad 최종 통과와 Ad Hoc iPad의 stdout 4개 통과·2개 실패/집계 중단을 구분하며 별도 결과로 배포 게이트 실패를 대신하지 않는다.
+
+`38d7849`에는 상세 편집 저장·취소를 Form 밖 고정 footer의 우선 영역에 44pt 높이로 배치하고 compact content/statusBar에 형제 높이를 할당한 변경이 포함됐다. 기존 snapshot·접근성 ID·isSaving guard와 여섯 UI 사례의 모든 assertions·통과 판정은 유지했다. iPhone의 완료·Undo 실제 case Passed는 확인했지만 이를 전체 UI나 QA 87개 완료로 확대하지 않는다. 실제 SDK help의 -enableCodeCoverage 지원과 두 모바일 UI의 coverage NO notice도 확인했으나 결과 마감 문제 해결은 입증되지 않았다. 시간 초과나 stdout 결과를 테스트 성공으로 바꾸지 않는다.
+
+확보한 별도 실행 전체 로그의 최초 내일 검색 실패에서 직전 검색행 frame=(16,383,370,102)의 중심 Y는 434이고, 진단 시 유일한 보관함 CollectionView frame=(0,0,402,403)의 하단보다 31pt 아래였다. 실제 행 Tap/Synthesize 뒤 키보드가 남고 `detail.plan`이 없었으며 `state.feedback`은 `완료했어요.`였다. 캐시된 행 좌표와 실패 진단 시 표시 영역의 관측은 접근 geometry 보완의 근거이며 전체 원인 확정을 뜻하지 않는다.
+
+후속 보완은 `task.row.*`에만 적용한다. 실제 descendant ID로 소유 scroll/table/collection을 찾고 최대 8회 실제 스크롤한 뒤 행 중심이 표시 영역 안에 있고 hittable/enabled를 모두 만족해야 일반 tap을 실행한다. 고정 좌표 tap이나 행동 재시도는 추가하지 않으며 기대값·기존 여섯 사례·15초 대기·최종 xcresult/strict guard 판정은 유지한다. 제품 소스와 상태·명령은 변경하지 않는다. 이 보완의 효과는 새 SHA의 실제 Actions 검증 대기다.
