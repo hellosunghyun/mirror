@@ -4,8 +4,8 @@ set +x
 umask 077
 
 # 서명 자료와 로그는 runner의 임시 영역에만 둔다. 공개 산출물은 성공 뒤 별도 폴더로 내보낸다.
-if [[ $# -ne 3 && ( $# -ne 4 || ${4:-} != --preflight ) ]]; then
-  printf '%s\n' '사용법: ci-adhoc-archive.sh BUILD_NUMBER COMMIT_SHA RUN_ID [--preflight]' >&2
+if [[ $# -ne 3 && ( $# -ne 4 || ( ${4:-} != --preflight && ${4:-} != --diagnostic ) ) ]]; then
+  printf '%s\n' '사용법: ci-adhoc-archive.sh BUILD_NUMBER COMMIT_SHA RUN_ID [--preflight|--diagnostic]' >&2
   exit 2
 fi
 build_number="$1"
@@ -13,6 +13,8 @@ commit_sha="$2"
 run_id="$3"
 preflight=0
 if [[ ${4:-} == --preflight ]]; then preflight=1; fi
+diagnostic=0
+if [[ ${4:-} == --diagnostic ]]; then diagnostic=1; fi
 [[ "$build_number" =~ ^[1-9][0-9]*$ && "$run_id" =~ ^[1-9][0-9]*$ && "$commit_sha" =~ ^[0-9a-f]{40}$ ]] || {
   printf '%s\n' '::error::빌드 번호, commit SHA, run ID가 유효하지 않습니다.' >&2
   exit 2
@@ -241,6 +243,8 @@ if ! xcodebuild -project "$repo_root/Mirror.xcodeproj" -scheme MirrorIOS -config
     -derivedDataPath "$private_dir/DerivedData" -jobs 2 \
     DEVELOPMENT_TEAM="$team_id" CODE_SIGN_IDENTITY="$identity_sha1" CODE_SIGNING_ALLOWED=YES \
     CURRENT_PROJECT_VERSION="$build_number" archive > "$private_dir/archive.log" 2>&1; then
+  python3 "$repo_root/scripts/ci-adhoc-diagnostics.py" --phase archive --log-file "$private_dir/archive.log" || \
+    printf '%s\n' '::notice::비공개 archive 로그의 오류 분류를 완료하지 못했습니다.'
   printf '%s\n' '::error::서명된 iOS archive 생성에 실패했습니다. 서명 자료와 비공개 로그는 정리합니다.' >&2
   exit 1
 fi
@@ -248,6 +252,8 @@ signing_stage="Ad Hoc IPA export"
 if ! xcodebuild -exportArchive -archivePath "$private_dir/Mirror.xcarchive" \
     -exportOptionsPlist "$private_dir/ExportOptions.plist" -exportPath "$private_dir/export" \
     > "$private_dir/export.log" 2>&1; then
+  python3 "$repo_root/scripts/ci-adhoc-diagnostics.py" --phase export --log-file "$private_dir/export.log" || \
+    printf '%s\n' '::notice::비공개 export 로그의 오류 분류를 완료하지 못했습니다.'
   printf '%s\n' '::error::Ad Hoc IPA export에 실패했습니다. 서명 자료와 비공개 로그는 정리합니다.' >&2
   exit 1
 fi
@@ -330,6 +336,10 @@ for name in ['Mirror.ipa', 'build-manifest.json', 'release-notes.md']:
     checksums.append(f"{hashlib.sha256((public / name).read_bytes()).hexdigest()}  {name}\n")
 (public / 'SHA256SUMS').write_text(''.join(checksums), encoding='ascii')
 PY
+if [[ "$diagnostic" == 1 ]]; then
+  printf '%s\n' 'Ad Hoc 빌드 진단 통과: archive·export·실제 IPA 서명 검증을 완료했으며 임시 산출물을 정리합니다.'
+  exit 0
+fi
 chmod 755 "$publish_dir"
 chmod 644 "$publish_dir/Mirror.ipa" "$publish_dir/build-manifest.json" "$publish_dir/SHA256SUMS" "$publish_dir/release-notes.md"
 printf 'publish_dir=%s\n' "$publish_dir" >> "$GITHUB_OUTPUT"
