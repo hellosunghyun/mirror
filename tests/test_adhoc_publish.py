@@ -103,6 +103,9 @@ class FakeClient(helper.GitHub):
                 response['assets'][0]['size'] += 1
             elif self.fault == 'refreshed-missing':
                 response['assets'].pop()
+            elif self.fault == 'refreshed-companion-digest':
+                companion = next(asset for asset in response['assets'] if asset['name'] in helper.MAC_ASSET_NAMES)
+                companion['digest'] = 'sha256:' + '0' * 64
             return response
         raise AssertionError(f'예상하지 않은 합성 API 호출: {method} {endpoint}')
 
@@ -329,6 +332,72 @@ class AdHocPublishTests(unittest.TestCase):
         self.assertEqual(client.mutations, [])
         self.assertEqual(client.uploads, [])
         self.assertIn({'method': 'GET', 'endpoint': '/git/ref/tags/adhoc-100', 'value': None}, client.calls)
+
+    def companion_assets(self, count=4):
+        return [{'id': 900 + index, 'name': name, 'size': 10 + index,
+                 'digest': 'sha256:' + hashlib.sha256(name.encode()).hexdigest()}
+                for index, name in enumerate(sorted(helper.MAC_ASSET_NAMES)[:count])]
+
+    def test_retry_with_mac_assets_returns_existing_release_without_mutation(self):
+        release = self.existing_release()
+        release['assets'].extend(self.companion_assets())
+        client = FakeClient(release=release, tag_commit=COMMIT)
+        self.assertEqual(self.publish(client), RELEASE_URL)
+        self.assertEqual(client.mutations, [])
+        self.assertEqual(client.release, release)
+
+    def test_incomplete_ios_retry_preserves_mac_assets_and_release_notes(self):
+        for count in (1, 4):
+            with self.subTest(mac_assets=count):
+                release = self.existing_release()
+                release['assets'].pop()
+                companions = self.companion_assets(count)
+                release['assets'].extend(companions)
+                mac_section = helper.MAC_NOTES_MARKER + '\n합성 macOS 배포 정보\n'
+                release['body'] = '이전 iOS 안내\n\n' + mac_section
+                client = FakeClient(release=release, tag_commit=COMMIT)
+                self.assertEqual(self.publish(client), RELEASE_URL)
+                self.assertEqual({asset['name'] for asset in client.release['assets']}, ASSETS | {asset['name'] for asset in companions})
+                self.assertEqual([asset for asset in client.release['assets'] if asset['name'] in helper.MAC_ASSET_NAMES], companions)
+                self.assertEqual(len([call for call in client.mutations if call['method'] == 'DELETE']), 3)
+                self.assertEqual({upload['name'] for upload in client.uploads}, ASSETS)
+                self.assertTrue(all(upload['draft'] for upload in client.uploads))
+                self.assertTrue(client.release['body'].endswith(mac_section))
+
+    def test_invalid_mac_asset_metadata_is_rejected_before_mutation(self):
+        for key, value in [('size', 0), ('size', True), ('id', 0), ('digest', None), ('digest', 'not-sha256')]:
+            with self.subTest(key=key):
+                release = self.existing_release()
+                companion = self.companion_assets(1)[0]
+                companion[key] = value
+                release['assets'].append(companion)
+                client = FakeClient(release=release, tag_commit=COMMIT)
+                with self.assertRaises(helper.PublishError):
+                    self.publish(client)
+                self.assertEqual(client.mutations, [])
+
+    def test_duplicate_mac_asset_or_mac_assets_without_verified_tag_are_rejected(self):
+        for duplicate, tag_commit in [(True, COMMIT), (False, None)]:
+            with self.subTest(duplicate=duplicate):
+                release = self.existing_release()
+                companions = self.companion_assets(1)
+                release['assets'].extend(companions)
+                if duplicate:
+                    release['assets'].append({**companions[0], 'id': 950})
+                client = FakeClient(release=release, tag_commit=tag_commit)
+                with self.assertRaises(helper.PublishError):
+                    self.publish(client)
+                self.assertEqual(client.mutations, [])
+
+    def test_companion_changed_during_ios_republication_leaves_release_draft(self):
+        release = self.existing_release()
+        release['assets'].pop()
+        release['assets'].extend(self.companion_assets())
+        client = FakeClient(release=release, tag_commit=COMMIT, fault='refreshed-companion-digest')
+        with self.assertRaises(helper.PublishError):
+            self.publish(client)
+        self.assertTrue(client.release['draft'])
+        self.assertFalse(any(call['method'] == 'PATCH' and call['value'].get('draft') is False for call in client.calls))
 
     def test_incomplete_retry_replaces_assets_while_draft_before_republication(self):
         release = self.existing_release()

@@ -16,6 +16,8 @@ from urllib.request import Request, urlopen
 import zipfile
 
 ASSET_NAMES = {"Mirror.ipa", "build-manifest.json", "SHA256SUMS", "release-notes.md"}
+MAC_ASSET_NAMES = {"Mirror-macOS.dmg", "macos-build-manifest.json", "macos-SHA256SUMS", "macos-release-notes.md"}
+MAC_NOTES_MARKER = "<!-- mirror-macos-release -->"
 CHECKSUM_NAMES = ASSET_NAMES - {"SHA256SUMS"}
 PUBLIC_MANIFEST_KEYS = {
     "result", "distribution", "exportMethod", "platform", "expiresAtUTC", "deviceCount",
@@ -143,16 +145,32 @@ def publish(client: GitHub, directory: Path, manifest: dict, hashes: dict[str, s
     notes = (directory / "release-notes.md").read_text(encoding="utf-8")
     attributes = {"tag_name": tag, "target_commitish": commit, "prerelease": True,
                   "name": f"미러 Ad Hoc {manifest['version']} ({manifest['buildNumber']})", "body": notes}
+    companions = {}
     if release is not None:
         if not tag_exists and release.get("target_commitish") != commit:
             raise PublishError("기존 draft release의 commit이 현재 실행과 다릅니다.")
         assets = release.get("assets", [])
-        if any(asset.get("name") not in ASSET_NAMES for asset in assets):
+        if any(asset.get("name") not in ASSET_NAMES | MAC_ASSET_NAMES for asset in assets):
             raise PublishError("같은 release에 예상하지 않은 자산이 있습니다.")
-        if (tag_exists and not release.get("draft") and release.get("prerelease") and len(assets) == 4
-                and {asset.get("name") for asset in assets} == ASSET_NAMES
+        for asset in assets:
+            if asset.get("name") not in MAC_ASSET_NAMES:
+                continue
+            if (not tag_exists or asset["name"] in companions
+                    or type(asset.get("id")) is not int or asset["id"] <= 0
+                    or type(asset.get("size")) is not int or asset["size"] <= 0
+                    or not isinstance(asset.get("digest"), str)
+                    or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset["digest"])):
+                raise PublishError("기존 macOS 공개 자산의 계약을 확인할 수 없습니다.")
+            companions[asset["name"]] = {key: asset[key] for key in ("id", "name", "size", "digest")}
+        if companions:
+            body = release.get("body", "")
+            if isinstance(body, str) and MAC_NOTES_MARKER in body:
+                attributes["body"] = notes.rstrip() + "\n\n" + MAC_NOTES_MARKER + body.split(MAC_NOTES_MARKER, 1)[1]
+        ios_assets = [asset for asset in assets if asset.get("name") in ASSET_NAMES]
+        if (tag_exists and not release.get("draft") and release.get("prerelease") and len(ios_assets) == 4
+                and {asset.get("name") for asset in ios_assets} == ASSET_NAMES
                 and all(asset.get("digest") == "sha256:" + hashes[asset["name"]]
-                        and asset.get("size") == (directory / asset["name"]).stat().st_size for asset in assets)):
+                        and asset.get("size") == (directory / asset["name"]).stat().st_size for asset in ios_assets)):
             return release["html_url"]
         # 재실행도 같은 태그를 사용한다. 불완전한 자산을 공개하지 않도록 draft에서 교체한다.
         release = client.request("PATCH", f"/releases/{release['id']}", value={**attributes, "draft": True})
@@ -160,7 +178,8 @@ def publish(client: GitHub, directory: Path, manifest: dict, hashes: dict[str, s
         release = client.request("POST", "/releases", value={**attributes, "draft": True})
     release_id = release["id"]
     for asset in release.get("assets", []):
-        client.request("DELETE", f"/releases/assets/{asset['id']}")
+        if asset.get("name") in ASSET_NAMES:
+            client.request("DELETE", f"/releases/assets/{asset['id']}")
     upload_url = release["upload_url"].split("{", 1)[0]
     for name in sorted(ASSET_NAMES):
         uploaded = client.request("POST", upload_url + "?" + urlencode({"name": name}),
@@ -172,9 +191,13 @@ def publish(client: GitHub, directory: Path, manifest: dict, hashes: dict[str, s
             raise PublishError("업로드한 공개 자산의 SHA-256이 다릅니다.")
     refreshed = client.request("GET", f"/releases/{release_id}")
     assets = refreshed.get("assets", [])
-    if len(assets) != 4 or {asset.get("name") for asset in assets} != ASSET_NAMES:
+    if len(assets) != 4 + len(companions) or {asset.get("name") for asset in assets} != ASSET_NAMES | companions.keys():
         raise PublishError("공개 자산 네 개를 모두 업로드해야 release를 공개할 수 있습니다.")
     for asset in assets:
+        if asset["name"] in companions:
+            if {key: asset.get(key) for key in ("id", "name", "size", "digest")} != companions[asset["name"]]:
+                raise PublishError("iOS 재게시 중 기존 macOS 자산이 변경되었습니다.")
+            continue
         if (asset.get("digest") != "sha256:" + hashes[asset["name"]]
                 or asset.get("size") != (directory / asset["name"]).stat().st_size):
             raise PublishError("게시 직전 공개 자산의 SHA-256 검증에 실패했습니다.")

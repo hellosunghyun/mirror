@@ -81,6 +81,8 @@ App Group은 같은 개발팀의 앱·확장이 같은 기기의 저장 공간�
 
 각 push의 Ad Hoc IPA·GitHub Release 자동화와 필요한 서명 Secret 등록은 [Ad Hoc 배포 안내](docs/ADHOC_RELEASE.md)를 따른다. 사용자 승인에 따른 배포 자동화이며 실제 서명·게시 성공은 Actions 결과로 확인한다.
 
+macOS 27 이상 Apple silicon용 Developer ID 서명·공증 DMG는 같은 릴리스에 추가한다. 별도 Secret과 검증·설치 안내는 [macOS 배포 안내](docs/MACOS_RELEASE.md)를 따른다.
+
 테스트는 **GitHub Actions 러너에서 실행**한다. [Swift workflow](.github/workflows/swift.yml)는 Xcode 27에서 SwiftPM 도메인·SQLite·시스템 테스트와 macOS·iPhone·iPad 앱/확장 빌드 및 실제 UI 테스트를 실행하고 실제 테스트 수와 현재 실행의 로그·xcresult를 보존한다. 기존 [문서 workflow](.github/workflows/validation.yml)는 Python 준비 검증을 계속 수행한다.
 
 `Mirror.xcodeproj`의 공유 scheme은 `MirrorIOS`와 `MirrorMac`이다. iPhone·iPad는 하나의 iOS 앱 타깃을 사용하고 Mac은 네이티브 타깃을 사용한다. 두 앱·확장은 `MirrorDomain`/`MirrorData`/`MirrorSystem`의 공통 경로를 사용하며 `MirrorIOSUI`/`MirrorMacUI` scheme에서 실제 입력·저장·Undo UI를 검사한다. 개발 빌드의 Bundle ID는 후보 `com.baserize.mirror`, `com.baserize.mirror.mac`이며 Apple 등록·서명·App Group·iCloud 설정 완료를 뜻하지 않는다.

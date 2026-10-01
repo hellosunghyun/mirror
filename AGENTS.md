@@ -12,7 +12,7 @@
 - SwiftUI 앱·원본 저장·명령/reducer·전체 화면·Widget/Share·App Intents·선택 CloudKit의 첫 구현을 통합했다. 공유 scheme은 `MirrorIOS`/`MirrorMac`, UI scheme은 `MirrorIOSUI`/`MirrorMacUI`다. 새 구현의 원격 검증과 실제 서명·두 기기 검증 상태를 구별한다. 구성과 검증 범위는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
 - 원본의 `Postpone` 작업명과 이전 최소 OS 권고보다 [README](README.md)와 [개발 기준](development-baseline.json)의 확정값이 우선한다.
 - 식별자 접두사는 사용자 지정 `com.baserize`다. 전체 Bundle ID·App Group은 [README의 후보](README.md#식별자-후보)이며 Apple 등록이나 실제 설정 완료를 뜻하지 않는다. 플랫폼별 ID 구성과 iCloud container는 아직 미정이다. Ad Hoc 서명 Team은 사용자 제공 프로파일에서 비공개로 확인하고 실제 인증서와 일치를 검증한다. 원본 가칭을 확정값으로 복사하지 않는다.
-- 사용자는 제공한 Ad Hoc 프로파일 적용과 각 push의 GitHub Release 게시를 승인했다. [배포 안내](docs/ADHOC_RELEASE.md)의 세 Actions Secret과 검증 게이트를 사용한다. 실제 IPA 게시까지 완료를 주장하지 않으며 프로파일·인증서·개인키·서명 로그를 Git에 넣지 않는다.
+- 사용자는 제공한 Ad Hoc 프로파일 적용과 각 push의 GitHub Release 게시, macOS 배포를 승인했다. [iOS 배포 안내](docs/ADHOC_RELEASE.md)의 세 Actions Secret과 [macOS 배포 안내](docs/MACOS_RELEASE.md)의 네 Secret 및 검증 게이트를 사용한다. 실제 IPA·DMG 게시 결과는 해당 실행과 공개 자산으로 확인하며 프로파일·인증서·개인키·서명·공증 로그를 Git에 넣지 않는다.
 
 ## 작업 전 확인
 

@@ -2,6 +2,8 @@
 
 사용자가 제공한 Ad Hoc 프로파일 적용과 각 push의 GitHub Release 게시를 승인했다. [배포 workflow](../.github/workflows/adhoc-release.yml)는 모든 push와 수동 실행을 처리한다. 각 실행의 검증을 보존하며 새 push로 이전 배포를 취소하지 않는다.
 
+macOS용 Developer ID 서명·공증 DMG도 같은 릴리스에 추가한다. 별도 Secret과 실제 검증 단계는 [macOS 배포 안내](MACOS_RELEASE.md)를 따른다.
+
 ## 서명 자료 등록
 
 [GitHub Actions Secrets](https://github.com/hellosunghyun/mirror/settings/secrets/actions)에 다음 세 값을 등록한다. 프로파일·인증서·비밀번호를 공개 저장소나 채팅 본문에 넣지 않는다. 연결 앱의 Secret 쓰기 HTTP 403은 과거 기록이며 이후 사용자가 등록한 세 Secret의 존재는 최신 배포 실행에서 확인했다. 실제 서명 자료의 일치와 P12 암호는 별도 archive 검증이 필요하다.
