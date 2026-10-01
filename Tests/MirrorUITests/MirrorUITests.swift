@@ -284,7 +284,25 @@ final class MirrorUITests: XCTestCase {
         let method = name.replacingOccurrences(of: "[^A-Za-z0-9]+", with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-")).lowercased()
         let screenshotName = "mirror-ui-\(stage)-\(method)-\(evidenceSequence)"
-        let appScreenshot = app.screenshot()
+        let appScreenshot: XCUIScreenshot
+        #if os(iOS)
+        if stage == "ipad-landscape" {
+            let window = app.windows.firstMatch
+            XCTAssertEqual(app.state, .runningForeground)
+            XCTAssertTrue(window.exists, "가로 캡처에는 실제 앱 주 창이 있어야 한다.")
+            let bounds = window.frame
+            XCTAssertTrue(bounds.minX.isFinite && bounds.minY.isFinite
+                          && bounds.width.isFinite && bounds.height.isFinite)
+            XCTAssertGreaterThan(bounds.width, bounds.height, "실제 가로 앱 창을 캡처한다.")
+            XCTAssertGreaterThan(bounds.height, 0)
+            XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(bounds))
+            // 앱 범위의 가로 캡처에서 회전·검은 띠가 관찰돼 주 창 캡처로 다시 확인한다.
+            // 반환된 native screenshot을 그대로 첨부하며 픽셀 회전·렌더링·후처리를 하지 않는다.
+            appScreenshot = window.screenshot()
+        } else { appScreenshot = app.screenshot() }
+        #else
+        appScreenshot = app.screenshot()
+        #endif
         #if os(macOS)
         let window = app.windows.firstMatch
         XCTAssertTrue(window.exists, "앱 화면에는 실제 주 창이 있어야 한다.")

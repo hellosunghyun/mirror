@@ -360,7 +360,9 @@ struct MirrorSettingsView: View {
                 }
             }
             .onChange(of: model.cloudPreview?.token) { _, _ in cloudMergeConfirmed = false }
-        }.frame(minWidth: 300, idealWidth: 580, minHeight: 500)
+        }
+        .tint(MirrorPalette.accent)
+        .frame(minWidth: 300, idealWidth: 580, minHeight: 500)
     }
 
     private var planningSection: some View {

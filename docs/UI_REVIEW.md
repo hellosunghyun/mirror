@@ -47,6 +47,12 @@
 
 후속 UI 수정은 넓은 iPad에서 목록과320pt 달력을 실제 나란한 열로 배치하고, 각 열의 탐색 제목을 독립적으로 유지한다. 선택 작업은 기존 native inspector를 사용한다. 키보드 안내 처리에서는 유일한 정상 Continue가 준비될 때까지 기다리는 시간과 tap·안내 닫힘이 기존 단일15초 마감 안에 들도록 한다. 후보 수1개와 hittable·enabled·키보드 포함 관계, 이후 실제 입력 키 검사 및 기존 모든 assertions는 유지한다. 사용자에게 보이는 변경 이력 버튼은 ‘이 변경 되돌리기’로 간단하게 표시하고 실제 Undo 보호 조건은 유지한다. 실패 안내는 고정 phase·후보 수·키보드 경계 유효 여부·경과 시간만 허용한다. 여섯 UI 사례·43개 원본 앱샷·모든 검사 제한을 유지하며 실제 SDK와 새 PNG에서 검증한다.
 
+[후속 실행36934719595](https://github.com/hellosunghyun/mirror/actions/runs/36934719595), `fc53163`·build35는 준비·SwiftPM159개와 Mac/iPhone/iPad 실제 UI6개씩 모두 통과했다. 각 SDK 컴파일·receipt도 성공했고 실제 UI 실행은 Mac515초·iPhone879초·iPad759초였다. [화면46자산](https://github.com/hellosunghyun/mirror/releases/tag/ui-review-36934719595)과 [설치8자산](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36934719595)을 공개 다운로드하여 source/build/run/attempt·파일 크기·SHA256·43단계·실제PNG dimensions를 확인했다. iOS 서명·프로파일·앱/확장3개 버전·최소OS27.0, Mac 공증·staple·Gatekeeper 게이트도 성공했다.
+
+**새 원본43장도 모두 직접 열었지만 iPad 가로1장의 시각 검증은 다시 실패했다.** Mac14장과 iPhone14장, iPad 세로14장에서는 이전 창 잘림·plain Form 여백·선택행 대비·검색 제목·키보드 안내·오류/저장 가시성이 보완됐다. 가로 PNG는 여전히90도 회전한 내용과 오른쪽 약25% 검은 띠가 있어 인접 달력의 실제 시각 증거로 인정하지 않는다. viewport assertions 통과를 정상 pixels로 대체하지 않으며 HStack·대기 실패나 EXIF 제거를 원인으로 단정하지 않는다. 설정 캘린더 버튼의 파란 강조색도 비차단 잔여 항목으로 확인했다.
+
+후속 보완은 `ipad-landscape` 단계만 실제 foreground 앱 주 창의 native screenshot을 직접 첨부하고 기존42장의 캡처 경로를 유지한다. 창 존재·유효한 경계·앱 포함·가로 방향을 검사한다. 이미지 회전·crop·렌더링·후처리로 증거를 고치지 않으며 같은 SDK 내부 캡처 경로일 가능성이 있어 새 원본에서 다시 판정한다. 설정 NavigationStack에도 동일한 강조색을 적용한다. 기존6사례·43장·모든 기능 assertions와 시간 제한은 유지한다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
