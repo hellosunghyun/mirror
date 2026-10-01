@@ -2,7 +2,7 @@
 
 ## 앱과 모듈 구성
 
-현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 공통 명령·실제 SQLite·시스템 계약과 Mac의 여섯 UI 시나리오가 Actions에서 통과했으며 모바일의 화면 전환·입력·UI 집계 실패를 수정·검증하고 있다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
+현재 통합 코드에는 15개 native 타깃과 4개 SwiftPM 라이브러리가 있다. 첫 전체 구현 커밋은 `67d69e952311b93c50ce874dab0aaa2347c95264`다. 공통 명령·실제 SQLite·시스템 계약과 Mac/iPad의 여섯 UI 시나리오가 Actions에서 통과했으며 iPhone의 상세 화면·Undo·UI 집계 실패를 수정·검증하고 있다. 작성 완료나 부분 UI 통과를 전체 수용 통과로 기록하지 않는다.
 
 | 타깃 | 역할 | 지원 |
 |---|---|---|
@@ -18,7 +18,7 @@
 
 `python3 scripts/generate-xcode-project.py`로 외부 생성기·패키지 의존성 없이 소스 glob 기반 프로젝트를 재생성한다. source/test/extension 파일 추가 후 생성 파일을 함께 커밋한다. Swift compiler는 Xcode 27의 6.4, 언어 모드는 Swift 6, strict concurrency는 complete다. domain/data/system/test 기본 격리는 nonisolated, SwiftUI 앱은 명시 MainActor다.
 
-개발 Bundle ID는 `com.baserize.mirror`와 `com.baserize.mirror.mac` 및 각 호스트의 Widget/Share suffix다. Team은 사용자가 제공한 Ad Hoc profile에서 확인했지만 `.p12` 개인키는 아직 미제공이다. Secrets API는 integration 권한 부족으로 403을 반환했고, [최초 Ad Hoc 실행 36791084786](https://github.com/hellosunghyun/mirror/actions/runs/36791084786)의 입력 검사에서 서명용 세 Secrets 누락이 확인됐다. App Group·iCloud container 권한은 제공된 profile에 없으며 Info.plist의 연결 값은 비어 있고 capability 상태는 configurationRequired다. 실제 Apple 등록·서명 IPA 배포는 미검증이다. unsigned CI embedding은 공유 컨테이너 접근 성공을 뜻하지 않는다. 확장은 App Group 없이 별도 로컬 폴더로 fallback하지 않는다. Ad Hoc 자동화의 별도 조건은 [배포 안내](ADHOC_RELEASE.md)를 따른다.
+개발 Bundle ID는 `com.baserize.mirror`와 `com.baserize.mirror.mac` 및 각 호스트의 Widget/Share suffix다. Team은 사용자가 제공한 Ad Hoc profile에서 비공개로 확인했다. Secrets API는 integration 권한 부족으로 403을 반환했고 [최초 Ad Hoc 실행 36791084786](https://github.com/hellosunghyun/mirror/actions/runs/36791084786)에는 서명용 세 Secrets가 누락됐지만, [후속 실행 36796647867](https://github.com/hellosunghyun/mirror/actions/runs/36796647867)의 입력 검사는 세 Secrets의 존재를 확인했다. 모바일 UI 게이트 실패로 archive가 실행되지 않아 실제 인증서·개인키 일치와 IPA 서명/export는 아직 미검증이다. App Group·iCloud container 권한은 제공된 profile에 없으며 Info.plist의 연결 값은 비어 있고 capability 상태는 configurationRequired다. 실제 Apple 등록·서명 IPA 배포는 미검증이다. unsigned CI embedding은 공유 컨테이너 접근 성공을 뜻하지 않는다. 확장은 App Group 없이 별도 로컬 폴더로 fallback하지 않는다. Ad Hoc 자동화의 별도 조건은 [배포 안내](ADHOC_RELEASE.md)를 따른다.
 
 저장 선택·복원·계정/삭제 경계는 [구현 결정 기록](ARCHITECTURE_DECISIONS.md), 전체 범위는 [구현 계획](IMPLEMENTATION_PLAN.md), 부분 증거는 [추적표](REQUIREMENTS_TRACEABILITY.md)를 따른다. SwiftPieces 원본 커밋·라이선스·플랫폼 변경은 [고지](../Sources/MirrorDesign/SwiftPieces/PROVENANCE.md)에 보존한다.
 
@@ -117,7 +117,7 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 같은 커밋의 [준비 검사 36791084443](https://github.com/hellosunghyun/mirror/actions/runs/36791084443)은 원본 무결성 검사와 Python 40개 검사(기존 9개 + profile 12개 + publisher 19개)가 통과했다. 이 Python 검사는 서명 입력/프로파일과 게시 로직의 검증이며 실제 GitHub API 게시나 서명된 IPA 성공을 뜻하지 않는다. 여섯 UI 시나리오의 원본 QA 부분 범위와 남은 조건은 [추적표](REQUIREMENTS_TRACEABILITY.md#1-현재-증거와-상태)에 보존한다.
 
-최신 검증 커밋 `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)은 Mac 명령 등록을 macOS로 제한한 뒤의 실제 결과다. SwiftPM과 Mac job은 성공했고, iPhone·iPad는 앱·두 확장 빌드, 필수 세 unit/integration bundle 및 구성 검사 단계가 성공했지만 UI 단계가 각각 15분 제한으로 중단돼 전체 실행은 실패했다. 세 native 플랫폼 모두 실제 App Intents actions 16개를 확인했다.
+이전 검증 커밋 `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)은 Mac 명령 등록을 macOS로 제한한 뒤의 실제 결과다. SwiftPM과 Mac job은 성공했고, iPhone·iPad는 앱·두 확장 빌드, 필수 세 unit/integration bundle 및 구성 검사 단계가 성공했지만 UI 단계가 각각 15분 제한으로 중단돼 전체 실행은 실패했다. 세 native 플랫폼 모두 실제 App Intents actions 16개를 확인했다.
 
 | 경로 | 실제 단위·통합 결과 | 실제 UI 결과 |
 |---|---|---|
@@ -128,12 +128,29 @@ macOS 27과 Xcode 27 환경에서 `./script/build_and_run.sh` 또는 Codex Run �
 
 Mac의 실제 UI tree는 여섯 선언 메서드를 모두 `Passed`로 보고했고 strict guard의 `actualCaseCount`는 6이며 누락·비통과 메서드는 없었다. 이 시나리오에는 Mac 키보드 명령 조작이 없으므로 Q-078 완료 근거로 확장하지 않는다. 모바일의 stdout 통과/실패 기록은 최종 xcresult 집계나 skip 0개, strict guard 통과를 대신하지 않는다.
 
-최신 모바일 진단은 현재 Mirror IPS 0개·읽기 실패 0개를 보고했고, 이전 중복 단축키 예외는 해당 로그에서 관측되지 않았다. 앱 전체 안정성이나 UI 해결을 뜻하지 않는다. 실제 남은 오류는 시작 시 `today.list` 부재, `capture.save` 실제 입력 뒤 `capture.title`에 원문이 남고 disabled 상태가 지속된 입력 초기화 실패, iPhone `capture.save`의 invalid activation point 및 `library.search` 부재, iPad 정리 카드 `review.card` 미닫힘이다. 다음 수정은 이 관측을 기준으로 검증한다.
+그 실행의 모바일 진단은 현재 Mirror IPS 0개·읽기 실패 0개를 보고했고, 이전 중복 단축키 예외는 해당 로그에서 관측되지 않았다. 앱 전체 안정성이나 UI 해결을 뜻하지 않는다. 당시 남은 오류는 시작 시 `today.list` 부재, `capture.save` 실제 입력 뒤 `capture.title`에 원문이 남고 disabled 상태가 지속된 입력 초기화 실패, iPhone `capture.save`의 invalid activation point 및 `library.search` 부재, iPad 정리 카드 `review.card` 미닫힘이었다.
 
 같은 커밋의 [준비 검사 36793734834](https://github.com/hellosunghyun/mirror/actions/runs/36793734834)은 원본 무결성과 Python 40개 검사를 통과했다. 이는 실제 IPA 서명·GitHub API 게시 결과가 아니다. [추적표](REQUIREMENTS_TRACEABILITY.md#1-현재-증거와-상태)는 최신 메서드별 부분 결과와 QA의 미검증 조건을 유지한다.
 
-native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 단위 단계 20분·UI 15분 제한과 실패 로그 진단은 중단 원인을 드러내며 성공 판정을 대신하지 않는다.
+최신 검증 커밋 `179428d98dcbfa61470395f7acbd5653b9f25c06`의 [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)은 SwiftPM·Mac·iPad job이 성공했고 iPhone UI 실패로 전체 실행은 실패했다. 세 native 플랫폼의 앱·두 확장 빌드와 필수 unit/integration bundle·구성 검사는 성공했다. 이전 저장 후처리·탭 상태 패널·입력 버튼 배치 수정의 결과와 남은 iPhone 오류를 분리한다.
+
+| 경로 | 실제 단위·통합 결과 | 실제 UI 결과 |
+|---|---|---|
+| SwiftPM | Domain 94 + Data 24 + System 33 = 151개 완료 보고 통과 | 해당 없음 |
+| macOS | 151개 통과, 실패·skip 0개 | 6개 통과, 실패·skip 0개; strict guard bundle 1개/case 6개, missingMethods·nonPassedMethods 없음 |
+| iPhone Simulator | unit/integration/구성 단계 성공; Domain 94 + Data 23 + System 33 = 150개 완료 보고 통과 | stdout의 capture·긴 제목·정리 Undo·주 패널/부분 종료 4개 passed, 완료 Undo·내일 검색 2개 failed; 15분 중단으로 최종 summary/tree/guard 미확보 |
+| iPad Simulator | 150개 통과, 실패·skip 0개 | 6개 통과, 실패·skip 0개; strict guard bundle 1개/case 6개, missingMethods·nonPassedMethods 없음 |
+
+Mac/iPad의 실제 UI tree는 여섯 선언 메서드가 모두 `Passed`이며 strict guard의 누락·비통과 메서드가 없었다. 같은 여섯 시나리오의 플랫폼 반복 실행을 서로 다른 수용 테스트로 합산하지 않는다. iPhone의 stdout 4개 통과·2개 실패를 최종 xcresult 집계·skip 0개나 guard 통과로 바꾸지 않는다. 현재 iPhone Mirror IPS는 0개이고 읽기 실패도 0개다.
+
+iPhone의 완료 Undo 검사는 상세 화면이 열린 동안 root의 `task.undo`가 enabled=true/hittable=false였고 이를 소유하는 scroll 컨테이너도 찾지 못했다. 내일 검색 검사는 보관함 row의 실제 tap 뒤 `detail.plan`이 나타나지 않아 실패했다. 이 두 관측이 후속 상세 화면 Undo와 검색 row 전환 수정의 근거다. Mac 키보드·실제 Widget/Siri·접근성·두 기기 동기화와 QA 87개 전체 수용은 계속 미검증이다.
+
+같은 SHA의 [Ad Hoc 실행 36796647867](https://github.com/hellosunghyun/mirror/actions/runs/36796647867)은 세 Secret의 존재, 원본/배포 도구 회귀, SwiftPM 151개와 Mac 151개·UI 6개 검사를 통과했다. 별도로 실행한 iPhone/iPad UI는 각각 15분 제한으로 중단돼 최종 집계가 없고 archive·publish는 skipped였다. standalone의 iPad 성공을 이 배포 run의 게이트 성공으로 대체하지 않는다. 실제 인증서·개인키 일치·archive/export·IPA 서명은 미검증이며 해당 시점 Release 목록은 0개로 공개 자산 네 개도 게시되지 않았다.
+
+같은 커밋의 [준비 검사 36796647485](https://github.com/hellosunghyun/mirror/actions/runs/36796647485)는 원본 무결성과 Python 40개 검사를 통과했다. 이 증거는 실제 API 게시나 IPA 성공을 뜻하지 않는다.
+
+native workflow는 `ci-apple-platform.sh <platform> unit`과 `ui` 두 단계로 나눴다. 실제 unit 명령과 xcresult 추출을 마친 뒤에만 UI를 실행한다. UI는 동일 run/attempt/commit·scheme·SDK·destination의 context를 확인하고 같은 DerivedData/Simulator를 사용한다. unit 단계의 필수 bundle/packaging 실패는 UI를 독립 진단하더라도 job 실패로 유지한다. 기본 `all` 호출도 지원한다. 기록한 `179428d` 실행은 단위 단계 20분·UI 15분 제한이었다. 후속 UI 20분 제한과 종료 정리 변경은 다음 Actions에서 확인하며 시간 제한과 실패 진단은 성공 판정을 대신하지 않는다.
 
 실제 VoiceOver·홈 위젯/Siri·서명/App Group·두 기기 CloudKit·전체 삭제·사용자 검증 게이트는 별도 증거가 필요하다. 개발용 AppIcon과 unsigned CI packaging 결과도 Apple 등록·배포 준비 완료를 뜻하지 않는다.
 
-후속 수정은 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리는 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone의 상태 패널은 탭 내용 안에 배치하고 입력 화면 저장 버튼은 스크롤 본문 아래 고정 영역에 둔다. UI 테스트는 정리 종료 화면이 실제 닫힐 때까지 기다리며 기존 여섯 시나리오의 원본·계획·Undo assertions를 유지한다. 이 변경의 성공은 다음 Actions 결과로 확인한다.
+`179428d`는 원본 저장과 실제 projection 확인 후 화면 성공을 반환하고, 알림·Spotlight 후처리를 저장소 identity에 묶인 직렬·병합 Task로 예약한다. iPhone 상태 패널은 탭 내용 안에, 입력 저장 버튼은 스크롤 본문 아래 고정 영역에 배치했다. 여섯 시나리오의 원본·계획·Undo assertions를 유지하며 Mac/iPad 결과와 iPhone의 남은 두 실패를 위 기록으로 구별한다. 후속 상세 화면 Undo·검색 row 포커스·테스트 종료 정리 수정의 성공은 다음 SHA의 Actions로 확인한다.

@@ -122,10 +122,11 @@ struct MirrorRootView: View {
                 Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                 .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.bar))
+                .accessibilityIdentifier("status.footer")
         }
     }
     private var detailSheet: Binding<MirrorDetailRequest?> {
-        Binding(get: { isCompact && !model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: { if $0 == nil { model.selectedTaskID = nil } })
+        Binding(get: { isCompact && !model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: { if $0 == nil, isCompact, !model.showReview { model.selectedTaskID = nil } })
     }
     private var sidebarSelection: Binding<MirrorDestination?> {
         Binding(get: { model.destination }, set: { if let destination = $0 { model.destination = destination } })

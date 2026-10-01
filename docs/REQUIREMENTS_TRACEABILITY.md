@@ -4,7 +4,11 @@
 
 ## 1. 현재 증거와 상태
 
-전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. 최신 검증은 `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)이다. SwiftPM과 Mac의 단위·통합 151개(Domain 94, Data 24, System 33), iPhone·iPad 각각 150개(Domain 94, Data 23, System 33)가 완료 보고에서 통과했고 필수 세 bundle과 앱·두 확장/개인정보/라이선스/URL/App Intents actions 16개 구성 검사도 성공했다. Mac UI는 실제 여섯 Test Case가 모두 Passed, 실패·skip 0개이며 strict guard의 missingMethods·nonPassedMethods가 없다. 모바일 UI는 각각 15분 제한으로 중단돼 최종 summary/tree/실행 guard를 확보하지 못했다. stdout에서 iPhone 여섯 메서드 모두 failed, iPad 긴 제목·내일 검색·주 패널 취소/부분 종료 3개 passed와 나머지 3개 failed가 확인된다. 모바일 UI 실패로 전체 실행은 실패했다. Xcode 27의 독립 worker 완료 보고를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다.
+전체 통합 코드는 `67d69e9`부터 추가했으며 모듈 접근·동시성·실제 SQLite 삭제 오류를 회귀와 함께 수정했다. 최신 검증은 `179428d98dcbfa61470395f7acbd5653b9f25c06`의 [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)이다. SwiftPM과 Mac의 단위·통합 151개(Domain 94, Data 24, System 33), iPhone·iPad 각각 150개(Domain 94, Data 23, System 33)가 완료 보고에서 통과했고 앱·두 확장과 필수 bundle/구성 검사 단계도 성공했다. Mac/iPad는 UI 여섯 Test Case가 모두 Passed, 실패·skip 0개이며 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음이다. iPhone stdout은 capture·긴 제목·정리 Undo·주 패널/부분 종료 4개 passed, 완료 Undo·내일 검색 2개 failed였다. iPhone UI는 15분 제한으로 중단돼 최종 summary/tree/guard를 확보하지 못했고 전체 실행은 실패했다. Xcode 27의 독립 worker 완료 보고를 합산하며 매개변수 사례와 플랫폼 반복 실행을 별도 테스트로 더하지 않는다.
+
+이전 `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)은 Mac UI 6개 통과, 모바일 두 플랫폼은 각각 15분 중단이었다. stdout은 iPhone 여섯 메서드 failed, iPad 3개 passed·3개 failed였지만 최종 모바일 집계를 확보하지 못했다. 최신 standalone의 iPad 6개 및 strict guard 통과와 당시 부분 기록을 구분한다.
+
+같은 최신 SHA의 [Ad Hoc 실행 36796647867](https://github.com/hellosunghyun/mirror/actions/runs/36796647867)은 Secret 존재·원본/배포 회귀·SwiftPM·Mac 검사가 성공했다. 별도로 실행한 모바일 두 UI job은 각각 15분 제한으로 중단돼 archive·publish는 skipped였고 실제 인증서·개인키 일치·IPA 서명/export는 미검증이다. Release 목록은 해당 시점 0개로 공개 자산 네 개도 없다. standalone의 iPad 성공으로 이 배포 run의 게이트 실패를 대체하지 않는다.
 
 이전 `4ef52f969059ff15c693b635bfd1596d69b42e25`의 [Actions 36791089147](https://github.com/hellosunghyun/mirror/actions/runs/36791089147)은 Mac UI 6개 통과, iPhone UI 6개 실패, iPad 5개 failed 종료·긴 제목 검사 crash 후 집계 미완료였다. 당시 현재 Simulator 로그에서 중복 Command 단축키 예외가 확인돼 Mac 명령 등록을 macOS로 제한했다. 최신 실행은 현재 Mirror IPS 0개·읽기 실패 0개이며 해당 중복 예외가 관측되지 않았지만 화면 전환·입력과 UI 집계 실패가 남았다. 과거 crash 결과를 현재 UI 실패 원인이나 해결 완료로 쓰지 않는다.
 
@@ -27,26 +31,26 @@
 | V1 명령·reducer | `CommandValidationTests`/`ReducerTests`와 기존 날짜 tests, Domain 94개. 원본 digest·그룹별 head·멱등성·충돌·pending·조건부 Undo·20개 원자 배치의 생산 API. 실제 CloudKit 전송은 검사하지 않음 |
 | V2 실제 영속화 | `StoreIntegrationTests`, SwiftPM/Mac Data 24개, iPhone·iPad Data 23개. 실제 SQLite 재시작·원본 후 장애 복구·경쟁 인스턴스·export/import·로컬 삭제·복원·구독 알림. Mac 별도 OS 프로세스 lock 회귀 포함. 두 실제 Core Data writer 프로세스·물리 보호 데이터·migration/대용량 성능은 별도 검증 |
 | V3 시스템 계약 | `SystemContractTests`/`CloudBoundaryTests`, System 33개. 실제 임시 SQLite의 frozen 카드·receipt/토큰·Today 순서·재정리, 알림 planner·안전 딥링크·로컬 계측·Cloud 상태 구독. unhosted OS adapter의 typed 실패를 확인하며 실제 Widget/Siri/권한/CloudKit 성공으로 대신하지 않음 |
-| V4 native 빌드·구성 | `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`, [Actions 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833). SwiftPM/Mac 각각 151개, iPhone·iPad 각각 150개 완료 보고 통과와 필수 세 unit bundle 확인. 세 native 플랫폼의 앱·두 확장/privacy/라이선스/URL/App Intents actions 16개 구성 검사 통과. 앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
-| V5 UI 부분 시나리오 | 최신 Mac UI tree의 선언된 `Test Case` 6개가 모두 `Passed`, 실패·skip 0개. strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음. 모바일은 각각 15분 제한 중단으로 최종 summary/tree/guard 미확보. stdout에는 iPhone 6개 failed, iPad 3개 passed·3개 failed. 아래 부분 QA 매핑이며 최종 모바일 집계·skip 0개나 전체 수용 결과를 뜻하지 않음 |
-| V6 준비·배포 로직 | 같은 커밋의 [준비 검사 36793734834](https://github.com/hellosunghyun/mirror/actions/runs/36793734834)에서 원본 무결성과 Python 40개(기존 9 + profile 12 + publisher 19) 통과. 서명 입력/프로파일과 게시 로직의 검사이며 실제 GitHub API 게시·서명 IPA 배포 결과는 아님 |
+| V4 native 빌드·구성 | `179428d98dcbfa61470395f7acbd5653b9f25c06`, [Swift 실행 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352). SwiftPM/Mac 각각 151개, iPhone·iPad 각각 150개 완료 보고 통과와 필수 세 unit bundle 확인. 세 native 플랫폼의 앱·두 확장 및 privacy/라이선스/URL/App Intents 구성 검사 단계 성공. 앱 수용·실기기·시스템 표면 성공으로 확장하지 않음 |
+| V5 UI 부분 시나리오 | 최신 standalone Mac/iPad UI tree의 선언된 `Test Case` 6개가 모두 `Passed`, 실패·skip 0개. 두 strict guard bundle 1개/case 6개/missingMethods·nonPassedMethods 없음. iPhone은 stdout 4개 passed·2개 failed와 15분 중단으로 최종 summary/tree/guard 미확보. 아래 부분 QA 매핑이며 iPhone 최종 집계·skip 0개나 QA 전체 수용 결과를 뜻하지 않음 |
+| V6 준비·배포 로직 | 같은 커밋의 [준비 검사 36796647485](https://github.com/hellosunghyun/mirror/actions/runs/36796647485)에서 원본 무결성과 Python 40개(기존 9 + profile 12 + publisher 19) 통과. Ad Hoc preflight는 Secret 존재만 확인했고 archive/publish는 UI 게이트 실패로 skipped. 실제 키 일치·GitHub API 게시·서명 IPA 배포 결과는 아님 |
 
 | UI 메서드 | 원본 QA의 관련 부분 | Mac | iPhone / iPad |
 |---|---|---|---|
-| `testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday` | Q-001/Q-009 부분: 미검토 항목의 Today 제외·명시 오늘 배치와 미완료 유지 | 통과 | failed 로그 / failed 로그, 모두 집계 미완료 |
-| `testTomorrowStaysOutOfTodayAndIsSearchableInLibrary` | Q-008/Q-010 부분: 내일 항목 검색·날짜 보존·Today 제외. Q-008의 다음 달 항목·정리 큐 제외는 미검사 | 통과 | failed 로그 / passed 로그, 모두 집계 미완료 |
-| `testOverlongTitleShowsErrorAndPreservesEveryCharacter` | Q-003 부분: ASCII 501자 입력의 오류 안내·원문 보존·정상 입력 복구. Unicode grapheme/500자 허용 경계는 미검사 | 통과 | failed 로그 / passed 로그, 모두 집계 미완료 |
-| `testWeekPanelCancellationAndPartialFinishPreserveUndecidedPlan` | Q-016/Q-019 부분: 취소 뒤 계획 표시 보존·2개 중 1개 결정. plan 변경 0건의 mutation 기록은 미검사이며 원본 10개/6개 결정/4개 미검토와 구별 | 통과 | failed 로그 / passed 로그, 모두 집계 미완료 |
-| `testExplicitCompletionAndUndoPreserveEditedTitleAndPlan` | Q-032 부분: 완료·Undo의 상태/제목/기존 계획 표시. deadline/history는 미검사. Q-030의 plan Undo와 Q-033의 과거 날짜 완료 취소는 미검사 | 통과 | failed 로그 / failed 로그, 모두 집계 미완료 |
-| `testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday` | Q-029 부분: 직전 배치 Undo의 unassigned 복원·Today 제외. reviewNotBefore는 미검사 | 통과 | failed 로그 / failed 로그, 모두 집계 미완료 |
+| `testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday` | Q-001/Q-009 부분: 미검토 항목의 Today 제외·명시 오늘 배치와 미완료 유지 | 통과 | passed 로그, 집계 미완료 / 통과 |
+| `testTomorrowStaysOutOfTodayAndIsSearchableInLibrary` | Q-008/Q-010 부분: 내일 항목 검색·날짜 보존·Today 제외. Q-008의 다음 달 항목·정리 큐 제외는 미검사 | 통과 | failed 로그, 집계 미완료 / 통과 |
+| `testOverlongTitleShowsErrorAndPreservesEveryCharacter` | Q-003 부분: ASCII 501자 입력의 오류 안내·원문 보존·정상 입력 복구. Unicode grapheme/500자 허용 경계는 미검사 | 통과 | passed 로그, 집계 미완료 / 통과 |
+| `testWeekPanelCancellationAndPartialFinishPreserveUndecidedPlan` | Q-016/Q-019 부분: 취소 뒤 계획 표시 보존·2개 중 1개 결정. plan 변경 0건의 mutation 기록은 미검사이며 원본 10개/6개 결정/4개 미검토와 구별 | 통과 | passed 로그, 집계 미완료 / 통과 |
+| `testExplicitCompletionAndUndoPreserveEditedTitleAndPlan` | Q-032 부분: 완료·Undo의 상태/제목/기존 계획 표시. deadline/history는 미검사. Q-030의 plan Undo와 Q-033의 과거 날짜 완료 취소는 미검사 | 통과 | failed 로그, 집계 미완료 / 통과 |
+| `testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday` | Q-029 부분: 직전 배치 Undo의 unassigned 복원·Today 제외. reviewNotBefore는 미검사 | 통과 | passed 로그, 집계 미완료 / 통과 |
 
-UI 부분 시나리오는 실제 임시 Core Data 저장소와 고정 시각 `2026-09-30T03:00:00Z`, 한국어 UI에서 실행한다. 원본 QA의 모든 precondition/steps·기기 표면이나 앱 재실행 후 영속 보존까지 완료한 결과가 아니므로 Q 행 전체 상태를 `pass`로 바꾸지 않는다. Mac UI 시나리오에는 키보드 명령 조작이 없으므로 Q-078 검증 완료를 뜻하지 않는다. 모바일 stdout의 passed/failed 기록은 최종 xcresult 집계·skip 0개나 strict guard 통과를 대신하지 않는다.
+UI 부분 시나리오는 실제 임시 Core Data 저장소와 고정 시각 `2026-09-30T03:00:00Z`, 한국어 UI에서 실행한다. 원본 QA의 모든 precondition/steps·기기 표면이나 앱 재실행 후 영속 보존까지 완료한 결과가 아니므로 Q 행 전체 상태를 `pass`로 바꾸지 않는다. Mac UI 시나리오에는 키보드 명령 조작이 없으므로 Q-078 검증 완료를 뜻하지 않는다. iPhone stdout의 passed/failed 기록은 최종 xcresult 집계·skip 0개나 strict guard 통과를 대신하지 않는다. standalone의 Mac/iPad 여섯 시나리오 반복을 서로 다른 수용 테스트로 합산하지 않는다.
 
-최신 모바일의 실제 실패는 초기 `today.list` 부재, `capture.title` disabled 상태와 값 변경 실패, iPhone `capture.save` invalid activation point 및 `library.search` 부재, iPad `review.card` 미닫힘이다. 이전 `4ef52f9`의 중복 Command 단축키 예외와 최신 화면/입력 오류를 구분한다. 후속 수정의 해결은 해당 새 SHA/Actions 결과로 확인해야 한다.
+최신 standalone iPhone의 실제 실패는 상세 화면이 열린 동안 root의 `task.undo`가 enabled=true/hittable=false이고 소유 scroll 컨테이너가 없었던 완료 Undo, 보관함 row의 실제 tap 뒤 `detail.plan`이 나타나지 않았던 내일 검색이다. 현재 iPhone Mirror IPS는 0개·읽기 실패 0개다. 이전 `4ef52f9`의 중복 Command 단축키 예외와 `1ca1d35`의 입력 초기화/화면 전환 오류를 최신 두 실패와 구분한다. 후속 상세 화면 Undo·검색 row 전환·종료 정리와 UI 제한 변경의 성공은 새 SHA의 Actions 결과로 확인해야 한다.
 
 이전 소스 `542a0093fff829d93f4678206289712a6e68819c`의 [Actions 36773091969](https://github.com/hellosunghyun/mirror/actions/runs/36773091969)은 GitHub 계정 결제/사용 한도 때문에 모든 job의 실행 단계가 0개였다. 그 실행은 UI/IPS가 생성되지 않은 당시의 `not_run` 기록이며, 현재는 위 최신 실행의 실제 결과로 구분한다. 과거 실행 차단을 현재 UI 실패의 원인으로 쓰지 않는다.
 
-아래 FR 행의 `코드 추가`는 생산 경로가 작성됐다는 뜻이며 새 통합 코드의 빌드·수용 통과를 뜻하지 않는다. 이전 U 근거는 위 순수 함수에 한정한다. 모든 FR의 앱 수용은 아직 미완료이고, 모든 Q 행의 전체 시나리오는 `not_run`이다. 부분 UI 결과는 V5와 해당 Q 행에 별도로 남긴다. Team은 제공된 Ad Hoc profile에서 확인했지만 `.p12` 개인키는 미제공이다. Secrets API는 권한 부족으로 403을 반환했고, [최초 Ad Hoc 실행 36791084786](https://github.com/hellosunghyun/mirror/actions/runs/36791084786)의 입력 검사는 서명용 세 Secrets 누락으로 실패했다. profile에는 App Group·iCloud container 권한이 없으며 실제 Apple 등록·서명 IPA 배포·공유 컨테이너와 두 기기 검증은 미완료다. 향후 결과는 실제 full SHA/run/OS/기기/고정 시각/expected/actual/증거/남은 범위와 함께 이 파생 추적표에 갱신한다.
+아래 FR 행의 `코드 추가`는 생산 경로가 작성됐다는 뜻이며 새 통합 코드의 빌드·수용 통과를 뜻하지 않는다. 이전 U 근거는 위 순수 함수에 한정한다. 모든 FR의 앱 수용은 아직 미완료이고, 모든 Q 행의 전체 시나리오는 `not_run`이다. 부분 UI 결과는 V5와 해당 Q 행에 별도로 남긴다. Team은 제공된 Ad Hoc profile에서 비공개로 확인했다. Secrets API의 권한 부족 403과 [최초 Ad Hoc 실행 36791084786](https://github.com/hellosunghyun/mirror/actions/runs/36791084786)의 세 Secrets 누락은 과거 기록이며 최신 Ad Hoc 입력 검사는 세 Secrets의 존재를 확인했다. 실제 인증서·개인키 일치는 archive 미실행으로 미검증이다. profile에는 App Group·iCloud container 권한이 없으며 실제 Apple 등록·서명 IPA 배포·공유 컨테이너와 두 기기 검증은 미완료다. 향후 결과는 실제 full SHA/run/OS/기기/고정 시각/expected/actual/증거/남은 범위와 함께 이 파생 추적표에 갱신한다.
 
 ## 2. FR-001~030
 
@@ -110,25 +114,25 @@ Q-048의 과거 최소 OS 문구는 확정된 최소 **OS 27**의 지원/availab
 
 | QA | 상황·기대 결과 | 관련 FR | 단계 | 필요한 경로 | 현재 전체 결과·부분 단위 |
 |---|---|---|---|---|---|
-| Q-001 | 제목만 입력 — open + unassigned. Today 미포함 | FR-001 | D-03/04/06 | A/UI | not_run; U2 Today 판정만 부분, V5 Mac 부분 통과·iPhone 실패·iPad 집계 미완료 |
+| Q-001 | 제목만 입력 — open + unassigned. Today 미포함 | FR-001 | D-03/04/06 | A/UI | not_run; U2 Today 판정만 부분, V5 Mac/iPad 부분 통과·iPhone passed 로그/집계 미완료 |
 | Q-002 | 공백 제목 — 저장 거부, 입력 유지 | FR-001 | D-03/06 | A/UI | not_run |
-| Q-003 | 길이 초과 — 자동 잘림 없이 안내 | FR-001 | D-03/06 | A/UI | not_run; V5 Mac ASCII 501자 부분 통과·iPhone failed 로그·iPad passed 로그/집계 미완료, Unicode/500자 경계 미검사 |
+| Q-003 | 길이 초과 — 자동 잘림 없이 안내 | FR-001 | D-03/06 | A/UI | not_run; V5 Mac/iPad ASCII 501자 부분 통과·iPhone passed 로그/집계 미완료, Unicode/500자 경계 미검사 |
 | Q-004 | 여러 줄 붙여넣기 — 한 개 / 줄마다 선택 전 자동 3개 생성 금지 | FR-001 | D-06 | UI | not_run |
 | Q-005 | 공유 텍스트와 URL — 원문 보존, 네트워크 없는 저장 | FR-002 | D-04/07/13 | A/UI/SYS | not_run |
 | Q-006 | 앱 첫 실행 전 인텐트 — 로컬 저장소 초기화 후 작업 저장 | FR-017 | D-04/07 | A/SYS | not_run |
 | Q-007 | 같은 제목 두 작업 — 서로 다른 작업 ID로 보존 | FR-001 | D-03/04/06 | A/UI | not_run |
-| Q-008 | 미래 작업 검색 — 검색 가능하지만 정리 큐에는 미포함 | FR-003 | D-04/06/11 | A/UI | not_run; V5 Mac 내일 검색·Today 제외 부분 통과·iPhone failed 로그·iPad passed 로그/집계 미완료, 다음 달/정리 큐 미검사 |
-| Q-009 | 오늘 버튼 — plan만 오늘, 완료 안 됨 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 목적지만 부분, V5 Mac 부분 통과·iPhone 실패·iPad 집계 미완료 |
-| Q-010 | 내일 버튼 — 10월 1일 day 저장 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 부분, V5 Mac 부분 통과·iPhone failed 로그·iPad passed 로그/집계 미완료 |
+| Q-008 | 미래 작업 검색 — 검색 가능하지만 정리 큐에는 미포함 | FR-003 | D-04/06/11 | A/UI | not_run; V5 Mac/iPad 내일 검색·Today 제외 부분 통과·iPhone failed 로그/집계 미완료, 다음 달/정리 큐 미검사 |
+| Q-009 | 오늘 버튼 — plan만 오늘, 완료 안 됨 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 목적지만 부분, V5 Mac/iPad 부분 통과·iPhone passed 로그/집계 미완료 |
+| Q-010 | 내일 버튼 — 10월 1일 day 저장 | FR-006 | D-02/03/06/08 | A/UI/SYS | not_run; U1 부분, V5 Mac/iPad 부분 통과·iPhone failed 로그/집계 미완료 |
 | Q-011 | 이번 주 날짜 — 정확 날짜 저장, 시간 블록 없음 | FR-007 | D-02/06/08 | A/UI/SYS | not_run; U1 범위만 부분 |
 | Q-012 | 다음 주 날짜 — 10월 6일 day 저장 | FR-007 | D-02/06/08 | A/UI/SYS | not_run; U1 범위만 부분 |
 | Q-013 | 현재 주 요일 나중 — week 상태, 같은 날 다시 질문 안 함 | FR-008 | D-02/03/06/09 | A/UI | not_run; U2 판정만 부분 |
 | Q-014 | 다음 주 요일 나중 — 그 주 월요일 검토 후보, Today 아님 | FR-008 | D-02/03/06/09 | A/UI | not_run; U1/U2 부분 |
 | Q-015 | 기타 날짜 — 같은 taskID에 정확 날짜 저장 | FR-009 | D-05/06/08 | A/UI/SYS | not_run |
-| Q-016 | 패널 뒤로 — plan 변경 0건 | FR-007 | D-05/06/08 | A/UI/SYS | not_run; V5 Mac 취소 뒤 plan 표시 부분 통과·iPhone failed 로그·iPad passed 로그/집계 미완료, mutation 0건 미검사 |
+| Q-016 | 패널 뒤로 — plan 변경 0건 | FR-007 | D-05/06/08 | A/UI/SYS | not_run; V5 Mac/iPad 취소 뒤 plan 표시 부분 통과·iPhone passed 로그/집계 미완료, mutation 0건 미검사 |
 | Q-017 | 미래 날짜 재노출 — 후보에서 제외 | FR-010 | D-02/03/09 | A/UI | not_run; U2 부분 |
 | Q-018 | 과거 미완료 — 검토 후보, Today 아님 | FR-012 | D-02/03/06 | A/UI | not_run; U2 부분 |
-| Q-019 | 부분 정리 종료 — 미검토 4개 보존, 자동 Today 금지 | FR-011 | D-03/06/09 | A/UI/USER | not_run; V5 Mac 2개 중 1개 결정 부분 통과·iPhone failed 로그·iPad passed 로그/집계 미완료, 원본 10개/6개/4개 미검사 |
+| Q-019 | 부분 정리 종료 — 미검토 4개 보존, 자동 Today 금지 | FR-011 | D-03/06/09 | A/UI/USER | not_run; V5 Mac/iPad 2개 중 1개 결정 부분 통과·iPhone passed 로그/집계 미완료, 원본 10개/6개/4개 미검사 |
 | Q-020 | 주간 일간 중복 — 주간 하나, 일간 중복 큐 / 알림 없음 | FR-005 | D-03/09/12 | A/UI/SYS | not_run |
 | Q-021 | 새 입력 중간 유입 — 현재 카드 앞에 삽입하지 않음 | FR-004 | D-05/06/09 | A/UI | not_run |
 | Q-022 | 같은 날 재실행 — Today 기본, 자동 재정리 안 함 | FR-004 | D-03/06/09 | A/UI | not_run; U2 closed 판정만 부분 |
@@ -138,10 +142,10 @@ Q-048의 과거 최소 OS 문구는 확정된 최소 **OS 27**의 지원/availab
 | Q-026 | 마감 이후 날짜 — 확인 전 변경 없음 | FR-014 | D-02/03/06/08 | A/UI/SYS | not_run; U3 부분 |
 | Q-027 | 마감 확인 중 변경 — 오래된 확인 token 거부 | FR-014 | D-02/03/06/10 | A/UI/SYS | not_run; U3 바인딩만 부분 |
 | Q-028 | 주 안의 마감 — 화요일 마감 표시, 월요일 자동 배치 안 함 | FR-014 | D-02/03/06/09 | A/UI/USER | not_run; U3 부분 |
-| Q-029 | 단순 Undo — 이전 plan과 reviewNotBefore 복원 | FR-015 | D-03/05/09 | A/UI | not_run; V5 Mac unassigned 복원 부분 통과·iPhone 실패·iPad 집계 미완료, reviewNotBefore 미검사 |
+| Q-029 | 단순 Undo — 이전 plan과 reviewNotBefore 복원 | FR-015 | D-03/05/09 | A/UI | not_run; V5 Mac/iPad unassigned 복원 부분 통과·iPhone passed 로그/집계 미완료, reviewNotBefore 미검사 |
 | Q-030 | 제목 수정 후 Undo — plan만 복원, 새 제목 유지 | FR-015 | D-03/09 | A/UI | not_run |
 | Q-031 | 후속 plan 변경 후 Undo — 영향 plan 버전 불일치로 과거 날짜 덮어쓰기 거부 | FR-015 | D-03/09/10 | A/UI/SYS | not_run |
-| Q-032 | 완료 처리 — status 완료, plan / deadline 이력 유지 | FR-013 | D-03/06/12 | A/UI | not_run; V5 Mac 상태·plan 표시 부분 통과·iPhone 실패·iPad 집계 미완료, deadline/history 미검사 |
+| Q-032 | 완료 처리 — status 완료, plan / deadline 이력 유지 | FR-013 | D-03/06/12 | A/UI | not_run; V5 Mac/iPad 상태·plan 표시 부분 통과·iPhone failed 로그/집계 미완료, deadline/history 미검사 |
 | Q-033 | 완료 취소 — 과거 계획 유지, Today 자동 이월 안 함 | FR-013 | D-02/03/06 | A/UI | not_run; U2 판정만 부분 |
 | Q-034 | 휴지통 복구 — 기존 계획 유지, stale 복구는 거부 | FR-024 | D-03/06/13 | A/UI | not_run |
 | Q-035 | 반복 탭 — 한 결정, 한 작업 변경 | FR-016 | D-03/05/08 | A/SYS | not_run |

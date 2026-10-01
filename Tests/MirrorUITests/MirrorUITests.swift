@@ -8,6 +8,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     func testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday() throws {
         let app = try launchApp()
+        defer { app.terminate() }
         let title = "UI capture then today"
         try capture(title, in: app)
 
@@ -36,6 +37,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     func testTomorrowStaysOutOfTodayAndIsSearchableInLibrary() throws {
         let app = try launchApp()
+        defer { app.terminate() }
         let title = "UI tomorrow is searchable"
         try capture(title, in: app)
         try activate("today.review", in: app)
@@ -63,6 +65,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     func testOverlongTitleShowsErrorAndPreservesEveryCharacter() throws {
         let app = try launchApp()
+        defer { app.terminate() }
         try activate("capture.open", in: app)
         let field = try requireElement("capture.title", in: app)
         // ASCII도 확장 문자소 하나당 하나다. 501자를 실제 키보드 입력으로 제출한다.
@@ -87,6 +90,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     func testWeekPanelCancellationAndPartialFinishPreserveUndecidedPlan() throws {
         let app = try launchApp()
+        defer { app.terminate() }
         let titles = ["UI partial alpha", "UI partial beta"]
         for title in titles { try capture(title, in: app) }
         try activate("today.review", in: app)
@@ -116,6 +120,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     func testExplicitCompletionAndUndoPreserveEditedTitleAndPlan() throws {
         let app = try launchApp()
+        defer { app.terminate() }
         let original = "UI edit before completion"
         let edited = "UI edited title survives undo"
         try capture(original, in: app)
@@ -150,6 +155,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     func testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday() throws {
         let app = try launchApp()
+        defer { app.terminate() }
         let title = "UI undo review destination"
         try capture(title, in: app)
         try activate("today.review", in: app)
@@ -177,9 +183,14 @@ final class MirrorUITests: XCTestCase {
         app.launchArguments = ["-AppleLanguages", "(ko)", "-AppleLocale", "ko_KR"]
         // store 경로를 주입하지 않는다. 각 launch는 앱의 temporaryDirectory에 새 실제 store를 연다.
         app.launch()
-        _ = try requireElement("today.list", in: app, timeout: 30)
-        _ = try requireElement("capture.open", in: app)
-        return app
+        do {
+            _ = try requireElement("today.list", in: app, timeout: 30)
+            _ = try requireElement("capture.open", in: app)
+            return app
+        } catch {
+            app.terminate()
+            throw error
+        }
     }
 
     @MainActor
@@ -400,7 +411,7 @@ final class MirrorUITests: XCTestCase {
             return "appState=\(state.rawValue), 앱 프로세스 종료: hierarchy 조회를 수행하지 않음"
         }
         // UI 테스트는 이 launch에서 직접 입력한 dummy만 사용한다. 앱 데이터나 로그 파일은 읽지 않는다.
-        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state.", "startup.", "onboarding."]
+        let prefixes = ["today.", "library.", "destination.", "capture.", "review.", "plan.", "detail.", "task.", "state.", "status.", "startup.", "onboarding."]
         let appIDPredicate = NSCompoundPredicate(orPredicateWithSubpredicates: prefixes.map {
             NSPredicate(format: "identifier BEGINSWITH %@", $0)
         })
@@ -435,10 +446,12 @@ final class MirrorUITests: XCTestCase {
         append(nodes, limit: 5)
         let windowFrames = app.windows.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
         let sheetFrames = app.sheets.allElementsBoundByIndex.prefix(2).map { String(describing: $0.frame) }.joined(separator: ", ")
+        let keyboardFrames = app.keyboards.allElementsBoundByIndex.prefix(1).map { String(describing: $0.frame) }.joined(separator: ", ")
+        let footerFrames = nodes.filter { $0.identifier == "status.footer" }.prefix(1).map { String(describing: $0.frame) }.joined(separator: ", ")
         let tabs = app.tabBars.buttons.allElementsBoundByIndex.prefix(3).map {
             "\($0.label.prefix(30)): selected=\($0.isSelected), frame=\($0.frame)"
         }.joined(separator: ", ")
-        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
+        let header = "appState=\(app.state.rawValue), windows=\(app.windows.count), windowFrames=[\(windowFrames)], sheets=\(app.sheets.count), sheetFrames=[\(sheetFrames)], keyboardFrames=[\(keyboardFrames)], footerFrames=[\(footerFrames)], tabs=[\(tabs)], lastAction={\(lastActionDescription)}; "
         return header + String(lines.joined(separator: "; ").prefix(1200))
     }
 }

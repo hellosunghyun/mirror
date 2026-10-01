@@ -70,3 +70,9 @@ Release 태그는 adhoc-실행ID다. 실행을 재시도하면 같은 태그의 
 이후 사용자가 세 Secret을 등록했고, `1ca1d35ab1ef7fdcb45ef9a010cecdd83396feae`의 [자동 배포 36793731227 재시도 2](https://github.com/hellosunghyun/mirror/actions/runs/36793731227/attempts/2)에서 서명 입력 존재 확인이 실제 통과했다. 존재 확인은 인증서·개인키·프로파일 일치나 성공한 IPA 서명을 뜻하지 않는다. 실제 unit/UI 게이트를 통과한 다음 archive·export·게시 결과를 확인해야 한다.
 
 같은 소스의 [Swift 검증 36793734833](https://github.com/hellosunghyun/mirror/actions/runs/36793734833)은 SwiftPM 151개와 Mac unit 151개·UI 6개를 통과했지만 모바일 UI 실패로 전체 실패했다. iPhone stdout는 6개 실패, iPad는 3개 통과·3개 실패였고, 양쪽 모두 결과 마감 지연과 15분 중단으로 최종 UI 결과 파일과 strict guard를 확보하지 못했다. 남은 실패를 수정한 후 새 push의 검증·서명·게시를 진행한다.
+
+`179428d98dcbfa61470395f7acbd5653b9f25c06`의 [준비 검사 36796647485](https://github.com/hellosunghyun/mirror/actions/runs/36796647485)는 Python 40개를 통과했다. [Swift 검증 36796650352](https://github.com/hellosunghyun/mirror/actions/runs/36796650352)에서 SwiftPM 151개, Mac unit 151개·UI 6개, iPad unit 150개·UI 6개가 통과했고 Mac/iPad UI는 최종 결과와 strict guard에서 실패·skip 0을 확인했다. iPhone unit 150개는 통과했지만 UI stdout는 4개 통과·2개 실패였고 15분 제한으로 최종 결과를 마감하지 못했다. 남은 실패는 상세 화면에서 가려진 Undo와 검색 결과의 상세 전환이다.
+
+동일 push의 [자동 배포 36796647867](https://github.com/hellosunghyun/mirror/actions/runs/36796647867)은 세 Secret 존재 확인·준비 검사·SwiftPM·Mac을 통과했다. 이 실행의 iPhone/iPad UI는 각각 15분 시간 초과여서 위 별도 Swift 실행의 iPad 통과를 배포 게이트 통과로 대신하지 않는다. Archive와 publish는 건너뛰었고 인증서·개인키·프로파일 일치, 실제 IPA와 GitHub Release는 아직 미검증이다.
+
+후속 변경은 상세 화면 안에 직전 Undo를 고정 배치하고, 검색 결과를 열기 전에 검색 포커스를 해제하며, 활성 화면만 상세 선택을 해제하도록 한다. UI 사례마다 앱을 종료하고 모바일 UI 제한은 20분으로 조정한다. 기존 여섯 사례와 최종 결과 검증은 유지하며 다음 push에서 실제 결과를 확인한다.

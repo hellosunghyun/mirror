@@ -140,7 +140,7 @@ jobs:
       - name: iPhone 실제 UI 테스트
         id: test
         if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh iphone ui
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
@@ -192,7 +192,7 @@ jobs:
       - name: iPad 실제 UI 테스트
         id: test
         if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: bash scripts/ci-apple-platform.sh ipad ui
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
