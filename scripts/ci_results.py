@@ -78,6 +78,10 @@ UI_KEYBOARD_FRAME_FIELDS = (
     'continueFrameHasArea', 'continueFrameInsideKeyboard',
     'continueFrameCenterInsideKeyboard', 'continueFrameIntersectsKeyboard',
 )
+UI_KEYBOARD_INTRODUCTION_FIELDS = (
+    'continueInIntroductionCount', 'introductionContextCount', 'introductionWindowCount',
+    'introductionTextVisible', 'introductionContextValid', 'continueFrameInsideIntroduction',
+)
 UI_VIEWPORT_CHECK_NAMES = frozenset({
     'foreground', 'appBoundsValid', 'appOrientationMatches', 'windowExists', 'todayExists',
     'reviewExists', 'windowInApp', 'windowOrientationMatches', 'todayInWindow', 'reviewInToday',
@@ -362,9 +366,11 @@ def report_ui_keyboard_diagnostics(lines):
             basic_fields = {'phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds'}
             count_fields = basic_fields | set(UI_KEYBOARD_COUNT_FIELDS)
             frame_fields = count_fields | set(UI_KEYBOARD_FRAME_FIELDS)
+            introduction_fields = frame_fields | set(UI_KEYBOARD_INTRODUCTION_FIELDS)
             if (not isinstance(report, dict)
-                    or set(report) not in (basic_fields, count_fields, frame_fields)):
+                    or set(report) not in (basic_fields, count_fields, frame_fields, introduction_fields)):
                 raise ValueError('keyboard 필드가 고정 계약과 다릅니다.')
+            has_introduction_context = set(report) == introduction_fields
             count, milliseconds = report['continueCandidateCount'], report['elapsedMilliseconds']
             if (report['phase'] not in ('continueReadiness', 'introductionDismissal')
                     or type(count) is not int or not 0 <= count <= 100
@@ -375,9 +381,9 @@ def report_ui_keyboard_diagnostics(lines):
                 counts = [report[key] for key in UI_KEYBOARD_COUNT_FIELDS]
                 if (any(type(value) is not int or not 0 <= value <= 100 for value in counts)
                         or any(previous < current for previous, current in zip(counts, counts[1:]))
-                        or counts[-1] != count):
-                    raise ValueError('keyboard count는 기존 AX 조회 순서의 단조 감소이며 최종 후보 수와 같아야 합니다.')
-            if set(report) == frame_fields:
+                        or (not has_introduction_context and counts[-1] != count)):
+                    raise ValueError('keyboard count는 기존 AX 조회 순서의 단조 감소이며 legacy 최종 후보 수와 같아야 합니다.')
+            if set(report) in (frame_fields, introduction_fields):
                 has_area, inside, center_inside, intersects = [report[key] for key in UI_KEYBOARD_FRAME_FIELDS]
                 if report['continueEnabledCount'] != 1:
                     if any(value is not None for value in (has_area, inside, center_inside, intersects)):
@@ -385,12 +391,37 @@ def report_ui_keyboard_diagnostics(lines):
                 elif type(has_area) is not bool:
                     raise ValueError('유일한 enabled 후보의 면적 판정은 bool이어야 합니다.')
                 elif not has_area:
-                    if count != 0 or any(value is not None for value in (inside, center_inside, intersects)):
+                    if (count != 0 or report['continueInKeyboardCount'] != 0
+                            or any(value is not None for value in (inside, center_inside, intersects))):
                         raise ValueError('면적이 없는 frame은 최종 후보가 아니며 나머지 판정은 null이어야 합니다.')
                 elif (any(type(value) is not bool for value in (inside, center_inside, intersects))
-                        or inside != (count == 1)
-                        or (inside and not (center_inside and intersects))):
-                    raise ValueError('frame 포함 판정은 최종 후보 수·중심·교차 판정과 일치해야 합니다.')
+                        or inside != (report['continueInKeyboardCount'] == 1)
+                        or (inside and not (center_inside and intersects))
+                        or (has_introduction_context and center_inside and not intersects)):
+                    raise ValueError('frame 포함 판정은 keyboard 관측 수·중심·교차 판정과 일치해야 합니다.')
+            if has_introduction_context:
+                guide_count = report['continueInIntroductionCount']
+                context_count = report['introductionContextCount']
+                window_count = report['introductionWindowCount']
+                text_visible = report['introductionTextVisible']
+                context_valid = report['introductionContextValid']
+                inside_guide = report['continueFrameInsideIntroduction']
+                if (type(guide_count) is not int or not 0 <= guide_count <= 1
+                        or any(type(value) is not int or not 0 <= value <= 100
+                               for value in (context_count, window_count))
+                        or type(text_visible) is not bool or type(context_valid) is not bool
+                        or count != guide_count or guide_count > report['continueEnabledCount']):
+                    raise ValueError('안내 context의 고정 count·bool과 최종 후보 수가 일치해야 합니다.')
+                can_evaluate_guide = (report['keyboardBoundsValid'] is True
+                                      and report['continueEnabledCount'] == 1
+                                      and report['continueFrameHasArea'] is True
+                                      and context_count == 1 and window_count == 1 and text_visible)
+                if context_valid:
+                    if (not can_evaluate_guide or type(inside_guide) is not bool
+                            or guide_count != int(inside_guide)):
+                        raise ValueError('유효한 유일 안내 context 안의 frame 포함 판정이 후보 수와 같아야 합니다.')
+                elif inside_guide is not None or guide_count != 0:
+                    raise ValueError('유효한 안내 context가 없으면 frame 판정은 null이고 안내 후보 수는 0이어야 합니다.')
             reports.append({'scope': 'stdoutOnly', **report})
         except (ValueError, TypeError, RecursionError):
             invalid_count += 1

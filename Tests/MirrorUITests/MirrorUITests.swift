@@ -405,28 +405,41 @@ final class MirrorUITests: XCTestCase {
     private func dismissKeyboardIntroduction(in app: XCUIApplication) throws {
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 15), "입력 캡처에는 실제 키보드가 표시되어야 한다.")
-        let introduction = app.staticTexts.matching(NSPredicate(
+        let introductionPredicate = NSPredicate(
             format: "label == %@",
             "Speed up your typing by sliding your finger across the letters to compose a word."
-        )).firstMatch
+        )
+        let introductionTexts = app.staticTexts.matching(introductionPredicate)
+        let introduction = introductionTexts.firstMatch
         if introduction.exists {
             // Continue 준비·실제 tap·안내 닫힘은 기존 안내 대기의 15초를 공유한다.
             let introductionStarted = Date()
             let introductionDeadline = introductionStarted.addingTimeInterval(15)
-            let continueButtons = app.buttons.matching(NSPredicate(format: "label == %@", "Continue"))
+            let continuePredicate = NSPredicate(format: "label == %@", "Continue")
+            let continueButtons = app.buttons.matching(continuePredicate)
+            // 안내는 키보드 경계 밖으로 펼쳐질 수 있다. 본문과 버튼의 실제 AX 소유를 확인한다.
+            let introductionContexts = app.otherElements.containing(introductionPredicate).containing(continuePredicate)
+            let introductionWindows = app.windows.containing(introductionPredicate).containing(continuePredicate)
             var candidates: [XCUIElement] = []
             var continueQueryCount = 0
             var continueExistingCount = 0
             var continueHittableCount = 0
             var continueEnabledCount = 0
             var continueInKeyboardCount = 0
+            var continueInIntroductionCount = 0
+            var introductionContextCount = 0
+            var introductionWindowCount = 0
+            var introductionTextVisible = false
+            var introductionContextValid = false
+            var continueFrameInsideIntroduction: Any = NSNull()
             var enabledFrameDiagnostics: [[String: Any]] = []
             var keyboardBoundsValid = false
             var continueReady = false
             func printIntroductionDiagnostic(phase: String) {
                 // 이미 샘플한 값만 사용한다. 실패 진단 때문에 AX를 다시 조회하지 않는다.
                 guard [candidates.count, continueQueryCount, continueExistingCount,
-                       continueHittableCount, continueEnabledCount, continueInKeyboardCount]
+                       continueHittableCount, continueEnabledCount, continueInKeyboardCount,
+                       continueInIntroductionCount, introductionContextCount, introductionWindowCount]
                     .allSatisfy({ (0...100).contains($0) }) else { return }
                 var diagnostic: [String: Any] = [
                     "phase": phase,
@@ -436,6 +449,12 @@ final class MirrorUITests: XCTestCase {
                     "continueHittableCount": continueHittableCount,
                     "continueEnabledCount": continueEnabledCount,
                     "continueInKeyboardCount": continueInKeyboardCount,
+                    "continueInIntroductionCount": continueInIntroductionCount,
+                    "introductionContextCount": introductionContextCount,
+                    "introductionWindowCount": introductionWindowCount,
+                    "introductionTextVisible": introductionTextVisible,
+                    "introductionContextValid": introductionContextValid,
+                    "continueFrameInsideIntroduction": continueFrameInsideIntroduction,
                     "keyboardBoundsValid": keyboardBoundsValid,
                     "elapsedMilliseconds": Int(min(1_200_000, max(0, Date().timeIntervalSince(introductionStarted) * 1_000))),
                 ]
@@ -450,6 +469,12 @@ final class MirrorUITests: XCTestCase {
                     print("UI keyboard introduction diagnostic: \(json)")
                 }
             }
+            func usableBounds(_ frame: CGRect) -> Bool {
+                !frame.isNull && !frame.isInfinite && frame.width > 0 && frame.height > 0
+                    && frame.minX.isFinite && frame.minY.isFinite
+                    && frame.maxX.isFinite && frame.maxY.isFinite
+                    && frame.width.isFinite && frame.height.isFinite
+            }
             repeat {
                 guard Date() < introductionDeadline else { break }
                 let keyboardBounds = keyboard.frame
@@ -461,18 +486,27 @@ final class MirrorUITests: XCTestCase {
                 continueHittableCount = 0
                 continueEnabledCount = 0
                 continueInKeyboardCount = 0
+                continueInIntroductionCount = 0
+                introductionContextCount = 0
+                introductionWindowCount = 0
+                introductionTextVisible = false
+                introductionContextValid = false
+                continueFrameInsideIntroduction = NSNull()
+                candidates.removeAll(keepingCapacity: true)
                 enabledFrameDiagnostics.removeAll(keepingCapacity: true)
                 if keyboardBoundsValid {
                     let buttons = continueButtons.allElementsBoundByIndex
                     continueQueryCount = buttons.count
-                    candidates = buttons.filter {
-                        guard $0.exists else { return false }
+                    var enabledButtonsWithAreaCount = 0
+                    for button in buttons {
+                        guard Date() < introductionDeadline else { break }
+                        guard button.exists else { continue }
                         continueExistingCount += 1
-                        guard $0.isHittable else { return false }
+                        guard button.isHittable else { continue }
                         continueHittableCount += 1
-                        guard $0.isEnabled else { return false }
+                        guard button.isEnabled else { continue }
                         continueEnabledCount += 1
-                        let frame = $0.frame
+                        let frame = button.frame
                         let hasArea = frame.width > 0 && frame.height > 0
                         guard hasArea else {
                             enabledFrameDiagnostics.append([
@@ -481,7 +515,7 @@ final class MirrorUITests: XCTestCase {
                                 "continueFrameCenterInsideKeyboard": NSNull(),
                                 "continueFrameIntersectsKeyboard": NSNull(),
                             ])
-                            return false
+                            continue
                         }
                         let insideKeyboard = keyboardBounds.contains(frame)
                         enabledFrameDiagnostics.append([
@@ -490,11 +524,64 @@ final class MirrorUITests: XCTestCase {
                             "continueFrameCenterInsideKeyboard": keyboardBounds.contains(CGPoint(x: frame.midX, y: frame.midY)),
                             "continueFrameIntersectsKeyboard": keyboardBounds.intersects(frame),
                         ])
-                        guard insideKeyboard else { return false }
-                        continueInKeyboardCount += 1
-                        return true
+                        if insideKeyboard { continueInKeyboardCount += 1 }
+                        enabledButtonsWithAreaCount += 1
                     }
-                } else { candidates = [] }
+                    if continueEnabledCount == 1, enabledButtonsWithAreaCount == 1,
+                       Date() < introductionDeadline {
+                        let textBounds = introduction.frame
+                        introductionTextVisible = introductionTexts.count == 1 && introduction.isHittable
+                            && usableBounds(textBounds)
+                        if introductionTextVisible, Date() < introductionDeadline {
+                            let windows = introductionWindows.allElementsBoundByIndex
+                            introductionWindowCount = windows.count
+                            let contexts = introductionContexts.allElementsBoundByIndex
+                            var deepestContexts: [XCUIElement] = []
+                            var examinedAllContexts = true
+                            for context in contexts {
+                                guard Date() < introductionDeadline else {
+                                    examinedAllContexts = false
+                                    break
+                                }
+                                // 임의의 첫 부모나 넓은 app wrapper를 안내 컨테이너로 쓰지 않는다.
+                                let nested = context.descendants(matching: .other)
+                                    .containing(introductionPredicate).containing(continuePredicate)
+                                if nested.count == 0 { deepestContexts.append(context) }
+                            }
+                            introductionContextCount = deepestContexts.count
+                            if examinedAllContexts, deepestContexts.count == 1, windows.count == 1,
+                               Date() < introductionDeadline {
+                                let context = deepestContexts[0]
+                                let contextBounds = context.frame
+                                let windowBounds = windows[0].frame
+                                let ownedButtons = context.buttons.matching(continuePredicate)
+                                introductionContextValid = usableBounds(contextBounds) && usableBounds(windowBounds)
+                                    && windowBounds.contains(contextBounds)
+                                    && contextBounds.width * contextBounds.height < windowBounds.width * windowBounds.height
+                                    && contextBounds.contains(textBounds)
+                                    && contextBounds.intersects(keyboardBounds)
+                                    && context.staticTexts.matching(introductionPredicate).count == 1
+                                    && ownedButtons.count == 1
+                                if introductionContextValid {
+                                    let ownedButton = ownedButtons.firstMatch
+                                    introductionContextValid = ownedButton.exists && ownedButton.isHittable && ownedButton.isEnabled
+                                    if introductionContextValid {
+                                        let ownedBounds = ownedButton.frame
+                                        introductionContextValid = usableBounds(ownedBounds)
+                                        if introductionContextValid {
+                                            let insideIntroduction = contextBounds.contains(ownedBounds)
+                                            continueFrameInsideIntroduction = insideIntroduction
+                                            if insideIntroduction {
+                                                candidates = [ownedButton]
+                                                continueInIntroductionCount = 1
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 continueReady = candidates.count == 1 && Date() < introductionDeadline
                 if continueReady { break }
                 let remaining = introductionDeadline.timeIntervalSinceNow
@@ -513,7 +600,7 @@ final class MirrorUITests: XCTestCase {
                 XCTFail("실제 Continue tap도 기존 안내 대기의 15초 안에 시작해야 한다.")
                 throw UIHarnessError.unhittable("keyboardIntroduction.continue")
             }
-            // 준비 시 enabled/hittable과 키보드 내부 위치를 확인했으므로 별도 3초 대기를 더하지 않는다.
+            // 준비 시 유일한 안내 소유·실제 표시 경계·enabled/hittable을 확인했다.
             next.tap()
             let remaining = introductionDeadline.timeIntervalSinceNow
             let dismissalResult: XCTWaiter.Result

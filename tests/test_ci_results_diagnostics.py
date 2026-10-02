@@ -54,6 +54,10 @@ KEYBOARD_FRAME_FIELDS = (
     'continueFrameHasArea', 'continueFrameInsideKeyboard',
     'continueFrameCenterInsideKeyboard', 'continueFrameIntersectsKeyboard',
 )
+KEYBOARD_INTRODUCTION_FIELDS = (
+    'continueInIntroductionCount', 'introductionContextCount', 'introductionWindowCount',
+    'introductionTextVisible', 'introductionContextValid', 'continueFrameInsideIntroduction',
+)
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -111,6 +115,14 @@ def keyboard_frame_payload():
             'continueEnabledCount': 1, 'continueInKeyboardCount': 0,
             'continueFrameHasArea': True, 'continueFrameInsideKeyboard': False,
             'continueFrameCenterInsideKeyboard': True, 'continueFrameIntersectsKeyboard': True}
+
+
+def keyboard_introduction_payload():
+    return {**keyboard_frame_payload(), 'continueCandidateCount': 1,
+            'continueFrameCenterInsideKeyboard': False, 'continueInIntroductionCount': 1,
+            'introductionContextCount': 1, 'introductionWindowCount': 1,
+            'introductionTextVisible': True, 'introductionContextValid': True,
+            'continueFrameInsideIntroduction': True}
 
 
 class CIResultsDiagnosticsTests(unittest.TestCase):
@@ -527,6 +539,147 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
         log = self.root / 'keyboard-frame-private.log'
         log.write_text('\n'.join([keyboard_line(valid)] + bad_lines + [
             screenshot_line('detail', '123'), 'error: safe unrelated compiler failure',
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [{'scope': 'stdoutOnly', **valid}])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(bad_lines)}])
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
+        self.assertNotIn('executedTests', output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+        self.assertEqual(summary_path.read_text(), 'previous summary\n')
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+            output = self.capture(helper.report_ui_keyboard_diagnostics,
+                                  ['UI keyboard introduction diagnostic: ' + over_limit])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_introduction_context_preserves_39_keyboard_geometry_and_legacy_schemas(self):
+        self.assertEqual(helper.UI_KEYBOARD_INTRODUCTION_FIELDS, KEYBOARD_INTRODUCTION_FIELDS)
+        legacy = {**keyboard_frame_payload(), 'continueFrameCenterInsideKeyboard': False}
+        basic = {key: legacy[key] for key in
+                 ('phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds')}
+        extended = {key: value for key, value in legacy.items() if key not in KEYBOARD_FRAME_FIELDS}
+        introduction = keyboard_introduction_payload()
+        self.assertEqual(len(legacy), 13)
+        self.assertEqual(len(introduction), 19)
+        log = self.root / 'keyboard-introduction-compatible.log'
+        for phase in ('continueReadiness', 'introductionDismissal'):
+            with self.subTest(phase=phase):
+                samples = [{**sample, 'phase': phase} for sample in (basic, extended, legacy, introduction)]
+                log.write_text('\n'.join(keyboard_line(sample) for sample in samples) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                notices = self.notices(output, UI_KEYBOARD_NOTICE)
+                self.assertEqual(notices, [{'scope': 'stdoutOnly', **sample} for sample in samples])
+                self.assertEqual(len(notices[-1]), 20)
+                self.assertEqual(notices[-1]['continueCandidateCount'], 1)
+                self.assertEqual(notices[-1]['continueInKeyboardCount'], 0)
+                self.assertIs(notices[-1]['continueFrameInsideKeyboard'], False)
+                self.assertIs(notices[-1]['continueFrameCenterInsideKeyboard'], False)
+                self.assertIs(notices[-1]['continueFrameIntersectsKeyboard'], True)
+                self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
+
+    def test_introduction_context_nullability_distinguishes_missing_ambiguous_and_outside_guides(self):
+        valid = keyboard_introduction_payload()
+        unavailable = {**valid, 'continueCandidateCount': 0, 'continueInIntroductionCount': 0,
+                       'introductionContextValid': False, 'continueFrameInsideIntroduction': None}
+        samples = [
+            {**valid, 'continueCandidateCount': 0, 'continueInIntroductionCount': 0,
+             'continueFrameInsideIntroduction': False},
+            unavailable,
+            {**unavailable, 'introductionContextCount': 0},
+            {**unavailable, 'introductionContextCount': 2},
+            {**unavailable, 'introductionWindowCount': 0},
+            {**unavailable, 'introductionWindowCount': 2},
+            {**unavailable, 'introductionTextVisible': False},
+            {**unavailable, 'continueEnabledCount': 0, **dict.fromkeys(KEYBOARD_FRAME_FIELDS)},
+            {**unavailable, **dict.fromkeys(helper.UI_KEYBOARD_COUNT_FIELDS[:-1], 2),
+             **dict.fromkeys(KEYBOARD_FRAME_FIELDS)},
+            {**unavailable, 'continueFrameHasArea': False,
+             **dict.fromkeys(KEYBOARD_FRAME_FIELDS[1:])},
+        ]
+        log = self.root / 'keyboard-introduction-nullability.log'
+        for sample in samples:
+            with self.subTest(sample=sample):
+                log.write_text(keyboard_line(sample) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [{'scope': 'stdoutOnly', **sample}])
+                self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
+
+    def test_introduction_context_rejects_partial_schema_wrong_types_and_unproven_or_conflicting_candidates(self):
+        valid = keyboard_introduction_payload()
+        invalid = []
+        for key in KEYBOARD_INTRODUCTION_FIELDS:
+            invalid.append({name: value for name, value in valid.items() if name != key})
+        for key, upper in (('continueInIntroductionCount', 1), ('introductionContextCount', 100),
+                           ('introductionWindowCount', 100)):
+            invalid += [{**valid, key: value} for value in (-1, upper + 1, True, 1.0, None, PRIVATE)]
+        for key in ('introductionTextVisible', 'introductionContextValid', 'continueFrameInsideIntroduction'):
+            invalid += [{**valid, key: value} for value in (0, 1, 'true', None, [], {})]
+        unavailable = {**valid, 'continueCandidateCount': 0, 'continueInIntroductionCount': 0,
+                       'introductionContextValid': False, 'continueFrameInsideIntroduction': None}
+        invalid += [
+            {**valid, 'continueCandidateCount': 0},
+            {**valid, 'continueInIntroductionCount': 0},
+            {**valid, 'continueFrameInsideIntroduction': False},
+            {**valid, 'introductionContextValid': False},
+            {**unavailable, 'continueFrameInsideIntroduction': False},
+            {**unavailable, 'continueFrameInsideIntroduction': True},
+            {**valid, 'introductionContextCount': 0}, {**valid, 'introductionContextCount': 2},
+            {**valid, 'introductionWindowCount': 0}, {**valid, 'introductionWindowCount': 2},
+            {**valid, 'introductionTextVisible': False},
+            {**valid, 'keyboardBoundsValid': False},
+            {**valid, 'continueFrameInsideKeyboard': True},
+            {**valid, 'continueFrameCenterInsideKeyboard': True, 'continueFrameIntersectsKeyboard': False},
+            {**unavailable, 'continueEnabledCount': 0, **dict.fromkeys(KEYBOARD_FRAME_FIELDS),
+             'introductionContextValid': True, 'continueFrameInsideIntroduction': False},
+            {**unavailable, **dict.fromkeys(helper.UI_KEYBOARD_COUNT_FIELDS[:-1], 2),
+             **dict.fromkeys(KEYBOARD_FRAME_FIELDS), 'introductionContextValid': True,
+             'continueFrameInsideIntroduction': False},
+            {**unavailable, 'continueFrameHasArea': False, **dict.fromkeys(KEYBOARD_FRAME_FIELDS[1:]),
+             'introductionContextValid': True, 'continueFrameInsideIntroduction': False},
+            {**valid, 'windowTitle': PRIVATE},
+            {**keyboard_frame_payload(), 'continueCandidateCount': 1,
+             'continueFrameCenterInsideKeyboard': False},
+        ]
+        log = self.root / 'keyboard-introduction-invalid.log'
+        log.write_text('\n'.join(keyboard_line(sample) for sample in invalid) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(invalid)}])
+        self.assertNotIn('::error::', output)
+
+    def test_introduction_context_keeps_duplicate_byte_limit_private_fallback_and_actions_output_guards(self):
+        valid = keyboard_introduction_payload()
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999'))
+        bad_lines = [keyboard_line({**valid, 'private': private}),
+                     keyboard_line(valid) + ' error: ' + PRIVATE]
+        for key in KEYBOARD_INTRODUCTION_FIELDS:
+            encoded = json.dumps(valid[key])
+            bad_lines.append(keyboard_line(valid).replace(
+                '"' + key + '": ' + encoded,
+                '"' + key + '": "' + PRIVATE + '", "' + key + '": ' + encoded))
+        bad_lines += [keyboard_line(valid) + ' ' + other for other in
+                      (keyboard_line(valid), phase_line({'method': PHASE_METHOD, 'phase': 'started'}),
+                       native_screenshot_line(native_screenshot_payload()), viewport_line({}),
+                       store_dedup_line(), ui_failure_line())]
+        log = self.root / 'keyboard-introduction-private.log'
+        log.write_text('\n'.join([keyboard_line(valid)] + bad_lines + [
+            'error: safe unrelated compiler failure',
         ]) + '\n')
         output_path = self.root / 'github-output'
         summary_path = self.root / 'github-step-summary'
