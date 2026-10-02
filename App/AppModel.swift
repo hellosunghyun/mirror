@@ -566,21 +566,24 @@ final class AppModel {
     }
 
     func undo() async {
-        guard let undo = lastUndo else { return }
-        if await submit(.undo(operationID: undo.id, expected: undo.expected), success: "직전 변경을 되돌렸어요.") {
+        guard let candidate = lastUndo else { return }
+        await undo(candidate)
+    }
+    func undo(_ original: OperationRecord) async {
+        guard !original.undoValues.isEmpty else { return }
+        let candidate = SafeUndo(id: original.operationID, expected: original.undoExpectations(),
+                                 taskID: original.affectedTaskIDs.count == 1 ? original.affectedTaskIDs.first : nil)
+        await undo(candidate)
+    }
+    private func undo(_ candidate: SafeUndo) async {
+        if await submit(.undo(operationID: candidate.id, expected: candidate.expected), success: "직전 변경을 되돌렸어요.") {
             lastUndo = nil
-            if let taskID = undo.taskID, let task = tasks.first(where: { $0.taskID == taskID }), review != nil {
+            if let taskID = candidate.taskID, let task = tasks.first(where: { $0.taskID == taskID }), review != nil {
                 review?.cards.insert(ReviewCard(id: UUID().uuidString, taskID: taskID,
                                                 expected: ExpectedVersions(task), decisionToken: UUID().uuidString), at: 0)
                 persistSession()
             }
         }
-    }
-    func undo(_ original: OperationRecord) async {
-        guard !original.undoValues.isEmpty else { return }
-        lastUndo = SafeUndo(id: original.operationID, expected: original.undoExpectations(),
-                            taskID: original.affectedTaskIDs.count == 1 ? original.affectedTaskIDs.first : nil)
-        await undo()
     }
 
     func confirmAfterDeadline() async {

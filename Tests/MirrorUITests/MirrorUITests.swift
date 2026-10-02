@@ -326,6 +326,13 @@ final class MirrorUITests: XCTestCase {
 
         // 상세의 빠른 미루기는 별도 날짜 선택 없이 내일로 옮기고 Undo로 기존 계획을 복원한다.
         try interact(with: reopened, in: app)
+        // 이후 배치가 생기면 거절될 이전 계획의 실제 고유 ID를 미리 읽는다.
+        try activate("detail.history", in: app)
+        let previousPlanUndo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "history.undo.setPlan."))
+        XCTAssertTrue(previousPlanUndo.firstMatch.waitForExistence(timeout: 15), "이전 계획의 실제 이력 버튼이 나타나야 한다.")
+        XCTAssertEqual(previousPlanUndo.count, 1, "이 사례의 이전 계획 변경은 오늘 배치 하나다.")
+        let previousPlanUndoID = previousPlanUndo.firstMatch.identifier
+        try activate("detail.history", in: app)
         XCTAssertTrue(try requireElement("detail.postponeTomorrow", in: app, preferButtons: true).isHittable,
                       "내일로 미루기는 상세에서 바로 누를 수 있어야 한다.")
         try activate("detail.postponeTomorrow", in: app)
@@ -335,8 +342,16 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(displayedText(of: try requireElement("task.complete", in: app)), "완료",
                        "내일로 미루기는 제목이나 미완료 상태를 변경하지 않는다.")
         try requireNoElement("detail.postponeTomorrow", in: app)
+        try activate("detail.history", in: app)
+        try activate(previousPlanUndoID, in: app)
+        let historyError = try requireElement("detail.actionError", in: app)
+        try waitForLabelContaining("그 이후의 변경", element: historyError)
+        XCTAssertTrue(historyError.isHittable, "이력의 변경이 거절되면 상세 안에서 이유를 볼 수 있다.")
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"),
+                      "과거 이력의 Undo가 거절되면 최근 배치를 유지한다.")
         try activate("task.undo", in: app)
         try waitForLabelContaining("9월 30일", element: requireElement("detail.plan", in: app))
+        try requireNoElement("detail.actionError", in: app)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
         XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
         XCTAssertEqual(displayedText(of: try requireElement("task.complete", in: app)), "완료")

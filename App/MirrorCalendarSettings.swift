@@ -429,6 +429,12 @@ struct MirrorSettingsView: View {
     private var calendarsSection: some View {
         Section {
             Button("캘린더 접근 선택") { Task { await model.requestCalendarAccess() } }
+            if let problem = model.calendarProblem {
+                Label(problem, systemImage: "exclamationmark.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("settings.calendarError")
+            }
             ForEach(model.calendars) { calendar in
                 Toggle(calendar.title, isOn: Binding(get: {
                     model.preferences.selectedCalendars.contains(calendar.id)

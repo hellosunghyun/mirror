@@ -961,6 +961,7 @@ struct MirrorTaskDetail: View {
                                     Button { model.makePicker(taskIDs: [task.taskID]) } label: {
                                         Text("날짜 바꾸기").frame(minHeight: 44)
                                     }
+                                    .disabled(model.projectionPending)
                                 }.buttonStyle(.bordered).frame(minHeight: 44)
                             }
                         }
@@ -995,7 +996,9 @@ struct MirrorTaskDetail: View {
                                         Text(record.kindLabel).font(.callout)
                                         Text(record.recordedAt, style: .date).font(.caption).foregroundStyle(.secondary)
                                         if !record.undoValues.isEmpty {
-                                            Button("이 변경 되돌리기") { Task { await model.undo(record) } }.frame(minHeight: 44)
+                                            Button("이 변경 되돌리기") { Task { await model.undo(record) } }
+                                                .frame(minHeight: 44)
+                                                .accessibilityIdentifier("history.undo.\(record.commandKind.rawValue).\(record.operationID)")
                                         }
                                     }
                                 }
@@ -1007,6 +1010,7 @@ struct MirrorTaskDetail: View {
                             }.buttonStyle(.borderless).padding(.top, 12)
                         }
                         .font(.callout).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("detail.history")
                     }
                 }.padding(24).frame(maxWidth: 600, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1039,6 +1043,12 @@ struct MirrorTaskDetail: View {
                     .frame(maxWidth: .infinity, alignment: .leading).background(MirrorPalette.surface)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let problem = model.problem {
+                        Text(problem).font(.callout).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(problem).accessibilityIdentifier("detail.actionError")
+                    }
                     if task.status != .deleted {
                         Button {
                             Task { await model.setCompleted(task, completed: task.status != .completed) }
