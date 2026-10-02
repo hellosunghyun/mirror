@@ -306,6 +306,8 @@ final class MirrorUITests: XCTestCase {
         try showLibrary(in: app)
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.row.")).count, 0)
 
+        // 오류 뒤에도 상단 행동이 실제 창과 시스템 상태 표시줄 아래에 남아야 한다.
+        try verifyPhoneNavigation(in: app)
         // 오류 뒤 정상 입력도 실제 원본 저장 경로로 복구되어야 한다.
         try capture("UI corrected after validation", in: app, observeValidationRecovery: true)
         try showLibrary(in: app)

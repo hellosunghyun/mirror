@@ -436,14 +436,20 @@ ci_phase='UI 시작시각 기록'
 touch "$result_dir/ui-start.marker"
 ui_execution_started_seconds=$SECONDS
 ci_phase='실제 UI 테스트'
+printf '%s\n' '::notice::UI execution start status=started' || true
 if xcodebuild -project Mirror.xcodeproj -scheme "$ui_scheme" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
   -parallel-testing-enabled NO -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO test-without-building 2>&1 | tee "$result_dir/ui.log"; then
+  printf '%s\n' '::notice::UI diagnostic origin=uiCommandReturn' || true
   printf '::notice::UI execution status=xcode_complete elapsed_seconds=%s\n' "$((SECONDS - ui_execution_started_seconds))"
   ci_phase='UI 테스트 결과 요약'
+  printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"summary","state":"attempted"}' || true
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
+  printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"summary","state":"succeeded"}' || true
+  printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"tests","state":"attempted"}' || true
   xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"
+  printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"tests","state":"succeeded"}' || true
   # 동일 원본 캡처의 허용 metadata만 보고하며 테스트·게시 성공 판정에는 사용하지 않는다.
   python3 scripts/ci_results.py native-screenshot-diagnostics "$result_dir/ui.log" || true
   python3 scripts/ci_results.py ui-tree "$result_dir/ui-tests.json"
@@ -502,15 +508,24 @@ PY
   fi
 else
   test_status=$?
+  printf '%s\n' '::notice::UI diagnostic origin=uiCommandReturn' || true
   printf '::notice::UI execution status=failed exit_code=%s elapsed_seconds=%s\n' "$test_status" "$((SECONDS - ui_execution_started_seconds))"
   python3 scripts/ci_results.py diagnostics "$result_dir/ui.log" || true
   python3 scripts/ci-crash.py "$platform" "$result_dir" || true
   # 실패한 UI 실행도 실제 수와 실패/skip을 남긴다. underlying xcodebuild 실패는 그대로 반환한다.
+  printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"summary","state":"attempted"}' || true
   if xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"; then
+    printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"summary","state":"succeeded"}' || true
     python3 scripts/ci_results.py xcode "$result_dir/summary.json" "$result_dir/ui-summary.json" || true
+  else
+    printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"summary","state":"failed"}' || true
   fi
+  printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"tests","state":"attempted"}' || true
   if xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"; then
+    printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"tests","state":"succeeded"}' || true
     python3 scripts/ci_results.py ui-tree "$result_dir/ui-tests.json" || true
+  else
+    printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"tests","state":"failed"}' || true
   fi
   exit "$test_status"
 fi

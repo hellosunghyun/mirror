@@ -149,6 +149,7 @@ struct MirrorRootView: View {
     private func phoneNavigation(_ destination: MirrorDestination) -> some View {
         NavigationStack {
             VStack(spacing: 0) {
+                phoneHeader(destination)
                 content(destination)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 statusBar.fixedSize(horizontal: false, vertical: true)
@@ -156,13 +157,36 @@ struct MirrorRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(MirrorPalette.canvas)
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             #endif
-            .toolbar { commonToolbar }
         }
-        #if os(iOS)
-        .toolbarMinimizationBehavior(.never, for: .navigationBar)
-        #endif
+    }
+    private func phoneHeader(_ destination: MirrorDestination) -> some View {
+        HStack(spacing: 12) {
+            Text(destination.title)
+                .font(.title2.weight(.semibold))
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 12)
+            Button { model.openCapture() } label: {
+                Label("일단 넣기", systemImage: "plus")
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("capture.open")
+            .keyboardShortcut("n", modifiers: .command)
+            Button { model.showSettings = true } label: {
+                Label("설정", systemImage: "gearshape")
+                    .labelStyle(.iconOnly)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("settings.button")
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(MirrorPalette.canvas)
     }
     private func mainContent(_ destination: MirrorDestination, showCalendar: Bool = false) -> some View {
         HStack(spacing: 0) {

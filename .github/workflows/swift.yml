@@ -105,15 +105,22 @@ jobs:
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
         run: |
+          printf '%s\n' '::notice::UI diagnostic origin=workflowFailure' || true
           for log in .build/ci-macos/test.log .build/ci-macos/ui-build.log .build/ci-macos/ui.log; do
             if test -f "$log"; then
               python3 scripts/ci_results.py diagnostics "$log"
             fi
           done
           if test -d .build/ci-macos/UI.xcresult; then
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"attempted"}' || true
             if xcrun xcresulttool get test-results tests --path .build/ci-macos/UI.xcresult > .build/ci-macos/ui-tests.json; then
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"succeeded"}' || true
               python3 scripts/ci_results.py ui-tree .build/ci-macos/ui-tests.json || true
+            else
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"failed"}' || true
             fi
+          else
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"notAttemptedNoBundleDirectory"}' || true
           fi
           python3 scripts/ci-crash.py macos .build/ci-macos || true
       - name: 현재 실행의 결과 보존
@@ -178,15 +185,22 @@ jobs:
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
         run: |
+          printf '%s\n' '::notice::UI diagnostic origin=workflowFailure' || true
           for log in .build/ci-iphone/test.log .build/ci-iphone/ui-build.log .build/ci-iphone/ui.log; do
             if test -f "$log"; then
               python3 scripts/ci_results.py diagnostics "$log"
             fi
           done
           if test -d .build/ci-iphone/UI.xcresult; then
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"attempted"}' || true
             if xcrun xcresulttool get test-results tests --path .build/ci-iphone/UI.xcresult > .build/ci-iphone/ui-tests.json; then
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"succeeded"}' || true
               python3 scripts/ci_results.py ui-tree .build/ci-iphone/ui-tests.json || true
+            else
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"failed"}' || true
             fi
+          else
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"notAttemptedNoBundleDirectory"}' || true
           fi
           python3 scripts/ci-crash.py iphone .build/ci-iphone || true
       - name: 현재 실행의 결과 보존
@@ -251,15 +265,22 @@ jobs:
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}
         run: |
+          printf '%s\n' '::notice::UI diagnostic origin=workflowFailure' || true
           for log in .build/ci-ipad/test.log .build/ci-ipad/ui-build.log .build/ci-ipad/ui.log; do
             if test -f "$log"; then
               python3 scripts/ci_results.py diagnostics "$log"
             fi
           done
           if test -d .build/ci-ipad/UI.xcresult; then
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"attempted"}' || true
             if xcrun xcresulttool get test-results tests --path .build/ci-ipad/UI.xcresult > .build/ci-ipad/ui-tests.json; then
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"succeeded"}' || true
               python3 scripts/ci_results.py ui-tree .build/ci-ipad/ui-tests.json || true
+            else
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"failed"}' || true
             fi
+          else
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"notAttemptedNoBundleDirectory"}' || true
           fi
           python3 scripts/ci-crash.py ipad .build/ci-ipad || true
       - name: 현재 실행의 결과 보존
