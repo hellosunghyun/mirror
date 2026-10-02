@@ -718,11 +718,11 @@ final class MirrorUITests: XCTestCase {
     private func waitForViewport(in app: XCUIApplication, landscape: Bool) async throws {
         let started = Date()
         let deadline = started.addingTimeInterval(15)
-        let window = app.windows.firstMatch
-        let today = app.descendants(matching: .any).matching(identifier: "today.list").firstMatch
-        let review = app.buttons.matching(identifier: "today.review").firstMatch
-        let adjacent = app.descendants(matching: .any).matching(identifier: "ipad.adjacentCalendar").firstMatch
-        let calendarDate = app.descendants(matching: .any).matching(identifier: "calendar.date").firstMatch
+        let windowQuery = app.windows
+        let todayQuery = app.descendants(matching: .any).matching(identifier: "today.list")
+        let reviewQuery = app.buttons.matching(identifier: "today.review")
+        let adjacentQuery = app.descendants(matching: .any).matching(identifier: "ipad.adjacentCalendar")
+        let calendarDateQuery = app.descendants(matching: .any).matching(identifier: "calendar.date")
         var stableFrames: [CGRect]?
         var stableSince: Date?
         var stableSamples = 0
@@ -752,13 +752,28 @@ final class MirrorUITests: XCTestCase {
             lastChecks.removeAll(keepingCapacity: true)
             let bounds = app.frame
             var frames: [CGRect] = []
+            // 매 반복의 현재 query 결과에 다시 바인딩한다. AX 요소를 반복 사이에 캐시하지 않는다.
+            var window: XCUIElement?
+            var today: XCUIElement?
+            var review: XCUIElement?
+            var adjacent: XCUIElement?
+            var calendarDate: XCUIElement?
             var ready = remember("foreground", app.state == .runningForeground)
                 && remember("appBoundsValid", isUsable(bounds))
                 && remember("appOrientationMatches", landscape ? bounds.width > bounds.height : bounds.height > bounds.width)
-                && remember("windowExists", window.exists)
-                && remember("todayExists", today.exists)
-                && remember("reviewExists", review.exists)
             if ready {
+                window = windowQuery.allElementsBoundByAccessibilityElement.first
+                ready = remember("windowExists", window != nil)
+            }
+            if ready {
+                today = todayQuery.allElementsBoundByAccessibilityElement.first
+                ready = remember("todayExists", today != nil)
+            }
+            if ready {
+                review = reviewQuery.allElementsBoundByAccessibilityElement.first
+                ready = remember("reviewExists", review != nil)
+            }
+            if ready, let window, let today, let review {
                 let windowBounds = window.frame
                 let todayBounds = today.frame
                 let reviewBounds = review.frame
@@ -768,9 +783,15 @@ final class MirrorUITests: XCTestCase {
                     && remember("reviewInToday", contains(todayBounds, reviewBounds))
                 frames = [bounds, windowBounds, todayBounds, reviewBounds]
                 if landscape {
-                    ready = ready && remember("adjacentExists", adjacent.exists)
-                        && remember("calendarDateExists", calendarDate.exists)
                     if ready {
+                        adjacent = adjacentQuery.allElementsBoundByAccessibilityElement.first
+                        ready = remember("adjacentExists", adjacent != nil)
+                    }
+                    if ready {
+                        calendarDate = calendarDateQuery.allElementsBoundByAccessibilityElement.first
+                        ready = remember("calendarDateExists", calendarDate != nil)
+                    }
+                    if ready, let adjacent, let calendarDate {
                         let adjacentBounds = adjacent.frame
                         let dateBounds = calendarDate.frame
                         // 기기 frame만 먼저 회전한 상태는 통과시키지 않는다. 실제 두 열과
@@ -780,8 +801,9 @@ final class MirrorUITests: XCTestCase {
                             && remember("columnsSeparate", adjacentBounds.minX >= todayBounds.maxX - 1)
                         frames += [adjacentBounds, dateBounds]
                     }
-                } else {
-                    ready = ready && remember("portraitAdjacentAbsent", !adjacent.exists)
+                } else if ready {
+                    adjacent = adjacentQuery.allElementsBoundByAccessibilityElement.first
+                    ready = remember("portraitAdjacentAbsent", adjacent == nil)
                 }
             }
             let sampledAt = Date()
@@ -796,8 +818,8 @@ final class MirrorUITests: XCTestCase {
                 if stableSamples >= 3, let stableSince, sampledAt.timeIntervalSince(stableSince) >= 0.5 {
                     // List/ScrollView 자체는 조작 버튼이 아니다. 안정된 실제 열의 경계와
                     // 그 안의 정리/날짜 제어가 터치 가능한지 확인한 뒤 캡처한다.
-                    if remember("reviewHittable", review.isHittable)
-                        && (!landscape || remember("dateHittable", calendarDate.isHittable))
+                    if remember("reviewHittable", review?.isHittable ?? false)
+                        && (!landscape || remember("dateHittable", calendarDate?.isHittable ?? false))
                         && remember("insideDeadline", Date() < deadline) { return }
                 }
             } else {

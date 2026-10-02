@@ -96,6 +96,14 @@
 
 후속 변경은 가로 한 장의 producer만 실제 main-screen native 캡처로 바꾸고 앱·주 창·화면 범위 검사를 강화한다. 동일 native 객체·기존 attachment·정제 경로와 모든 기존 기능 assertions·6사례·43장·시간 제한은 유지한다. 수동 회전·crop·렌더링으로 원본을 고치지 않는다. 실제 SDK 선언과 새 원본의 정방향·검은 띠·두 열·시스템 노출은 다음 Actions에서 확인하며, producer 변경만으로 해결했다고 기록하지 않는다.
 
+## iPad 대기 조회와 입력 오류 안내
+
+[build42](https://github.com/hellosunghyun/mirror/actions/runs/36959011411)는 가로 캡처 전 안정 대기에서 3회 샘플과 평가한 17개 배치·조작 가능 조건을 충족했지만 16,792ms에 최종 15초 제한을 넘겼다. [Dark1](https://github.com/hellosunghyun/mirror/actions/runs/36960263697)도 같은 단계에서 15,218ms·안정 샘플 2회로 실패했다. Dark1의 기록된 배치 조건 15개는 모두 true이며, 미평가 조작 가능·최종 제한 조건을 false로 채우지 않는다. 두 실행에서 main-screen 캡처 호출과 정상 가로 PNG를 확인하지 못했고, 어두운 원본은 게시되지 않았다.
+
+후속 harness는 각 반복에서 원래 window·today·review·adjacent·date query를 새 접근성 요소에 바인딩하고, 결과 유무로 존재 여부를 확인한 뒤 같은 요소의 경계와 조작 가능 여부를 읽는다. 반복 사이에 요소를 캐시하지 않는다. 전체 query 열거 비용과 한 반복 안의 AX 교체는 실제 Actions에서 확인해야 하며 비용 절감을 미리 보장하지 않는다. 기존 전면 앱·경계·방향·포함·두 열 분리·세로 복귀 조건, 3회/0.5초 안정, 15초와 마지막 시간 검사는 유지한다.
+
+입력 오류는 기존 `TaskContent`가 거부한 제목·메모·링크 원인만 안내한다. 입력 원문·검증·저장·실패 metric은 유지한다. 기존 501자 UI 사례에 제목 길이만 안내하는 정확한 라벨 검사를 추가하고, 원문 보존·무작업 생성·가시성·키보드 경계·정상 복구 검사는 모두 유지한다. 새 실제 원본에서 오류 문구와 가로 캡처를 다시 확인한다.
+
 ## 수용 기준과 검증 한계
 
 밝은 모양의 기본 검증·서명 배포와 별개로 어두운 모양 검증 workflow를 각 관련 push에 실행한다. 같은6사례·43장과 각 플랫폼 시간 제한을 독립 run/SHA/build/attempt·receipt·Release로 유지한다. 두 Dark shared scheme의 TestAction에만 고정 dark 값을 전달하고 CI는 UI build/test만 해당 scheme으로 선택한다. receipt의 기존 ui_scheme 필드를 실제 선택값과 대조해 밝은/어두운 산출물 교환을 거부한다. 앱은 DEBUG·MIRROR_UI_TESTING=1인 main window에만 강제 모양을 적용하고 Release·기본 scheme은 기존 시스템 모양을 유지한다. 전역 host/Simulator 모양은 바꾸지 않는다. 실제 SDK 환경 전달과 어두운 원본43장을 확인하기 전에는 다크 검증 완료로 기록하지 않는다.
