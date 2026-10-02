@@ -379,16 +379,34 @@ final class AppModel {
 
     @discardableResult
     func capture(title: String, note: String, sourceURL: String, requestToken: String = UUID().uuidString) async -> Bool {
+        let effectiveTitle = title.isEmpty ? sourceURL : title
         do {
-            let content = try TaskContent(title: title.isEmpty ? sourceURL : title,
+            let content = try TaskContent(title: effectiveTitle,
                                           note: note.isEmpty ? nil : note,
                                           sourceURL: sourceURL.isEmpty ? nil : sourceURL)
             guard let context, let envelope = makeEnvelope(.capture(taskID: UUID(), content: content), context: context, token: requestToken) else { return false }
             return await execute(envelope, success: "보관함에 넣었어요.")
         } catch {
-            problem = "제목은 1~500자, 메모는 20,000자 이하여야 해요. 링크는 http 또는 https 주소를 확인해 주세요."
+            problem = contentInputErrorMessage(error, title: effectiveTitle, note: note)
             await recordMetric(kind: .captureRejected, outcome: .failure)
             return false
+        }
+    }
+
+    private func contentInputErrorMessage(_ error: any Error, title: String, note: String) -> String {
+        guard let contract = error as? DomainContractError else { return "입력을 확인해 주세요." }
+        switch contract {
+        case .invalidContent:
+            // TaskContent가 거부한 입력의 표시 원인만 구분한다. 입력이나 저장 검증은 바꾸지 않는다.
+            let titleCount = title.trimmingCharacters(in: .whitespacesAndNewlines).count
+            if titleCount == 0 { return "할 일 제목을 입력해 주세요." }
+            if titleCount > 500 { return "제목은 500자 이하로 입력해 주세요." }
+            if note.count > 20_000 { return "메모는 20,000자 이하로 입력해 주세요." }
+            return "입력을 확인해 주세요."
+        case .invalidSourceURL:
+            return "링크 주소를 확인해 주세요."
+        default:
+            return "입력을 확인해 주세요."
         }
     }
 
@@ -398,7 +416,10 @@ final class AppModel {
                                         sourceURL: sourceURL.isEmpty ? nil : sourceURL)
             guard let digest = task.versions[.content]?.headsDigest else { return false }
             return await submit(.editContent(taskID: task.taskID, content: value, expectedContent: digest), success: "내용을 저장했어요.")
-        } catch { problem = "입력을 유지했어요. 제목 길이와 링크 주소를 확인해 주세요."; return false }
+        } catch {
+            problem = "입력을 유지했어요. " + contentInputErrorMessage(error, title: title, note: note)
+            return false
+        }
     }
 
     func setCompleted(_ task: TaskProjection, completed: Bool) async {

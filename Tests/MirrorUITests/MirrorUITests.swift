@@ -129,6 +129,8 @@ final class MirrorUITests: XCTestCase {
         try activate("capture.save", in: app)
         let problem = try requireElement("state.error", in: app)
         try waitForLabelContaining("500", element: problem)
+        XCTAssertEqual(problem.label, "제목은 500자 이하로 입력해 주세요.",
+                       "제목 길이 오류에는 메모와 링크 제약을 함께 표시하지 않는다.")
         XCTAssertTrue(problem.isHittable, "저장 실패 설명은 추가 스크롤 없이 보여야 한다.")
         XCTAssertTrue(try requireElement("capture.save", in: app).isHittable,
                       "긴 입력 오류 뒤에도 저장 행동은 화면 안에 남는다.")
