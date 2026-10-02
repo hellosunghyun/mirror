@@ -380,8 +380,12 @@ struct MirrorLibraryView: View {
             }
         }
     }
+    private var selectableTaskIDs: Set<UUID> {
+        Set(filtered.filter { $0.status == .open }.map(\.taskID))
+    }
     var body: some View {
         @Bindable var model = model
+        let selectedIDs = model.selectedTaskIDs.intersection(selectableTaskIDs)
         List {
             Section {
                 VStack(alignment: .leading, spacing: 12) {
@@ -396,16 +400,20 @@ struct MirrorLibraryView: View {
                         Picker("목록", selection: $filter) {
                             ForEach(LibraryFilter.allCases) { Text($0.label).tag($0) }
                         }.pickerStyle(.menu).labelsHidden().accessibilityLabel("목록").frame(minHeight: 44)
-                        Button(selecting ? "선택 마치기" : "선택") { selecting.toggle() }
+                        Button(selecting ? "선택 마치기" : "선택") {
+                            model.selectedTaskIDs.removeAll()
+                            selecting.toggle()
+                        }
                             .buttonStyle(.borderless).frame(minHeight: 44)
                             .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
+                            .accessibilityIdentifier("library.selectToggle")
                     }
                     if selecting {
-                        Text("같은 날짜로 최대 20개를 한 번에 배치해요. 하나라도 오래된 상태이면 전체를 저장하지 않아요.")
+                        Text("화면에 보이는 일만, 최대 20개까지 선택해요.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("선택한 \(model.selectedTaskIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(model.selectedTaskIDs)) }
+                        Button("선택한 \(selectedIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(selectedIDs)) }
                             .buttonStyle(.bordered).frame(minHeight: 44)
-                            .disabled(model.selectedTaskIDs.isEmpty || model.selectedTaskIDs.count > 20)
+                            .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
                             .accessibilityIdentifier("library.batchPlan")
                     }
                 }.padding(.vertical, 4)
@@ -442,6 +450,9 @@ struct MirrorLibraryView: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         .navigationTitle("보관함")
         .accessibilityIdentifier("library.list")
+        .onChange(of: selectableTaskIDs) { _, visibleIDs in
+            model.selectedTaskIDs.formIntersection(visibleIDs)
+        }
         .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
         .onChange(of: searchFocused) { _, focused in model.isTextEditing = focused }
         .onDisappear { model.isTextEditing = false }
