@@ -106,6 +106,16 @@
 
 [Dark2](https://github.com/hellosunghyun/mirror/actions/runs/36963542367)의 Mac은 새 501자 문구 검사132행에서 실패했다. 공개 자료로 actual label/value를 확정하지 못했으므로 빈 label이 원인이라고 단정하지 않는다. 후속 검사는 이미 쓰던 `displayedText`로 비어 있지 않은 label을 우선하고 빈 label일 때만 value를 읽어 문구 전체를 정확히 비교한다. 500자 포함 대기와 모든 기존 assertions는 유지한다. 기존 접근성 표시 읽기 방식과 새 문구 검사의 일관성을 맞춘 변경이며, 실제 해결 여부는 다음 Actions에서 확인한다.
 
+## 다크 원본의 실제 대비와 후속 수정
+
+`825e35e`의 [Dark3](https://github.com/hellosunghyun/mirror/actions/runs/36965028958)는 도메인159개·Mac 단위159개·Phone/Pad 단위156개와 UI6개씩·각 guard·aggregate·앱샷 게시를 모두 통과했다. 공개46자산·43PNG의 exact SHA/build3/run/attempt1·bytes·SHA256·raw dimensions·43stage·전체CRC를 확인하고, Phone14·Pad15·Mac14 원본을 모두 개별 직접 열었다. 가로1장은 orientation8 전용26-byte eXIf가 native UIImage.left와 일치하며 실제 정방향 글자·목록/일정 인접2열·검은띠없음을 확인했다. 다른42장의 EXIF는 없다. 공개 provenance14는 미관측이어서 native/export/public IHDR·IDAT 실측대조는 미확정으로 보존한다.
+
+Mac14에서는 확정 창잘림·빈상세·과도한완료버튼 blocker/P2가 없었다. Phone/Pad도 확정 잘림·겹침은 없고 오류/저장/편집취소가 키보드 위에 보였지만, 밝은 민트 주요 버튼의 흰 글자 대비가 낮다. Phone의 상세 편집 메모·원문링크 placeholder도 검은 입력 표면에서 매우 어둡다. 이 두 P2 때문에 전체 시각 수용은 보류했다. 작은 설정 footnote·검색 placeholder·보조라벨과 정리 마지막 선택의 첫 화면 발견성은 P3후보이며 정지 이미지로 도달불가를 확정하지 않는다.
+
+후속 수정은 기존 accent를 유지하고 주요 버튼6개의 Text 라벨에만 adaptive `onAccent`(light 흰색, dark `#16301E`)를 명시한다. 상세 편집3개 입력란은 같은 제목·binding·axis·lineLimit·style·ID를 유지하면서 adaptive `inputPrompt`(light `#526155`, dark `#AEBCAF`)의 명시적 Text prompt를 사용한다. prompt는 Text? 인수의 반환형을 분명히 하는 Text의 foregroundColor를 사용하고, 버튼 라벨은 foregroundStyle을 사용한다. native 버튼 style·프레임·disabled·focus·동작·명령·metric·기존 UI6개/43장/모든 assertions·시간 제한을 바꾸지 않는다.
+
+불투명한 색상 선언값의 독립 sRGB 상대휘도 계산은 accent/label light6.87:1, dark의 기존 흰색1.54:1에서 후보9.22:1, prompt/기존 표면 light5.86~6.56:1·dark7.46~10.61:1이다. 실제 렌더링 픽셀 계측이나 disabled/pressed/inactive 상태·VoiceOver·전체 접근성 수용 결과가 아니다. 실제27 SDK 컴파일과 밝은/어두운 원본의 가독성은 다음 Actions에서 검증한다. 이번 대비 후보에서 capture의 선택 입력 prompt·검색·설정 secondary 색상으로 범위를 확대하지 않는다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.

@@ -221,7 +221,9 @@ struct MirrorOnboardingView: View {
             Text("잘 미루면,\n지금 할 일이 남는다.").font(.largeTitle.weight(.semibold))
             Text("생각난 일은 보관함에 일단 넣으세요. 오늘 할 일은 정리할 때 직접 정해요. 날짜를 정하지 않은 일이 오늘 목록에 자동으로 들어가지 않아요.")
             Text("계획 시간대: \(model.preferences.timeZoneID) · 설정에서 바꿀 수 있어요.").font(.caption)
-            Button("첫 할 일 입력") { model.finishOnboarding() }.buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
+            Button { model.finishOnboarding() } label: {
+                Text("첫 할 일 입력").foregroundStyle(MirrorPalette.onAccent)
+            }.buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
             Button("바로 둘러보기") { model.preferences.onboardingComplete = true; model.savePreferences() }
         }.padding(28).frame(maxWidth: 520, alignment: .leading).frame(maxWidth: .infinity, maxHeight: .infinity)
     }

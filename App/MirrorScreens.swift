@@ -16,7 +16,9 @@ struct MirrorTodayView: View {
                             .font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                     }
                     MirrorActionGroup {
-                        Button("오늘 정리") { model.beginReview() }
+                        Button { model.beginReview() } label: {
+                            Text("오늘 정리").foregroundStyle(MirrorPalette.onAccent)
+                        }
                             .buttonStyle(.borderedProminent).controlSize(.regular)
                             .frame(minHeight: 44).accessibilityIdentifier("today.review")
                         Menu {
@@ -225,6 +227,7 @@ struct MirrorCaptureView: View {
             }
             Button { save() } label: {
                 Text(model.isSaving ? "저장 중…" : "보관함에 넣기")
+                    .foregroundStyle(MirrorPalette.onAccent)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
                 .buttonStyle(.borderedProminent)
@@ -479,7 +482,8 @@ struct MirrorReviewView: View {
     }
     private func todayButton(_ day: LocalDate, card: ReviewCard, session: AppReviewSession) -> some View {
         Button { Task { await model.decide(.day(day), card: card, session: session) } } label: {
-            Text("오늘").frame(maxWidth: .infinity, minHeight: 44)
+            Text("오늘").foregroundStyle(MirrorPalette.onAccent)
+                .frame(maxWidth: .infinity, minHeight: 44)
         }
             .buttonStyle(.borderedProminent)
             .accessibilityLabel("오늘, \(AppDate.label(day))에 배치, 완료 아님").accessibilityIdentifier("review.today")
@@ -638,10 +642,12 @@ struct MirrorTaskDetail: View {
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     if editing {
                         VStack(alignment: .leading, spacing: 12) {
-                            TextField("제목", text: $title, axis: .vertical)
+                            TextField("제목", text: $title, prompt: Text("제목").foregroundColor(MirrorPalette.inputPrompt), axis: .vertical)
                                 .font(.title3).textFieldStyle(.roundedBorder).accessibilityIdentifier("detail.title")
-                            TextField("메모", text: $note, axis: .vertical).lineLimit(3...12).textFieldStyle(.roundedBorder)
-                            TextField("원문 링크", text: $link).textFieldStyle(.roundedBorder)
+                            TextField("메모", text: $note, prompt: Text("메모").foregroundColor(MirrorPalette.inputPrompt), axis: .vertical)
+                                .lineLimit(3...12).textFieldStyle(.roundedBorder)
+                            TextField("원문 링크", text: $link, prompt: Text("원문 링크").foregroundColor(MirrorPalette.inputPrompt))
+                                .textFieldStyle(.roundedBorder)
                             if let original = editingSnapshot,
                                original.taskID != task.taskID || original.versions[.content]?.headsDigest != task.versions[.content]?.headsDigest {
                                 Text("편집을 시작한 뒤 작업이나 내용이 바뀌었어요. 입력한 내용은 유지했어요. 편집을 취소하고 최신 내용을 확인한 뒤 다시 편집하세요.")
@@ -739,7 +745,8 @@ struct MirrorTaskDetail: View {
                             }
                         }
                     } label: {
-                        Text("내용 저장").frame(maxWidth: .infinity, minHeight: actionMinHeight)
+                        Text("내용 저장").foregroundStyle(MirrorPalette.onAccent)
+                            .frame(maxWidth: .infinity, minHeight: actionMinHeight)
                     }
                     .buttonStyle(.borderedProminent).controlSize(.regular)
                     #if os(macOS)
@@ -760,6 +767,7 @@ struct MirrorTaskDetail: View {
                             Task { await model.setCompleted(task, completed: task.status != .completed) }
                         } label: {
                             Text(task.status == .completed ? "완료 취소 · 다시 열기" : "완료")
+                                .foregroundStyle(MirrorPalette.onAccent)
                                 .frame(maxWidth: .infinity, minHeight: actionMinHeight)
                         }
                         .buttonStyle(.borderedProminent).controlSize(.regular)

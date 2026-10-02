@@ -30,4 +30,8 @@ public enum MirrorPalette {
     public static var card: Color { mirrorAdaptiveColor(light: 0xFFFFFF, dark: 0x252925) }
     public static var border: Color { mirrorAdaptiveColor(light: 0xE4E8E3, dark: 0x373E38) }
     public static var accent: Color { mirrorAdaptiveColor(light: 0x28663C, dark: 0xA9DCB7) }
+    /// 채움 강조색 위에 표시하는 주요 동작 문구.
+    public static var onAccent: Color { mirrorAdaptiveColor(light: 0xFFFFFF, dark: 0x16301E) }
+    /// 비어 있는 편집 입력란의 안내 문구.
+    public static var inputPrompt: Color { mirrorAdaptiveColor(light: 0x526155, dark: 0xAEBCAF) }
 }
