@@ -23,59 +23,22 @@ struct MirrorRootView: View {
     }
     var body: some View {
         @Bindable var model = model
-        GeometryReader { geometry in
-            Group {
-                if model.isLoading {
-                    ProgressView("저장된 일을 불러오고 있어요")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .accessibilityIdentifier("startup.loading")
-                } else if !model.preferences.onboardingComplete {
-                    MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
-                } else if isCompact {
-                    TabView(selection: destinationSelection) {
-                        ForEach(MirrorDestination.allCases) { destination in
-                            Tab(destination.title, systemImage: destination.symbol, value: destination) {
-                                mainContent(destination)
-                            }
-                        }
-                    }
-                } else {
-                    NavigationSplitView {
-                        List(selection: sidebarSelection) {
-                            ForEach(MirrorDestination.allCases) { destination in
-                                Button { selectDestination(destination) } label: {
-                                    Label {
-                                        Text(destination.title).foregroundStyle(Color.primary)
-                                    } icon: {
-                                        Image(systemName: destination.symbol).foregroundStyle(MirrorPalette.accent)
-                                    }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                                .tag(destination)
-                                .listRowBackground(model.destination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
-                                .accessibilityIdentifier("destination.\(destination.rawValue)")
-                            }
-                        }
-                        .navigationTitle("미러")
-                        .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
-                    } detail: {
-                        mainContent(model.destination, showCalendar: model.selectedTask == nil && !model.showReview
-                            && showsAdjacentCalendar(width: geometry.size.width, destination: model.destination))
-                    }
-                    .navigationSplitViewStyle(.balanced)
+        Group {
+            if isCompact {
+                rootContent()
+            } else {
+                GeometryReader { geometry in
+                    rootContent(availableWidth: geometry.size.width)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .inspector(isPresented: taskInspectorPresentation) {
-                NavigationStack {
-                    if let task = model.selectedTask {
-                        MirrorTaskDetail(task: task)
-                    }
+        }
+        .inspector(isPresented: taskInspectorPresentation) {
+            NavigationStack {
+                if let task = model.selectedTask {
+                    MirrorTaskDetail(task: task)
                 }
-                .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
             }
+            .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
         }
         .tint(MirrorPalette.accent)
         .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
@@ -99,6 +62,52 @@ struct MirrorRootView: View {
         // Inspector는 자신의 최소 폭을 별도로 더하므로, 열렸을 때는 탐색 영역만 확보한다.
         .frame(minWidth: isTaskInspectorVisible ? 520 : 760, minHeight: 520)
         #endif
+    }
+    private func rootContent(availableWidth: CGFloat = 0) -> some View {
+        Group {
+            if model.isLoading {
+                ProgressView("저장된 일을 불러오고 있어요")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("startup.loading")
+            } else if !model.preferences.onboardingComplete {
+                MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
+            } else if isCompact {
+                TabView(selection: destinationSelection) {
+                    ForEach(MirrorDestination.allCases) { destination in
+                        Tab(destination.title, systemImage: destination.symbol, value: destination) {
+                            mainContent(destination)
+                        }
+                    }
+                }
+            } else {
+                NavigationSplitView {
+                    List(selection: sidebarSelection) {
+                        ForEach(MirrorDestination.allCases) { destination in
+                            Button { selectDestination(destination) } label: {
+                                Label {
+                                    Text(destination.title).foregroundStyle(Color.primary)
+                                } icon: {
+                                    Image(systemName: destination.symbol).foregroundStyle(MirrorPalette.accent)
+                                }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .tag(destination)
+                            .listRowBackground(model.destination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
+                            .accessibilityIdentifier("destination.\(destination.rawValue)")
+                        }
+                    }
+                    .navigationTitle("미러")
+                    .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
+                } detail: {
+                    mainContent(model.destination, showCalendar: model.selectedTask == nil && !model.showReview
+                        && showsAdjacentCalendar(width: availableWidth, destination: model.destination))
+                }
+                .navigationSplitViewStyle(.balanced)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     private var isTaskInspectorVisible: Bool {
         model.preferences.onboardingComplete && !model.isLoading && !model.showReview && model.selectedTask != nil
@@ -144,6 +153,7 @@ struct MirrorRootView: View {
     }
     @ViewBuilder private var statusBar: some View {
         if !model.showCapture,
+            (!model.showReview || model.systemProblem != nil || model.cleanupProblem != nil),
             model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
             || model.lastUndo != nil || model.systemProblem != nil || model.cleanupProblem != nil {
             VStack(alignment: .leading, spacing: 8) {

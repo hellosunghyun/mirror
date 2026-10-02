@@ -167,10 +167,6 @@ struct MirrorCaptureView: View {
                         .lineLimit(1...8).focused($focusedField, equals: .title)
                         .disabled(model.isSaving || model.projectionPending)
                         .accessibilityIdentifier("capture.title")
-                    if title.count > 500 {
-                        Text("\(title.count)/500자 · 입력은 자동으로 잘리지 않아요")
-                            .font(.caption).foregroundStyle(.red)
-                    }
                 }
                 DisclosureGroup("메모와 원문 링크", isExpanded: $more) {
                     TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")

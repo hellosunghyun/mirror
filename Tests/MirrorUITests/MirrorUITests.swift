@@ -100,6 +100,44 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "검색 결과",
                        "범위를 넓힌 검색 결과를 날짜 미정 목록으로 표시하지 않는다.")
         recordTomorrowPhase(.searchTitleVerified)
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            lastActionDescription = "iPhone 검색 중 상태 표시줄과 상단 버튼 배치"
+            let statusBar = app.statusBars.firstMatch
+            guard statusBar.exists else {
+                XCTFail("검색 중 상단 버튼의 배치를 검증할 실제 상태 표시줄이 없다.")
+                throw UIHarnessError.missingElement("statusBar")
+            }
+            let statusFrame = statusBar.frame
+            guard [statusFrame.minX, statusFrame.minY, statusFrame.width, statusFrame.height].allSatisfy({ $0.isFinite }),
+                  statusFrame.width > 0, statusFrame.height > 0 else {
+                XCTFail("상태 표시줄의 실제 경계가 유효하지 않다.")
+                throw UIHarnessError.unexpectedValue("statusBarFrame")
+            }
+            let keyboard = app.keyboards.firstMatch
+            guard keyboard.exists else {
+                XCTFail("상단 배치 회귀는 검색 키보드가 열린 상태에서 검증한다.")
+                throw UIHarnessError.missingElement("searchKeyboard")
+            }
+            for identifier in ["capture.open", "settings.button"] {
+                let buttons = app.buttons.matching(identifier: identifier)
+                guard buttons.count == 1 else {
+                    XCTFail("검색 화면의 상단 버튼은 고유한 실제 Button이어야 한다: \(identifier)")
+                    throw UIHarnessError.missingElement(identifier)
+                }
+                let button = buttons.firstMatch
+                let frame = button.frame
+                guard [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite }),
+                      frame.width > 0, frame.height > 0 else {
+                    XCTFail("상단 버튼의 실제 경계가 유효하지 않다: \(identifier)")
+                    throw UIHarnessError.unhittable(identifier)
+                }
+                XCTAssertTrue(button.isHittable, "검색 중에도 상단 버튼을 사용할 수 있다.")
+                XCTAssertTrue(button.isEnabled, "검색 중에도 상단 버튼이 활성화되어 있다.")
+                XCTAssertGreaterThanOrEqual(frame.minY, statusFrame.maxY, "상단 버튼은 상태 표시줄과 겹치지 않는다.")
+            }
+        }
+        #endif
         try recordUI("library-search", in: app, identifiers: ["library.list", "library.search"])
         recordTomorrowPhase(.libraryScreenshotRecorded)
         try interact(with: future, in: app)
