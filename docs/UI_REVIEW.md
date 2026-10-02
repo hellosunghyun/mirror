@@ -1,5 +1,9 @@
 # iPhone·iPad·Mac UI 검토
 
+2026-10-02 source `983983a`의 일반60 실행에서 긴 제목 오류를 닫고 보관함에서 다시 입력하려는 iPhone 흐름이 실패했다. `capture.open`의 존재·활성·실제 Button·유효 면적·단일 소유 창·창 내부는 확인됐지만 조작 가능 여부와 실제 상태 표시줄 아래 배치는 false였다. 당시 키보드·alert·sheet의 존재 조건은 각각 false였다. 이는 접근성 관측이며 픽셀 겹침·SDK 원인·관측 뷰와의 인과까지 확정하지 않는다. Mac·iPad의 단위/UI6·guard·최종 xcresult는 통과했지만 전체 gate 실패로 원본 게시가 건너뛰어졌다.
+
+DEBUG iOS·UI테스트·iPhone 조건의 상태 표시줄 관측은 독립 `ZStack` 대신 본래 content의 `overlay`에 동일한 투명 1pt 뷰를 둔다. 관측 뷰가 루트 크기 합성에 참여하는 구조만 제거한다. 실제 scene·keyWindow·screen 좌표·고유 AX·유효 경계 getter와 모든 기존 회귀·ready3초·시간 제한·46장 계약은 유지한다. iPad·Mac·Release에는 원래 이 관측 뷰를 적용하지 않으며, iPhone의 regular size class도 기존 조건에 포함된다. 생산 UX나 실패 원인의 해결로 보고하지 않고 새 Actions에서 probe 고유성·소유 창·버튼 배치와 조작을 확인한다.
+
 2026-10-01 사용자가 보낸 Mac 화면에서 상세가 목록보다 넓고, 완료 버튼이 패널 전체로 늘어나며, 저장·완료·Undo 안내가 사이드바 아래에서 중복되는 문제를 확인했다. 기존 여섯 UI 테스트는 기능 흐름을 검증했으나 화면의 배치와 위계를 검증하지 않았다. 2026-10-02의 추가·미루기 단순화와 화면 분배 기준은 [쉬운 UX](SIMPLE_UX.md)에 기록한다.
 
 ## 변경한 화면

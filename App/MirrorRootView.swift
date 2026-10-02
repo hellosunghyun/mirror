@@ -227,8 +227,7 @@ private struct MirrorUITestingStatusBarContainer: ViewModifier {
     func body(content: Content) -> some View {
         if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
            UIDevice.current.userInterfaceIdiom == .phone {
-            ZStack(alignment: .topLeading) {
-                content
+            content.overlay(alignment: .topLeading) {
                 MirrorUITestingStatusBarProbe().frame(width: 1, height: 1)
             }
         } else { content }
