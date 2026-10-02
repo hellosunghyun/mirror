@@ -15,6 +15,7 @@ final class MirrorUITests: XCTestCase {
         let app = try launchApp()
         defer { app.terminate() }
         let title = "UI capture then today"
+        try verifyPhoneNavigation(in: app)
         try recordUI("initial-today", in: app, identifiers: ["today.list", "today.review", "capture.open"])
         #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad {
@@ -23,6 +24,7 @@ final class MirrorUITests: XCTestCase {
         #endif
         try selectDestination("calendar", title: "일정", in: app)
         _ = try requireElement("calendar.date", in: app)
+        try verifyPhoneNavigation(in: app)
         try recordUI("calendar", in: app, identifiers: ["calendar.date", "capture.open", "settings.button"])
         try showToday(in: app)
         try captureSettings(in: app)
@@ -35,6 +37,7 @@ final class MirrorUITests: XCTestCase {
         XCTAssertTrue(value(of: unassigned).contains("아직 정하지 않음"))
         XCTAssertTrue(value(of: unassigned).contains("미완료"))
         XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "정하지 않은 일")
+        try verifyPhoneNavigation(in: app, requiresFeedback: true)
         try recordUI("library", in: app, identifiers: ["library.list", "library.search", "library.batchPlan"])
 
         // 검색으로 숨은 작업이 일괄 배치 대상으로 남거나 다음 선택에 되살아나면 안 된다.
@@ -75,7 +78,73 @@ final class MirrorUITests: XCTestCase {
         let today = try requireRow(title, in: app)
         XCTAssertTrue(value(of: today).contains("9월 30일"))
         XCTAssertTrue(value(of: today).contains("미완료"), "Q-009: 오늘 배치는 완료가 아니다.")
+        try verifyPhoneNavigation(in: app, requiresFeedback: true)
         try recordUI("today-populated", in: app, identifiers: ["today.list", "today.review", "capture.open", "task.undo"])
+    }
+
+    /// 탭 이동 직후의 실제 시스템 경계와 비교한다. 검색 키보드 회귀는 별도로 유지한다.
+    @MainActor
+    private func verifyPhoneNavigation(in app: XCUIApplication, requiresFeedback: Bool = false) throws {
+        #if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        let probes = app.descendants(matching: .any).matching(identifier: "ui.nativeStatusBar")
+        let windows = app.windows.containing(NSPredicate(format: "identifier == %@", "ui.nativeStatusBar"))
+            .allElementsBoundByAccessibilityElement
+        guard app.state == .runningForeground, probes.count == 1, windows.count == 1 else {
+            XCTFail("탭 배치 검사는 실제 전면 앱의 고유한 상태 표시줄 관측 창이 필요하다.")
+            throw UIHarnessError.missingElement("nativeStatusBarWindow")
+        }
+        let coordinates = value(of: probes.firstMatch).split(separator: ",", omittingEmptySubsequences: false)
+        guard coordinates.count == 4,
+              let x = Double(coordinates[0]), let y = Double(coordinates[1]),
+              let width = Double(coordinates[2]), let height = Double(coordinates[3]) else {
+            XCTFail("탭 이동 후 실제 시스템 상태 표시줄의 경계를 읽지 못했다.")
+            throw UIHarnessError.unexpectedValue("nativeStatusBarFrame")
+        }
+        let statusFrame = CGRect(x: x, y: y, width: width, height: height)
+        let windowFrame = windows[0].frame
+        func valid(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        guard valid(windowFrame), valid(statusFrame), windowFrame.contains(statusFrame) else {
+            XCTFail("탭 배치 검사의 실제 창과 상태 표시줄 경계가 유효해야 한다.")
+            throw UIHarnessError.unexpectedValue("nativeStatusBarFrame")
+        }
+        for identifier in ["capture.open", "settings.button"] {
+            let buttons = app.buttons.matching(identifier: identifier)
+            guard buttons.count == 1, valid(buttons.firstMatch.frame) else {
+                XCTFail("탭 화면의 상단 버튼은 유효한 경계를 가진 고유한 Button이어야 한다: \(identifier)")
+                throw UIHarnessError.missingElement(identifier)
+            }
+            let button = buttons.firstMatch
+            XCTAssertTrue(windowFrame.contains(button.frame), "탭의 상단 버튼 전체가 실제 창 안에 있어야 한다.")
+            XCTAssertGreaterThanOrEqual(button.frame.minY, statusFrame.maxY, "탭 이동 후에도 상단 버튼은 상태 표시줄과 겹치지 않는다.")
+            XCTAssertTrue(button.isHittable, "탭 이동 후에도 상단 버튼을 사용할 수 있다.")
+            XCTAssertTrue(button.isEnabled, "탭 이동 후에도 상단 버튼이 활성화되어 있다.")
+        }
+        if requiresFeedback {
+            let feedback = app.staticTexts.matching(identifier: "state.feedback")
+            let undo = app.buttons.matching(identifier: "task.undo")
+            let tabs = app.tabBars
+            guard feedback.count == 1, undo.count == 1, tabs.count == 1,
+                  valid(tabs.firstMatch.frame), windowFrame.contains(tabs.firstMatch.frame) else {
+                XCTFail("저장 안내·되돌리기·시스템 탭은 실제 화면에서 각각 고유해야 한다.")
+                throw UIHarnessError.missingElement("nativeTabFeedback")
+            }
+            let tabFrame = tabs.firstMatch.frame
+            for element in [feedback.firstMatch, undo.firstMatch] {
+                guard valid(element.frame) else {
+                    XCTFail("저장 안내와 되돌리기의 실제 경계가 유효해야 한다.")
+                    throw UIHarnessError.unexpectedValue("nativeTabFeedbackFrame")
+                }
+                XCTAssertTrue(windowFrame.contains(element.frame), "저장 안내와 되돌리기의 전체 경계가 실제 창 안에 있어야 한다.")
+                XCTAssertLessThanOrEqual(element.frame.maxY, tabFrame.minY, "저장 안내와 되돌리기는 시스템 탭에 가려지지 않는다.")
+            }
+            XCTAssertTrue(undo.firstMatch.isHittable, "저장 안내의 되돌리기를 탭 위에서 사용할 수 있다.")
+            XCTAssertTrue(undo.firstMatch.isEnabled, "저장 안내의 되돌리기가 활성화되어 있다.")
+        }
+        #endif
     }
 
     @MainActor

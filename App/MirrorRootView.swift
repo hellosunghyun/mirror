@@ -21,7 +21,7 @@ struct MirrorRootView: View {
         return false
         #endif
     }
-    private var usesTabStatusBar: Bool {
+    private var usesPhoneTabs: Bool {
         #if os(iOS)
         return isCompact && UIDevice.current.userInterfaceIdiom == .phone
         #else
@@ -124,7 +124,11 @@ struct MirrorRootView: View {
         TabView(selection: destinationSelection) {
             ForEach(MirrorDestination.allCases) { destination in
                 Tab(destination.title, systemImage: destination.symbol, value: destination) {
-                    mainContent(destination)
+                    if usesPhoneTabs {
+                        phoneNavigation(destination)
+                    } else {
+                        mainContent(destination)
+                    }
                 }
             }
         }
@@ -141,6 +145,24 @@ struct MirrorRootView: View {
     }
     @ViewBuilder private func content(_ destination: MirrorDestination) -> some View {
         switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
+    }
+    private func phoneNavigation(_ destination: MirrorDestination) -> some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                content(destination)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                statusBar.fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MirrorPalette.canvas)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar { commonToolbar }
+        }
+        #if os(iOS)
+        .toolbarMinimizationBehavior(.never, for: .navigationBar)
+        #endif
     }
     private func mainContent(_ destination: MirrorDestination, showCalendar: Bool = false) -> some View {
         HStack(spacing: 0) {
@@ -161,27 +183,18 @@ struct MirrorRootView: View {
             }
         }
     }
-    @ViewBuilder private func mainNavigation(_ destination: MirrorDestination) -> some View {
-        let navigation = NavigationStack {
+    private func mainNavigation(_ destination: MirrorDestination) -> some View {
+        NavigationStack {
             content(destination)
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(MirrorPalette.canvas)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if !usesTabStatusBar { statusBar }
-                }
+                .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
                 .toolbar { commonToolbar }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        #if os(iOS)
-        if usesTabStatusBar {
-            navigation.safeAreaBar(edge: .bottom) { statusBar }
-        } else { navigation }
-        #else
-        navigation
-        #endif
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: commonToolbarPlacement) {
