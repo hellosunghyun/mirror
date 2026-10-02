@@ -83,7 +83,9 @@ final class AppModel {
     var isLoading = true
     var isSaving = false
     var feedback: String?
-    var problem: String?
+    var problem: String? = nil {
+        didSet { problemRevision += 1 }
+    }
     var systemProblem: String?
     var cleanupProblem: String?
     var projectionPending = false
@@ -127,6 +129,8 @@ final class AppModel {
     @ObservationIgnored private var canonicalChangePending = false
     @ObservationIgnored private var canonicalStreamEnded = false
     @ObservationIgnored private var lamportByOperationID: [String: Int64] = [:]
+    @ObservationIgnored private var problemRevision: UInt64 = 0
+    @ObservationIgnored private var captureInputProblemRevision: UInt64? = nil
     @ObservationIgnored private var retryEnvelope: CommandEnvelope?
     @ObservationIgnored private var pendingImportFeedback: String?
     @ObservationIgnored private var calendarDisplayRange: (start: Date, end: Date)?
@@ -388,9 +392,17 @@ final class AppModel {
             return await execute(envelope, success: "보관함에 넣었어요.")
         } catch {
             problem = contentInputErrorMessage(error, title: effectiveTitle, note: note)
+            captureInputProblemRevision = problemRevision
             await recordMetric(kind: .captureRejected, outcome: .failure)
             return false
         }
+    }
+
+    func clearCaptureInputProblem() {
+        let capturedRevision = captureInputProblemRevision
+        captureInputProblemRevision = nil
+        guard let capturedRevision, capturedRevision == problemRevision else { return }
+        problem = nil
     }
 
     private func contentInputErrorMessage(_ error: any Error, title: String, note: String) -> String {
@@ -463,6 +475,21 @@ final class AppModel {
         picker = PlanPickerRequest(taskIDs: taskIDs, expected: items,
                                    displayedContext: reviewCard == nil ? context : (reviewSession?.context ?? context),
                                    token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week)
+    }
+
+    func postponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext) async {
+        guard task.status == .open, !isSaving, !projectionPending,
+              !showCapture, !showSettings, !showReview, !isDetailEditing,
+              picker == nil, confirmation == nil, widgetDecision == nil else { return }
+        guard let tomorrow = try? displayedContext.planningDay.addingDays(1) else {
+            problem = "내일 날짜를 확인할 수 없어요."
+            return
+        }
+        let request = PlanPickerRequest(taskIDs: [task.taskID],
+                                        expected: [PlanCommandItem(taskID: task.taskID, expected: ExpectedVersions(task))],
+                                        displayedContext: displayedContext, token: UUID().uuidString,
+                                        review: nil, week: nil)
+        await choosePlan(request, target: .day(tomorrow))
     }
 
     func choosePlan(_ request: PlanPickerRequest, target: PlanTarget) async {

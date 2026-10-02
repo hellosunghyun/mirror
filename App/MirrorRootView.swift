@@ -129,6 +129,9 @@ struct MirrorRootView: View {
         HStack(spacing: 0) {
             NavigationStack {
                 content(destination)
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(MirrorPalette.canvas)
                     .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
@@ -142,6 +145,9 @@ struct MirrorRootView: View {
                 Divider()
                 NavigationStack {
                     MirrorCalendarView(compact: true).accessibilityIdentifier("ipad.adjacentCalendar")
+                        #if os(iOS)
+                        .navigationBarTitleDisplayMode(.inline)
+                        #endif
                 }
                 .frame(width: 320)
                 .frame(maxHeight: .infinity)

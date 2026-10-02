@@ -208,6 +208,8 @@ final class MirrorUITests: XCTestCase {
         try activate("capture.close", in: app)
         // 정상 입력과 같은 닫힘 확인을 거쳐 보관함 탐색·새 입력 복구를 시작한다.
         try requireNoElement("capture.title", in: app)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "state.error").firstMatch.exists,
+                       "닫은 입력의 제목 검증 오류가 빈 목록과 새 입력에 남지 않는다.")
         try showLibrary(in: app)
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.row.")).count, 0)
 
@@ -321,6 +323,28 @@ final class MirrorUITests: XCTestCase {
         let reopened = try requireRow(edited, in: app)
         XCTAssertTrue(value(of: reopened).contains("미완료"))
         XCTAssertFalse(taskRow(original, in: app).exists)
+
+        // 상세의 빠른 미루기는 별도 날짜 선택 없이 내일로 옮기고 Undo로 기존 계획을 복원한다.
+        try interact(with: reopened, in: app)
+        XCTAssertTrue(try requireElement("detail.postponeTomorrow", in: app, preferButtons: true).isHittable,
+                      "내일로 미루기는 상세에서 바로 누를 수 있어야 한다.")
+        try activate("detail.postponeTomorrow", in: app)
+        try waitForLabelContaining("10월 1일", element: requireElement("detail.plan", in: app))
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
+        XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
+        XCTAssertEqual(displayedText(of: try requireElement("task.complete", in: app)), "완료",
+                       "내일로 미루기는 제목이나 미완료 상태를 변경하지 않는다.")
+        try activate("task.undo", in: app)
+        try waitForLabelContaining("9월 30일", element: requireElement("detail.plan", in: app))
+        XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
+        XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
+        XCTAssertEqual(displayedText(of: try requireElement("task.complete", in: app)), "완료")
+        try requireNoElement("plan.cancel", in: app)
+        try activate("detail.close", in: app)
+        try showToday(in: app)
+        let restoredToday = try requireRow(edited, in: app)
+        XCTAssertTrue(value(of: restoredToday).contains("9월 30일"))
+        XCTAssertTrue(value(of: restoredToday).contains("미완료"))
     }
 
     @MainActor

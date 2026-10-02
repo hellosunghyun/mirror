@@ -22,6 +22,7 @@ import SwiftUI
 ///   - tint: Block color for the check, the completion flash and the complete tile. `nil` uses `style.complete`.
 ///   - style: Card surface, text colors, priority and tile blocks, and corner radius. Defaults to the house palette.
 ///   - onTap: Called when the row body is tapped, typically to open the task.
+///   - snoozeLabel: Label shared by the Snooze block, snoozed status and accessibility action. Defaults to "당분간 보관".
 ///   - onSnooze: Adds a Snooze block behind a left swipe and is called when it is chosen.
 ///   - onDelete: Adds a Delete block behind a left swipe and is called when it is chosen.
 ///   - onMove: Enables long-press lift and reports how many rows the user dragged it (negative is up) on release.
@@ -50,6 +51,7 @@ public struct TaskRow: View {
     private let tint: Color
     private let style: Style
     private let onTap: (() -> Void)?
+    private let snoozeLabel: String
     private let onSnooze: (() -> Void)?
     private let onDelete: (() -> Void)?
     private let onMove: ((Int) -> Void)?
@@ -58,7 +60,7 @@ public struct TaskRow: View {
     private let tileGap: CGFloat = 6
     private let completeThreshold: CGFloat = 104
 
-    public init(_ title: String, status: Binding<Status>, due: String? = nil, priority: Priority? = nil, tint: Color? = nil, style: Style = .standard, onTap: (() -> Void)? = nil, onSnooze: (() -> Void)? = nil, onDelete: (() -> Void)? = nil, onMove: ((Int) -> Void)? = nil) {
+    public init(_ title: String, status: Binding<Status>, due: String? = nil, priority: Priority? = nil, tint: Color? = nil, style: Style = .standard, onTap: (() -> Void)? = nil, snoozeLabel: String = "당분간 보관", onSnooze: (() -> Void)? = nil, onDelete: (() -> Void)? = nil, onMove: ((Int) -> Void)? = nil) {
         self.title = title
         self._status = status
         self.due = due
@@ -66,6 +68,7 @@ public struct TaskRow: View {
         self.tint = tint ?? style.complete
         self.style = style
         self.onTap = onTap
+        self.snoozeLabel = snoozeLabel
         self.onSnooze = onSnooze
         self.onDelete = onDelete
         self.onMove = onMove
@@ -100,7 +103,7 @@ public struct TaskRow: View {
             .accessibilityAction { onTap?() }
             .accessibilityActions {
                 Button(status == .completed ? "다시 열기" : "완료") { toggle() }
-                if let onSnooze { Button("당분간 보관") { status = .snoozed; onSnooze() } }
+                if let onSnooze { Button(snoozeLabel) { status = .snoozed; onSnooze() } }
                 if let onDelete { Button("휴지통으로 이동", role: .destructive, action: onDelete) }
                 if let onMove {
                     Button("위로 이동") { onMove(-1) }
@@ -159,7 +162,7 @@ public struct TaskRow: View {
     @ViewBuilder
     private var meta: some View {
         if status == .snoozed {
-            Label("당분간 보관", systemImage: "moon.zzz.fill")
+            Label(snoozeLabel, systemImage: "moon.zzz.fill")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(style.ink)
                 .padding(.horizontal, 8)
@@ -231,7 +234,7 @@ public struct TaskRow: View {
         switch status {
         case .open: parts.append("미완료")
         case .completed: parts.append("완료")
-        case .snoozed: parts.append("당분간 보관")
+        case .snoozed: parts.append(snoozeLabel)
         }
         if let due, status != .snoozed { parts.append("배치: \(due)") }
         if let priority, status == .open {
@@ -269,7 +272,7 @@ public struct TaskRow: View {
             let reveal = min(1, revealed / trailingWidth)
             HStack(spacing: tileGap) {
                 if let onSnooze {
-                    tile("당분간 보관", systemImage: "moon.zzz", color: style.snooze, reveal: reveal) { status = .snoozed; onSnooze() }
+                    tile(snoozeLabel, systemImage: "moon.zzz", color: style.snooze, reveal: reveal) { status = .snoozed; onSnooze() }
                 }
                 if let onDelete {
                     tile("휴지통으로 이동", systemImage: "trash", color: style.delete, reveal: reveal, action: onDelete)

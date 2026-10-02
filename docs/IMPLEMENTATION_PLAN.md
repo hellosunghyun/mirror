@@ -4,6 +4,8 @@
 
 이 문서와 [요구사항 추적표](REQUIREMENTS_TRACEABILITY.md)는 파생 개발 문서다. `postpone-app-docs/`와 통합 원본 명세는 수정하지 않는다. 실제 결과는 원본의 미실행 보고서를 덮어쓰지 않고 commit·run·기기별로 추가한다.
 
+2026-10-02 최신 요청에 따라 [쉬운 추가·미루기 UX](SIMPLE_UX.md)를 우선한다. 입력의 제목·저장, 한 번의 내일 배치, 필요한 부가 정보만 펼치는 상세, 플랫폼별 화면 분배를 구현하고 기존 회귀 검사를 확장한다. 새 소스의 실제 GitHub Actions와 밝은·어두운 원본 수용까지 진행한다. 이 우선순위는 아래 전체 단계와 [남은 구현 공백](IMPLEMENTATION_GAPS.md)을 축소하지 않는다.
+
 ## 1. 현재 구현과 완료의 의미
 
 확정 기준은 미러/Mirror, public 저장소, iOS·iPadOS·macOS 27.0, SwiftUI와 SwiftPieces다. 원본의 Postpone 가칭과 이전 최소 OS보다 [개발 기준](../development-baseline.json)과 [README](../README.md)가 우선한다. 식별자 접두사는 `com.baserize`이며 개발 Bundle ID 적용과 Apple 등록·서명 완료는 별개다.
@@ -20,7 +22,7 @@
 | System/확장 | 공통 composition root와 App Intents/Shortcuts, Widget 카드·패널·token·snapshot, Share 텍스트/URL, EventKit 읽기·알림 계획/취소·Spotlight·동의한 로컬 진단 | 실제 App Group/서명, 앱 미실행·잠금·위젯/Siri/Share·권한 철회와 OS 실행 정책 검증 |
 | Cloud opt-in | 실제 CKContainer 계정 확인·fingerprint별 공간, 최신 로컬 원본 병합 확인, 공유 active pointer와 오프라인 identity 바인딩, 계정 변경 writer/importer 중지, 원본만 NSPersistentCloudKitContainer로 미러링, 상태 스트림 | Apple container/group 설정과 2기기 G-SYNC. 전체 CloudKit 삭제는 권위 있는 epoch와 구세대 업로드 차단 미결정으로 blocked |
 
-최근 완료된 통합 체크포인트는 `2da19a9`의 [Actions 36817569714](https://github.com/hellosunghyun/mirror/actions/runs/36817569714)다. 준비 Python 40개, SwiftPM 151개, Mac 단위 151개와 iPhone/iPad 각각 150개, 세 플랫폼 UI 각각 여섯 사례가 실제 최종 집계와 필수 bundle/method 검사에서 통과했다. UI 실패·skip은 0개다. archive는 프로파일과 개인 키가 있는 인증서의 일치 검사에서 실패했으며 IPA·Release는 없다. 후속 `f091e83`의 서명 사전 검사에서는 유효한 개인 키 identity 1개와 프로파일 인증서 1개가 서로 일치하지 않는 것을 확인했다. 현재 P12와 같은 인증서로 만든 Ad Hoc 프로파일 Secret 갱신이 필요하다. 비밀번호나 원문 서명 자료는 재요청하지 않는다.
+이전 통합 체크포인트 `2da19a9`의 [Actions 36817569714](https://github.com/hellosunghyun/mirror/actions/runs/36817569714)는 준비 Python40개, SwiftPM·Mac 단위151개와 모바일 단위150개씩, UI6개씩을 통과했다. 당시 archive와 후속 `f091e83`의 서명 사전 검사는 인증서 불일치로 실패했다. 이후 사용자 Secret 갱신과 실제 서명 배포로 해소한 과거 이력이며 현재의 Secret 차단 사유로 사용하지 않는다. `2b05387`의 [Release54](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36994469576)는 공개8자산의 크기·해시 및 IPA 프로파일/서명, Mac 공증·staple·Gatekeeper 근거를 확인했다. 후속 UI 변경의 검증·게시 결과는 해당 소스의 실행과 자산으로 별도 확인한다.
 
 2026-10-01 전체 명세 대조에서 위젯 단일 입력 후 Today 전환, 상태 조건을 적용하기 전 검색 결과 제한, 복원 후 투영 갱신 실패의 완료 표시, 복원 미리보기의 새 작업·격리 기록 건수, foreground 캘린더 권한 철회, Mac 검색 포커스, 명시 일간·주간 정리 딥링크의 모드, 넓은 iPad의 인접 일정 표시를 보완한다. 별도 Swift 프로세스 두 개의 동일 명령 경쟁과 원본 저장 직후 SIGKILL·재시작 회귀도 추가한다. 자체 백업의 임의 32MiB 복원 상한과 위젯 주간 패널의 절대 범위 표시도 보완하며, 1만 작업·10만 원본의 Release 성능 및 전체 백업 왕복 baseline을 별도 Actions에 연결한다. 이 변경의 통과는 새 커밋의 실제 Actions 결과가 나올 때 기록하며 이전 체크포인트로 대신하지 않는다. 최신 확정 근거는 [Swift 개발 안내](SWIFT_DEVELOPMENT.md)와 [테스트 전략](../TESTING.md)에 commit/run별로 추가한다.
 

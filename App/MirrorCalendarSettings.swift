@@ -40,7 +40,7 @@ struct MirrorCalendarView: View {
                     LazyVGrid(columns: columns(availableWidth: geometry.size.width - 40), alignment: .leading, spacing: 16) {
                         ForEach(days, id: \.self) { date in dayCard(date) }
                     }
-                    if !compact || hasWeeklyTasks { weeklyBasket }
+                    if hasWeeklyTasks || (!compact && weekly) { weeklyBasket }
                     if !compact || model.calendarProblem != nil { calendarAccess }
                 }
                 .frame(maxWidth: 1080)
