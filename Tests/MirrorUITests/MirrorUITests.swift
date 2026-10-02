@@ -142,6 +142,8 @@ final class MirrorUITests: XCTestCase {
         try recordUI("validation-error", in: app, identifiers: ["capture.title", "capture.save", "capture.close", "state.error"])
 
         try activate("capture.close", in: app)
+        // 정상 입력과 같은 닫힘 확인을 거쳐 보관함 탐색·새 입력 복구를 시작한다.
+        try requireNoElement("capture.title", in: app)
         try showLibrary(in: app)
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.row.")).count, 0)
 

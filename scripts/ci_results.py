@@ -43,6 +43,13 @@ UI_ASSERTION_KINDS = frozenset({
     'XCTAssertLessThanOrEqual', 'XCTAssertNil', 'XCTAssertNotNil', 'XCTAssertIdentical',
     'XCTAssertNotIdentical', 'XCTAssertThrowsError', 'XCTAssertNoThrow', 'XCTFail',
 })
+UI_XCTFAIL_REASON_PREFIXES = (
+    ('앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다', 'applicationNotRunning'),
+    ('필수 UI 요소가 없다', 'missingElement'),
+    ('작업 행을 포함하는 스크롤 컨테이너가 없다', 'rowScrollContainerMissing'),
+    ('대상 UI를 포함하는 스크롤 컨테이너가 없다', 'scrollContainerMissing'),
+    ('UI 요소에 도달할 수 없다', 'unhittableOrDisabled'),
+)
 UI_ANY_CASE_EVENT_PATTERN = re.compile(
     r"Test Case '[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]' "
     r'(started|passed|failed|skipped)(?=[\s.]|$)')
@@ -333,6 +340,12 @@ def report_ui_first_failure(lines):
             first_failure = {'scope': 'stdoutOnly', 'method': case[1],
                              'sourceFile': UI_FAILURE_SOURCE_FILE, 'line': line_number,
                              'assertionKind': kind}
+            if kind == 'XCTFail':
+                # 승인한 source·case의 고정 접두사만 enum으로 바꾼다. 뒤쪽 원문은 출력하지 않는다.
+                reason = next((reason for prefix, reason in UI_XCTFAIL_REASON_PREFIXES
+                               if payload.startswith('failed - ' + prefix + ': ')), None)
+                if reason is not None:
+                    first_failure['failureReason'] = reason
     if first_failure is not None:
         print('::notice::UI first failure: ' + json.dumps(first_failure))
     if invalid_count:

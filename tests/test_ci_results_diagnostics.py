@@ -82,6 +82,10 @@ def ui_failure_line(method=METHODS[0], source='Tests/MirrorUITests/MirrorUITests
     return f'{source}:{line}: error: {owner}{assertion} expected/actual=/private/{PRIVATE}'
 
 
+def ui_failure_message_line(message, **arguments):
+    return ui_failure_line(**arguments).replace('expected/actual=/private/' + PRIVATE, message)
+
+
 def viewport_line(payload):
     return 'UI viewport diagnostic: ' + json.dumps(payload)
 
@@ -906,6 +910,106 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
         self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
         self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': len(invalid_lines)}])
         self.assertNotIn('::error::', output)
+
+    def test_xctfail_reason_identifies_fixed_helper_branches_at_forwarded_caller_284(self):
+        branches = (
+            ('앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다', 'applicationNotRunning'),
+            ('필수 UI 요소가 없다', 'missingElement'),
+            ('작업 행을 포함하는 스크롤 컨테이너가 없다', 'rowScrollContainerMissing'),
+            ('대상 UI를 포함하는 스크롤 컨테이너가 없다', 'scrollContainerMissing'),
+            ('UI 요소에 도달할 수 없다', 'unhittableOrDisabled'),
+        )
+        log = self.root / 'ui-caller-reasons.log'
+        for explicit in (True, False):
+            for prefix, reason in branches:
+                with self.subTest(explicit=explicit, reason=reason):
+                    message = prefix + ': capture.open. identifier=/private/' + PRIVATE + ' AX frame=(1,2,3,4)'
+                    log.write_text('\n'.join([
+                        started_line(METHODS[2]),
+                        ui_failure_message_line(message, method=METHODS[2], line='284', kind='XCTFail',
+                                                explicit=explicit),
+                        case_line(METHODS[2], event='failed'),
+                    ]) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': METHODS[2],
+                        'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 284,
+                        'assertionKind': 'XCTFail', 'failureReason': reason,
+                    }])
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [])
+                    self.assertNotIn('capture.open', output)
+                    self.assertNotIn('AX frame=', output)
+                    self.assertNotIn(prefix, output)
+
+    def test_xctfail_reason_requires_exact_message_prefix_boundary_and_preserves_legacy_assertions(self):
+        prefix = 'UI 요소에 도달할 수 없다'
+        messages = (
+            prefix, prefix + '가: ' + PRIVATE, prefix + ':capture.open ' + PRIVATE,
+            prefix + '. capture.open ' + PRIVATE, '다른 실패: ' + prefix + ': ' + PRIVATE,
+            '알 수 없는 실패: ' + PRIVATE,
+        )
+        log = self.root / 'ui-reason-boundaries.log'
+        samples = [(message, 'XCTFail') for message in messages]
+        samples += [(prefix + ': capture.open ' + PRIVATE, 'XCTAssertTrue'),
+                    (prefix + ': capture.open ' + PRIVATE, 'XCTAssertEqual')]
+        for message, kind in samples:
+            with self.subTest(message=message, kind=kind):
+                log.write_text(ui_failure_message_line(message, method=METHODS[2], line='284', kind=kind) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': METHODS[2],
+                    'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 284,
+                    'assertionKind': kind,
+                }])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [])
+
+    def test_xctfail_reason_keeps_first_failure_validation_private_filter_and_actions_outputs(self):
+        known = 'UI 요소에 도달할 수 없다: capture.open. '
+        private = ('/private/' + PRIVATE + ' UI row scroll owner: frame=(1,2,3,4) '
+                   + 'Test run with 999 tests passed ' + started_line(METHODS[1])
+                   + ' ' + screenshot_line('detail', '999'))
+        recognized = ui_failure_message_line(known + private, method=METHODS[2], line='284', kind='XCTFail')
+        unknown = ui_failure_message_line('알 수 없는 실패: ' + private,
+                                          method=METHODS[2], line='284', kind='XCTFail')
+        mixed = recognized + ' ' + keyboard_line({
+            'phase': 'continueReadiness', 'continueCandidateCount': 0,
+            'keyboardBoundsValid': False, 'elapsedMilliseconds': 0,
+        })
+        invalid = [ui_failure_message_line(known + private, source='OtherTests.swift', kind='XCTFail'),
+                   ui_failure_message_line(known + private, method='test' + PRIVATE, kind='XCTFail')]
+        log = self.root / 'ui-reason-first-and-private.log'
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        for first, expected_reason in ((unknown, None), (recognized, 'unhittableOrDisabled')):
+            with self.subTest(expected_reason=expected_reason):
+                log.write_text('\n'.join([started_line(METHODS[2])] + invalid + [
+                    mixed, first, recognized.replace(':284:', ':939:'),
+                    'error: safe unrelated compiler failure',
+                ]) + '\n')
+                with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                        'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper, 'record') as record:
+                    output = self.capture(helper.diagnostics, log)
+                expected = {'scope': 'stdoutOnly', 'method': METHODS[2],
+                            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 284,
+                            'assertionKind': 'XCTFail'}
+                if expected_reason is not None:
+                    expected['failureReason'] = expected_reason
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [expected])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 2}])
+                self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('capture.open', output)
+                self.assertNotIn('UI row scroll owners:', output)
+                self.assertNotIn('Swift Testing completion reports:', output)
+                self.assertNotIn(METHODS[1], output)
+                self.assertNotIn('executedTests', output)
+                self.assertIn('::error::error: safe unrelated compiler failure', output)
+                record.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
 
     def test_ui_assertion_filter_preserves_real_swift_compiler_error_in_the_same_source(self):
         line = "Tests/MirrorUITests/MirrorUITests.swift:12:5: error: cannot find 'SyntheticCompilerAPI' in scope"
