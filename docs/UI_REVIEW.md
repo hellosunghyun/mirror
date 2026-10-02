@@ -160,6 +160,10 @@ S-02/S-03은 숫자 count를 요구하지 않는다. Form의 선택 count만 제
 
 Simulator unit 경로에는 고정 `scope/platform/phase/state` notice만 추가한다. 선택·컴파일·boot·준비 대기·단위 실행·요약·bundle·packaging 명령의 시작과 반환을 구분하며 경로·UDID·원문 로그·계정·서명 정보를 넣지 않는다. 기존 명령·인수·jobs2·trap·실패 코드·GITHUB_OUTPUT·gate·runner·SDK·시간 제한은 유지한다. 출력은 best-effort이고 마지막 미완료 marker는 마지막으로 관측된 구간만 뜻하며 시간 초과 원인을 증명하지 않는다. 로컬에서는 구문·diff만 확인하고 실제 검사는 Actions에서 수행한다.
 
+`be2fdf9`의 [Dark9](https://github.com/hellosunghyun/mirror/actions/runs/36985572406)는 도메인159개·Mac 단위159개/UI6개·iPad 단위156개/UI6개와 각 guard·최종 xcresult6passed를 통과했다. Phone은 컴파일146초·receipt 확인 뒤 검색155행 `button.isHittable`에서 처음 실패했다. 전면 앱·유일 probe 소유 창·실제 상태 표시줄 경계·키보드 존재·고유 Button 및 양의 경계 검사 뒤에 도달했다. 실패 버튼은 추가·설정 중 어느 것인지 미확정이며, `continueAfterFailure=false` 때문에 그 버튼의 enabled·상태 표시줄 비교는 미도달이다. 이 결과만으로 실제 겹침이나 원인을 확정하지 않는다. aggregate 실패로 새로운43장 원본은 게시되지 않았다.
+
+후속 관측은 기존 각 버튼의 frame과 한 번의 `isHittable` 조회만 재사용한다. 고정 두 identifier·메서드와 hittable·창 안 경계·상태 표시줄 아래 배치의 Bool을 원래 assertion 직전에 기록한다. 좌표·제목·AX 원문·추가 조회는 없다. 공개 parser는 실제 유일한 활성 사례, exact5키, 진짜 Bool, 추가→설정의 길이1–2 prefix만 허용하며 무효 transcript는 전체를 거부한다. 원래 enabled 조회와 모든 assertions·여섯 사례·43단계·시간 제한·성공 게이트는 유지한다. 이 관측 추가는 UI 수정이나 전체 통과를 의미하지 않으며, 원인은 새 Actions 결과와 실제 원본에서 확인한다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.

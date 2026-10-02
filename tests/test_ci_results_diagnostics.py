@@ -42,6 +42,8 @@ UI_PHASE_NOTICE = '::notice::UI test phase diagnostic: '
 UI_PHASE_REJECTED_NOTICE = '::notice::UI test phase diagnostic rejected: '
 UI_NATIVE_SCREENSHOT_NOTICE = '::notice::UI native screenshot diagnostic: '
 UI_NATIVE_SCREENSHOT_REJECTED_NOTICE = '::notice::UI native screenshot diagnostic rejected: '
+UI_TOOLBAR_NOTICE = '::notice::UI search toolbar diagnostic: '
+UI_TOOLBAR_REJECTED_NOTICE = '::notice::UI search toolbar diagnostic rejected: '
 PHASE_METHOD = METHODS[4]
 NATIVE_SCREENSHOT_METHOD = METHODS[0]
 PHASES = (
@@ -102,6 +104,15 @@ def native_screenshot_line(payload):
     return 'UI native screenshot diagnostic: ' + json.dumps(payload)
 
 
+def toolbar_line(payload):
+    return 'UI search toolbar diagnostic: ' + json.dumps(payload)
+
+
+def toolbar_payload(identifier='capture.open', **observations):
+    return {'method': PHASE_METHOD, 'identifier': identifier,
+            'hittable': True, 'belowStatus': True, 'frameInsideWindow': True, **observations}
+
+
 def started_line(method, owner='MirrorIOSUITests.MirrorUITests'):
     return f"Test Case '-[{owner} {method}]' started."
 
@@ -146,6 +157,170 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_toolbar_diagnostic_preserves_false_observations_and_incomplete_ordered_prefixes(self):
+        log = self.root / 'toolbar-prefix.log'
+        for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests'):
+            for hittable in (False, True):
+                for below_status in (False, True):
+                    for inside_window in (False, True):
+                        for length in (1, 2):
+                            with self.subTest(owner=owner, hittable=hittable, below=below_status,
+                                              inside=inside_window, length=length):
+                                payloads = [toolbar_payload(identifier, hittable=hittable,
+                                                            belowStatus=below_status,
+                                                            frameInsideWindow=inside_window)
+                                            for identifier in ('capture.open', 'settings.button')[:length]]
+                                log.write_text('\n'.join([started_line(PHASE_METHOD, owner)]
+                                                         + ['fatal: /private/' + PRIVATE + ' ' + toolbar_line(payload)
+                                                            for payload in payloads]
+                                                         + [case_line(PHASE_METHOD, event='failed')]) + '\n')
+                                output = self.capture(helper.diagnostics, log)
+                                self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [{
+                                    'scope': 'stdoutOnly', 'method': PHASE_METHOD,
+                                    'buttons': [{key: payload[key] for key in
+                                                 ('identifier', 'hittable', 'belowStatus', 'frameInsideWindow')}
+                                                for payload in payloads],
+                                }])
+                                self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [])
+                                self.assertNotIn('::error::', output)
+        self.assertEqual(self.capture(helper.report_ui_toolbar_diagnostics, []), '')
+
+    def test_toolbar_diagnostic_requires_unique_active_tomorrow_case_and_ignores_forged_events(self):
+        log = self.root / 'toolbar-active.log'
+        prefixes = [[], [started_line(METHODS[0])], [started_line(PHASE_METHOD, 'OtherTests')],
+                    [started_line(PHASE_METHOD), started_line(METHODS[0])],
+                    [started_line(PHASE_METHOD), case_line(PHASE_METHOD)],
+                    [started_line(PHASE_METHOD), "Test Case '-[broken]' started."],
+                    [phase_line({'method': PHASE_METHOD, 'phase': 'started',
+                                 'private': started_line(PHASE_METHOD) + PRIVATE})]]
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                log.write_text('\n'.join(prefix + [toolbar_line(toolbar_payload())]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+        log.write_text('\n'.join([started_line(PHASE_METHOD), started_line(METHODS[0]),
+                                  case_line(METHODS[0]), toolbar_line(toolbar_payload(hittable=False))]) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(len(self.notices(output, UI_TOOLBAR_NOTICE)), 1)
+        self.assertFalse(self.notices(output, UI_TOOLBAR_NOTICE)[0]['buttons'][0]['hittable'])
+
+    def test_toolbar_diagnostic_rejects_wrong_order_duplicates_and_extra_records_as_whole_transcript(self):
+        capture, settings = toolbar_payload(), toolbar_payload('settings.button')
+        sequences = ([settings], [capture, capture], [capture, settings, capture],
+                     [capture, settings, settings])
+        log = self.root / 'toolbar-order.log'
+        for sequence in sequences:
+            with self.subTest(sequence=sequence):
+                log.write_text('\n'.join([started_line(PHASE_METHOD)]
+                                         + [toolbar_line(payload) for payload in sequence]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_toolbar_diagnostic_rejects_bool_as_int_private_values_and_nonexact_schema(self):
+        valid = toolbar_payload('settings.button')
+        invalid = []
+        for key in ('hittable', 'belowStatus', 'frameInsideWindow'):
+            invalid += [{**valid, key: value} for value in (0, 1, 0.0, 'true', None, [], {}, PRIVATE)]
+        for key in ('method', 'identifier'):
+            invalid += [{**valid, key: value} for value in (PRIVATE, True, None, [], {})]
+        invalid += [{**valid, 'method': METHODS[0]}, {**valid, 'identifier': 'task.complete'},
+                    {**valid, 'private': PRIVATE}, {**valid, 'frame': '/private/' + PRIVATE},
+                    {key: value for key, value in valid.items() if key != 'belowStatus'}, [], None]
+        log = self.root / 'toolbar-schema.log'
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                log.write_text('\n'.join([started_line(PHASE_METHOD), toolbar_line(toolbar_payload()),
+                                          toolbar_line(payload)]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+
+    def test_toolbar_diagnostic_rejects_malformed_duplicate_keys_and_utf8_byte_limit_without_raw_fallback(self):
+        valid = toolbar_payload('settings.button')
+        bad_lines = [toolbar_line(valid) + ' error: /private/' + PRIVATE,
+                     toolbar_line(valid) + ' UI search toolbar diagnostic: ' + PRIVATE,
+                     'UI search toolbar diagnostic: {' + PRIVATE,
+                     'UI search toolbar diagnostic: ' + '[' * 1500 + '0' + ']' * 1500,
+                     toolbar_line(valid).replace('"hittable": true', '"hittable":"' + PRIVATE + '","hittable":true')]
+        log = self.root / 'toolbar-malformed.log'
+        for bad in bad_lines:
+            with self.subTest(bad=bad):
+                log.write_text('\n'.join([started_line(PHASE_METHOD), toolbar_line(toolbar_payload()), bad]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+            output = self.capture(helper.report_ui_toolbar_diagnostics,
+                                  [started_line(PHASE_METHOD), 'UI search toolbar diagnostic: ' + over_limit])
+        self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_toolbar_diagnostic_rejects_cross_channel_markers_and_mixed_case_event_in_both_orders(self):
+        keyboard = {'phase': 'continueReadiness', 'continueCandidateCount': 1,
+                    'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000}
+        old_lines = [store_dedup_line(), keyboard_line(keyboard), viewport_line({}),
+                     native_screenshot_line(native_screenshot_payload()),
+                     phase_line({'method': PHASE_METHOD, 'phase': 'started'}), ui_failure_line(),
+                     started_line(METHODS[0])]
+        log = self.root / 'toolbar-mixed.log'
+        for other in old_lines:
+            for combined in (toolbar_line(toolbar_payload()) + ' ' + other,
+                             other + ' ' + toolbar_line(toolbar_payload())):
+                with self.subTest(combined=combined):
+                    log.write_text('\n'.join([started_line(PHASE_METHOD), combined,
+                                              'error: safe unrelated compiler failure']) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [])
+                    self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+                    for prefix in (STORE_DEDUP_NOTICE, UI_KEYBOARD_NOTICE, UI_VIEWPORT_NOTICE,
+                                   UI_NATIVE_SCREENSHOT_NOTICE, UI_PHASE_NOTICE, UI_FIRST_FAILURE_NOTICE):
+                        self.assertEqual(self.notices(output, prefix), [])
+                    self.assertIn('::error::error: safe unrelated compiler failure', output)
+
+    def test_toolbar_diagnostic_keeps_failure_priority_and_never_writes_success_or_actions_outputs(self):
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999'))
+        log = self.root / 'toolbar-private-gates.log'
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        log.write_text('\n'.join([started_line(PHASE_METHOD),
+                                  toolbar_line(toolbar_payload()),
+                                  toolbar_line({**toolbar_payload('settings.button'), 'private': private}),
+                                  case_line(PHASE_METHOD, event='failed'),
+                                  screenshot_line('detail', '123'), 'error: safe unrelated compiler failure']) + '\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_TOOLBAR_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_TOOLBAR_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertEqual(self.notices(output, SCREENSHOT_NOTICE),
+                         [{'scope': 'stdoutOnly', 'stage': 'detail', 'milliseconds': 123}])
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
+        self.assertNotIn('executedTests', output)
+        self.assertNotIn('"result": "pass"', output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+        self.assertEqual(summary_path.read_text(), 'previous summary\n')
+        log.write_text('\n'.join([started_line(PHASE_METHOD), toolbar_line(toolbar_payload(hittable=False)),
+                                  ui_failure_line(method=PHASE_METHOD, line='155'),
+                                  case_line(PHASE_METHOD, event='failed')]) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(len(self.notices(output, UI_FIRST_FAILURE_NOTICE)), 1)
+        self.assertEqual(len(self.notices(output, UI_TOOLBAR_NOTICE)), 1)
+        self.assertLess(output.index(UI_FIRST_FAILURE_NOTICE), output.index(UI_TOOLBAR_NOTICE))
 
     def test_phase_diagnostic_accepts_actual_unique_case_and_only_ordered_prefixes(self):
         log = self.root / 'phase-prefix.log'

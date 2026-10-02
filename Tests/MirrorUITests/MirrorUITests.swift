@@ -152,7 +152,11 @@ final class MirrorUITests: XCTestCase {
                     XCTFail("상단 버튼의 실제 경계가 유효하지 않다: \(identifier)")
                     throw UIHarnessError.unhittable(identifier)
                 }
-                XCTAssertTrue(button.isHittable, "검색 중에도 상단 버튼을 사용할 수 있다.")
+                let buttonHittable = button.isHittable
+                recordSearchToolbarDiagnostic(identifier: identifier, hittable: buttonHittable,
+                                              frameInsideWindow: windowFrame.contains(frame),
+                                              belowStatus: frame.minY >= statusFrame.maxY)
+                XCTAssertTrue(buttonHittable, "검색 중에도 상단 버튼을 사용할 수 있다.")
                 XCTAssertTrue(button.isEnabled, "검색 중에도 상단 버튼이 활성화되어 있다.")
                 XCTAssertGreaterThanOrEqual(frame.minY, statusFrame.maxY, "상단 버튼은 상태 표시줄과 겹치지 않는다.")
             }
@@ -399,6 +403,21 @@ final class MirrorUITests: XCTestCase {
     private func recordTomorrowPhase(_ phase: TomorrowPhase) {
         // 실제 수행한 단계만 기록한다. 검사 결과는 별도이고 제목·오류 원문·추가 AX 조회는 없다.
         print("UI test phase diagnostic: {\"method\":\"testTomorrowStaysOutOfTodayAndIsSearchableInLibrary\",\"phase\":\"\(phase.rawValue)\"}")
+    }
+
+    private func recordSearchToolbarDiagnostic(identifier: String, hittable: Bool,
+                                               frameInsideWindow: Bool, belowStatus: Bool) {
+        // 원래 검사에서 읽은 Bool과 경계 계산만 기록한다. 추가 AX 조회와 원문 출력은 없다.
+        guard identifier == "capture.open" || identifier == "settings.button" else { return }
+        let diagnostic: [String: Any] = [
+            "method": "testTomorrowStaysOutOfTodayAndIsSearchableInLibrary",
+            "identifier": identifier, "hittable": hittable,
+            "frameInsideWindow": frameInsideWindow, "belowStatus": belowStatus,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            print("UI search toolbar diagnostic: \(json)")
+        }
     }
 
     /// 합성 작업의 실제 앱 화면만 남긴다. 추가 AX 경계는 조회하지 않는다.

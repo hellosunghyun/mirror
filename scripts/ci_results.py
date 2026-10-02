@@ -61,12 +61,14 @@ UI_VIEWPORT_DIAGNOSTIC_MARKER = 'UI viewport diagnostic:'
 UI_KEYBOARD_DIAGNOSTIC_MARKER = 'UI keyboard introduction diagnostic:'
 UI_PHASE_DIAGNOSTIC_MARKER = 'UI test phase diagnostic:'
 UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER = 'UI native screenshot diagnostic:'
+UI_TOOLBAR_DIAGNOSTIC_MARKER = 'UI search toolbar diagnostic:'
 STRUCTURED_DIAGNOSTIC_MARKERS = frozenset({
     STORE_DEDUP_DIAGNOSTIC_MARKER, UI_VIEWPORT_DIAGNOSTIC_MARKER,
     UI_KEYBOARD_DIAGNOSTIC_MARKER, UI_PHASE_DIAGNOSTIC_MARKER,
-    UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER,
+    UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER, UI_TOOLBAR_DIAGNOSTIC_MARKER,
 })
 UI_PHASE_METHOD = 'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary'
+UI_TOOLBAR_IDENTIFIERS = ('capture.open', 'settings.button')
 UI_PHASE_NAMES = (
     'started', 'launched', 'captured', 'reviewOpened', 'tomorrowAssigned', 'reviewClosed',
     'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
@@ -159,6 +161,39 @@ def unique_active_ui_method(active_cases, method):
     owner, actual_method = next(iter(active_cases))
     return ((owner == 'MirrorUITests' or owner.endswith('.MirrorUITests'))
             and actual_method == method)
+
+
+def report_ui_toolbar_diagnostics(lines):
+    active_cases = set()
+    buttons = []
+    invalid_count = 0
+    for line in lines:
+        if UI_TOOLBAR_DIAGNOSTIC_MARKER not in line:
+            track_active_ui_cases(line, active_cases)
+            continue
+        try:
+            candidate = fixed_diagnostic_json(line, UI_TOOLBAR_DIAGNOSTIC_MARKER)
+            if (not isinstance(candidate, dict) or set(candidate) != {
+                    'method', 'identifier', 'hittable', 'belowStatus', 'frameInsideWindow'}
+                    or candidate['method'] != UI_PHASE_METHOD
+                    or not isinstance(candidate['identifier'], str)
+                    or any(type(candidate[key]) is not bool
+                           for key in ('hittable', 'belowStatus', 'frameInsideWindow'))
+                    or not unique_active_ui_method(active_cases, UI_PHASE_METHOD)
+                    or len(buttons) >= len(UI_TOOLBAR_IDENTIFIERS)
+                    or candidate['identifier'] != UI_TOOLBAR_IDENTIFIERS[len(buttons)]):
+                raise ValueError('검색 상단 버튼은 실제 유일한 baseline 사례의 고정 순서 prefix여야 합니다.')
+            buttons.append({key: candidate[key] for key in
+                            ('identifier', 'hittable', 'belowStatus', 'frameInsideWindow')})
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    # 실제 false 판정도 보존한다. 무효 원문이 섞이면 부분 관측을 추정하지 않는다.
+    if invalid_count:
+        print('::notice::UI search toolbar diagnostic rejected: ' + json.dumps({'invalidCount': invalid_count}))
+    elif buttons:
+        print('::notice::UI search toolbar diagnostic: ' + json.dumps({
+            'scope': 'stdoutOnly', 'method': UI_PHASE_METHOD, 'buttons': buttons,
+        }))
 
 
 def report_ui_phase_diagnostics(lines):
@@ -548,6 +583,7 @@ def diagnostics(path):
     lines = [line for line in raw_lines
              if not any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)]
     report_ui_first_failure(lines)
+    report_ui_toolbar_diagnostics(raw_lines)
     report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)
     report_ui_native_screenshot_diagnostics(raw_lines)
