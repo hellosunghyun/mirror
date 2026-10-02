@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 struct MirrorCalendarView: View {
+    var compact = false
     @Environment(AppModel.self) private var model
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedDate = Date()
@@ -39,8 +40,8 @@ struct MirrorCalendarView: View {
                     LazyVGrid(columns: columns(availableWidth: geometry.size.width - 40), alignment: .leading, spacing: 16) {
                         ForEach(days, id: \.self) { date in dayCard(date) }
                     }
-                    weeklyBasket
-                    calendarAccess
+                    if !compact || hasWeeklyTasks { weeklyBasket }
+                    if !compact || model.calendarProblem != nil { calendarAccess }
                 }
                 .frame(maxWidth: 1080)
                 .padding(.horizontal, 20)
@@ -66,16 +67,18 @@ struct MirrorCalendarView: View {
         calendarCard {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 24) {
-                    scopePicker.frame(width: 180)
+                    if !compact { scopePicker.frame(width: 180) }
                     datePicker
                 }
                 VStack(alignment: .leading, spacing: 14) {
-                    scopePicker
+                    if !compact { scopePicker }
                     datePicker
                 }
             }
-            Text("할 일은 날짜별 목록에, 실제 마감은 따로 표시해요.")
-                .font(.caption).foregroundStyle(.secondary)
+            if !compact {
+                Text("할 일은 날짜별 목록에, 실제 마감은 따로 표시해요.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
     private var scopePicker: some View {
@@ -160,6 +163,14 @@ struct MirrorCalendarView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+        }
+    }
+
+    private var hasWeeklyTasks: Bool {
+        guard let date = localDate, let week = try? date.mondayWeek() else { return false }
+        return model.tasks.contains {
+            $0.status == .open
+                && $0.plan.target == .week(startDate: week.startDate, endExclusiveDate: week.endExclusiveDate)
         }
     }
 

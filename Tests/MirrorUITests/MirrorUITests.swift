@@ -259,6 +259,31 @@ final class MirrorUITests: XCTestCase {
         XCTAssertFalse(taskRow(title, in: app).exists)
         try showLibrary(in: app)
         XCTAssertTrue(value(of: try requireRow(title, in: app)).contains("아직 정하지 않음"), "Q-029: 직전 배치 Undo는 이전 계획을 복원한다.")
+
+        // 목록에서 바로 미루기: 취소는 계획을 유지하고 명시한 내일만 저장한다.
+        let row = try requireRow(title, in: app)
+        let taskID = try XCTUnwrap(row.identifier.components(separatedBy: "task.row.").last)
+        XCTAssertNotNil(UUID(uuidString: taskID), "미루기는 화면에 보인 작업 ID를 사용한다.")
+        let postponeID = "task.postpone.\(taskID)"
+        try activate(postponeID, in: app)
+        XCTAssertEqual(displayedText(of: try requireElement("plan.task.\(taskID)", in: app)), title)
+        XCTAssertTrue(try requireElement("plan.tomorrow", in: app).isHittable)
+        try activate("plan.cancel", in: app)
+        try requireNoElement("plan.cancel", in: app)
+        XCTAssertTrue(value(of: try requireRow(title, in: app)).contains("아직 정하지 않음"),
+                      "날짜 선택 취소는 원래 계획을 변경하지 않는다.")
+
+        try activate(postponeID, in: app)
+        try activate("plan.tomorrow", in: app)
+        try requireNoElement("plan.cancel", in: app)
+        try showToday(in: app)
+        XCTAssertFalse(taskRow(title, in: app).exists, "목록에서 내일로 미룬 일은 오늘에 들어가지 않는다.")
+        try showLibrary(in: app)
+        // 초기 보관함은 날짜 미정 목록이므로 전체 검색을 명시한다.
+        try replaceText(in: requireElement("library.search", in: app), with: "UI undo review destination", app: app)
+        let postponed = try requireRow(title, in: app)
+        XCTAssertTrue(value(of: postponed).contains("10월 1일"))
+        XCTAssertTrue(value(of: postponed).contains("미완료"), "미루기는 완료가 아니다.")
     }
 
     // XCTestCase 자체의 actor 격리를 바꾸거나 setUp override를 격리하지 않는다.

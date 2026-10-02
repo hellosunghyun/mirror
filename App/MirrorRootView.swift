@@ -126,7 +126,7 @@ struct MirrorRootView: View {
             if showCalendar {
                 Divider()
                 NavigationStack {
-                    MirrorCalendarView().accessibilityIdentifier("ipad.adjacentCalendar")
+                    MirrorCalendarView(compact: true).accessibilityIdentifier("ipad.adjacentCalendar")
                 }
                 .frame(width: 320)
                 .frame(maxHeight: .infinity)
