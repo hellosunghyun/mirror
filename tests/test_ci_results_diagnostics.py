@@ -130,7 +130,8 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                                              + [case_line(PHASE_METHOD, event='failed')]) + '\n')
                     output = self.capture(helper.diagnostics, log)
                     self.assertEqual(self.notices(output, UI_PHASE_NOTICE),
-                                     [{'scope': 'stdoutOnly', **payload} for payload in payloads])
+                                     [{'scope': 'stdoutOnly', 'method': PHASE_METHOD,
+                                       'phases': list(PHASES[:length])}])
                     self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [])
                     self.assertNotIn('/private/', output)
                     self.assertNotIn('::error::', output)
@@ -154,7 +155,38 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
         log.write_text('\n'.join([started_line(PHASE_METHOD), started_line(METHODS[0]),
                                   case_line(METHODS[0]), phase_line(valid)]) + '\n')
         output = self.capture(helper.diagnostics, log)
-        self.assertEqual(self.notices(output, UI_PHASE_NOTICE), [{'scope': 'stdoutOnly', **valid}])
+        self.assertEqual(self.notices(output, UI_PHASE_NOTICE),
+                         [{'scope': 'stdoutOnly', 'method': PHASE_METHOD, 'phases': ['started']}])
+
+    def test_full_phase_prefix_is_one_notice_after_failure_keyboard_viewport_and_native_diagnostics(self):
+        keyboard = {'phase': 'continueReadiness', 'continueCandidateCount': 0,
+                    'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000,
+                    'continueQueryCount': 1, 'continueExistingCount': 1,
+                    'continueHittableCount': 0, 'continueEnabledCount': 0,
+                    'continueInKeyboardCount': 0}
+        viewport = {'orientation': 'landscape', 'stableSamples': 0, 'elapsedMilliseconds': 15000,
+                    'checks': {'columnsSeparate': False}}
+        native = native_screenshot_payload()
+        log = self.root / 'phase-notice-priority.log'
+        log.write_text('\n'.join(
+            [started_line(PHASE_METHOD)]
+            + [phase_line({'method': PHASE_METHOD, 'phase': phase}) for phase in PHASES]
+            + [case_line(PHASE_METHOD, event='failed'), started_line(NATIVE_SCREENSHOT_METHOD),
+               native_screenshot_line(native), viewport_line(viewport), keyboard_line(keyboard),
+               ui_failure_line(line='481', kind='XCTAssertEqual'), case_line(event='failed'),
+               screenshot_line('detail', '123')]
+        ) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_PHASE_NOTICE),
+                         [{'scope': 'stdoutOnly', 'method': PHASE_METHOD, 'phases': list(PHASES)}])
+        self.assertEqual(self.notices(output, UI_PHASE_REJECTED_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [{'scope': 'stdoutOnly', **keyboard}])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_NOTICE), [{'scope': 'stdoutOnly', **viewport}])
+        self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE), [{'scope': 'stdoutOnly', **native}])
+        priority = (UI_FIRST_FAILURE_NOTICE, UI_KEYBOARD_NOTICE, UI_VIEWPORT_NOTICE,
+                    UI_NATIVE_SCREENSHOT_NOTICE, UI_PHASE_NOTICE, '::notice::UI stdout diagnostics: ')
+        for earlier, later in zip(priority, priority[1:]):
+            self.assertLess(output.index(earlier), output.index(later))
 
     def test_phase_diagnostic_rejects_wrong_order_duplicate_schema_and_byte_limit_as_whole_transcript(self):
         valid = {'method': PHASE_METHOD, 'phase': 'started'}
@@ -211,6 +243,44 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                     self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), [])
                     self.assertNotIn('/private/', output)
                     self.assertNotIn('::error::', output)
+
+    def test_native_screenshot_cli_only_reports_strict_metadata_without_success_or_actions_writes(self):
+        valid = native_screenshot_payload()
+        samples = (
+            ('', [], []),
+            ('\n'.join([started_line(NATIVE_SCREENSHOT_METHOD),
+                        'fatal: /private/' + PRIVATE + ' ' + native_screenshot_line(valid),
+                        ui_failure_line(), case_line(event='failed'),
+                        'Test run with 999 tests passed after 0.2 seconds.']),
+             [{'scope': 'stdoutOnly', **valid}], []),
+            ('\n'.join([started_line(NATIVE_SCREENSHOT_METHOD),
+                        native_screenshot_line({**valid, 'private': PRIVATE}), case_line()]),
+             [], [{'invalidCount': 1}]),
+        )
+        log = self.root / 'native-cli.log'
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        for text, expected, rejected in samples:
+            with self.subTest(text=text):
+                log.write_text(text)
+                with mock.patch.object(helper.sys, 'argv',
+                                       ['ci_results.py', 'native-screenshot-diagnostics', str(log)]), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                            'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper, 'record') as record, \
+                        mock.patch.object(helper, 'diagnostics') as diagnostics:
+                    output = self.capture(helper.main)
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_NOTICE), expected)
+                self.assertEqual(self.notices(output, UI_NATIVE_SCREENSHOT_REJECTED_NOTICE), rejected)
+                self.assertEqual(len(output.splitlines()), len(expected) + len(rejected))
+                record.assert_not_called()
+                diagnostics.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
+                self.assertNotIn('executedTests', output)
+                self.assertNotIn('"result": "pass"', output)
 
     def test_native_screenshot_diagnostic_rejects_unknown_schema_nonfinite_bool_and_private_hash(self):
         valid = native_screenshot_payload()

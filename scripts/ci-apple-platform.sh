@@ -381,6 +381,8 @@ if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Deb
   ci_phase='UI 테스트 결과 요약'
   xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"
   xcrun xcresulttool get test-results tests --path "$result_dir/UI.xcresult" > "$result_dir/ui-tests.json"
+  # 동일 원본 캡처의 허용 metadata만 보고하며 테스트·게시 성공 판정에는 사용하지 않는다.
+  python3 scripts/ci_results.py native-screenshot-diagnostics "$result_dir/ui.log" || true
   python3 scripts/ci_results.py ui-tree "$result_dir/ui-tests.json"
   ci_phase='필수 UI bundle·baseline·현재 선언의 실제 실행 검증'
   python3 scripts/ci_results.py ui-guard "$result_dir/ui-tests.json" "${scheme}UITests" Tests/MirrorUITests

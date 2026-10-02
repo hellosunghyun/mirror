@@ -169,9 +169,12 @@ def report_ui_phase_diagnostics(lines):
     # malformed·중복·순서 오류가 하나라도 있으면 그 transcript의 prefix도 추정하지 않는다.
     if invalid_count:
         print('::notice::UI test phase diagnostic rejected: ' + json.dumps({'invalidCount': invalid_count}))
-    else:
-        for report in reports:
-            print('::notice::UI test phase diagnostic: ' + json.dumps(report))
+    elif reports:
+        # 단계마다 주석을 만들지 않고 검증한 prefix 전체를 한 번에 보존한다.
+        print('::notice::UI test phase diagnostic: ' + json.dumps({
+            'scope': 'stdoutOnly', 'method': UI_PHASE_METHOD,
+            'phases': [report['phase'] for report in reports],
+        }))
 
 
 def report_ui_native_screenshot_diagnostics(lines):
@@ -476,10 +479,10 @@ def diagnostics(path):
     lines = [line for line in raw_lines
              if not any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)]
     report_ui_first_failure(lines)
-    report_ui_phase_diagnostics(raw_lines)
-    report_ui_native_screenshot_diagnostics(raw_lines)
     report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)
+    report_ui_native_screenshot_diagnostics(raw_lines)
+    report_ui_phase_diagnostics(raw_lines)
     report_store_dedup_diagnostics(raw_lines)
     # 유효·무효 구조화 원문은 다른 진단·오류 fallback에도 섞지 않는다.
     lines = [line for line in lines if not is_ui_failure_candidate(line)]
@@ -596,6 +599,9 @@ def main():
     mode, path, *additional_paths = sys.argv[1:]
     if mode == 'diagnostics':
         diagnostics(path)
+        return
+    if mode == 'native-screenshot-diagnostics':
+        report_ui_native_screenshot_diagnostics(Path(path).read_text(errors='replace').splitlines())
         return
     if mode == 'swift':
         log = Path(path).read_text(errors='replace')

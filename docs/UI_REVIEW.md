@@ -57,6 +57,10 @@
 
 다음 진단은 동작·assertions·시간 제한을 유지한다. 내일 작업 사례에 수행 단계의 고정 enum만 기록하며 각 검사 결과는 별도로 확인한다. Continue 후보는 기존 exists→hittable→enabled→키보드 포함 조회의 단조 감소 수만 집계해 추가 AX 조회 없이 제외 지점을 좁힌다. 가로 한 장에서는 동일 native screenshot의 UIImage 방향 enum·크기·scale·CGImage 크기·정식 PNG hash를 읽고, SDK export 원본과 정제본의 IHDR/IDAT hash 및 제한된 EXIF orientation 숫자만 비교한다. UIImage enum과 EXIF 숫자는 다른 체계이며 직접 등치하지 않는다. 원문 metadata·좌표·제목·추가 자산·이미지 보정은 없다. strict schema·활성 사례 귀속·중복/혼합/손상/개인정보 차단 회귀를 추가하고 테스트 실행은 새 Actions에 남긴다.
 
+[후속 실행36942414309](https://github.com/hellosunghyun/mirror/actions/runs/36942414309), `f043b03`·build37은 준비·도메인159개와 Mac·iPad의 실제 UI6개씩을 통과했다. Mac 컴파일25초·UI481초, iPad 컴파일186초·UI909초와 각 receipt를 확인했다. iPhone은 컴파일157초·receipt 뒤 최초 capture의 Continue 후보 수 검사481행에서 실패했다. 공개 결과에 실제 후보 수·제외 지점·최종 xcresult 수는 없어 미확정이다. 내일 작업의 수행 단계도 started부터 todayExcluded까지7개만 관측했다. aggregate 실패로 화면·설치 게시가 모두 skipped되어 새37 원본·앱 자산은 없다.
+
+후속 진단은 첫 실패·keyboard·viewport를 먼저 표시하고, 검증된 내일 작업 수행 단계 prefix를 하나의 배열 주석으로 집약한다. 원본 로그의19단계·활성 사례 귀속·순서·중복·잘못된 값 거절 계약은 유지한다. 성공한 UI 실행에서도 동일 native screenshot의 허용 metadata만 별도로 보고한다. 이 보고는 테스트·게시 성공 판정이나 Actions 출력값을 만들지 않는다. 공개 HTML의 주석 총수·페이지네이션 경로는 확인하지 못해 이전 진단 누락의 원인으로 단정하지 않는다. 테스트·빌드는 GitHub Actions에서만 다시 확인하며 기존 모든 assertions·6사례·43장·시간 제한은 유지한다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
