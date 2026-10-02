@@ -121,20 +121,13 @@ struct MirrorRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     @ViewBuilder private var compactNavigation: some View {
-        let tabs = TabView(selection: destinationSelection) {
+        TabView(selection: destinationSelection) {
             ForEach(MirrorDestination.allCases) { destination in
                 Tab(destination.title, systemImage: destination.symbol, value: destination) {
                     mainContent(destination)
                 }
             }
         }
-        #if os(iOS)
-        if usesTabStatusBar {
-            tabs.safeAreaBar(edge: .bottom) { statusBar }
-        } else { tabs }
-        #else
-        tabs
-        #endif
     }
     private var isTaskInspectorVisible: Bool {
         model.preferences.onboardingComplete && !model.isLoading && !model.showReview && model.selectedTask != nil
@@ -151,19 +144,7 @@ struct MirrorRootView: View {
     }
     private func mainContent(_ destination: MirrorDestination, showCalendar: Bool = false) -> some View {
         HStack(spacing: 0) {
-            NavigationStack {
-                content(destination)
-                    #if os(iOS)
-                    .navigationBarTitleDisplayMode(.inline)
-                    #endif
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(MirrorPalette.canvas)
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if !usesTabStatusBar { statusBar }
-                    }
-                    .toolbar { commonToolbar }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            mainNavigation(destination)
             #if os(iOS)
             .toolbarMinimizationBehavior(isCompact ? .never : .automatic, for: .navigationBar)
             #endif
@@ -179,6 +160,28 @@ struct MirrorRootView: View {
                 .frame(maxHeight: .infinity)
             }
         }
+    }
+    @ViewBuilder private func mainNavigation(_ destination: MirrorDestination) -> some View {
+        let navigation = NavigationStack {
+            content(destination)
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(MirrorPalette.canvas)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if !usesTabStatusBar { statusBar }
+                }
+                .toolbar { commonToolbar }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #if os(iOS)
+        if usesTabStatusBar {
+            navigation.safeAreaBar(edge: .bottom) { statusBar }
+        } else { navigation }
+        #else
+        navigation
+        #endif
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: commonToolbarPlacement) {
