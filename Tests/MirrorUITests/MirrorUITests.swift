@@ -103,16 +103,26 @@ final class MirrorUITests: XCTestCase {
         #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
             lastActionDescription = "iPhone 검색 중 상태 표시줄과 상단 버튼 배치"
-            let statusBar = app.statusBars.firstMatch
-            guard statusBar.exists else {
-                XCTFail("검색 중 상단 버튼의 배치를 검증할 실제 상태 표시줄이 없다.")
-                throw UIHarnessError.missingElement("statusBar")
+            let probes = app.descendants(matching: .any).matching(identifier: "ui.nativeStatusBar")
+            guard app.state == .runningForeground, app.windows.count == 1, probes.count == 1 else {
+                XCTFail("상태 표시줄 경계는 전면 앱의 유일한 창에서 실제 시스템 값을 관측해야 한다.")
+                throw UIHarnessError.missingElement("nativeStatusBarScope")
             }
-            let statusFrame = statusBar.frame
-            guard [statusFrame.minX, statusFrame.minY, statusFrame.width, statusFrame.height].allSatisfy({ $0.isFinite }),
-                  statusFrame.width > 0, statusFrame.height > 0 else {
+            let coordinates = value(of: probes.firstMatch).split(separator: ",", omittingEmptySubsequences: false)
+            guard coordinates.count == 4,
+                  let x = Double(coordinates[0]), let y = Double(coordinates[1]),
+                  let width = Double(coordinates[2]), let height = Double(coordinates[3]) else {
+                XCTFail("실제 시스템 상태 표시줄의 경계를 읽지 못했다.")
+                throw UIHarnessError.unexpectedValue("nativeStatusBarFrame")
+            }
+            let statusFrame = CGRect(x: x, y: y, width: width, height: height)
+            let windowFrame = app.windows.firstMatch.frame
+            guard [statusFrame, windowFrame].allSatisfy({ frame in
+                [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite })
+                    && frame.width > 0 && frame.height > 0
+            }), windowFrame.contains(statusFrame) else {
                 XCTFail("상태 표시줄의 실제 경계가 유효하지 않다.")
-                throw UIHarnessError.unexpectedValue("statusBarFrame")
+                throw UIHarnessError.unexpectedValue("nativeStatusBarFrame")
             }
             let keyboard = app.keyboards.firstMatch
             guard keyboard.exists else {
@@ -717,7 +727,7 @@ final class MirrorUITests: XCTestCase {
                 candidates.removeAll(keepingCapacity: true)
                 enabledFrameDiagnostics.removeAll(keepingCapacity: true)
                 if keyboardBoundsValid {
-                    let buttons = continueButtons.allElementsBoundByIndex
+                    let buttons = continueButtons.allElementsBoundByAccessibilityElement
                     continueQueryCount = buttons.count
                     var enabledButtonsWithAreaCount = 0
                     for button in buttons {
@@ -755,9 +765,9 @@ final class MirrorUITests: XCTestCase {
                         introductionTextVisible = introductionTexts.count == 1 && introduction.isHittable
                             && usableBounds(textBounds)
                         if introductionTextVisible, Date() < introductionDeadline {
-                            let windows = introductionWindows.allElementsBoundByIndex
+                            let windows = introductionWindows.allElementsBoundByAccessibilityElement
                             introductionWindowCount = windows.count
-                            let contexts = introductionContexts.allElementsBoundByIndex
+                            let contexts = introductionContexts.allElementsBoundByAccessibilityElement
                             var deepestContexts: [XCUIElement] = []
                             var examinedAllContexts = true
                             for context in contexts {
@@ -776,26 +786,28 @@ final class MirrorUITests: XCTestCase {
                                 let context = deepestContexts[0]
                                 let contextBounds = context.frame
                                 let windowBounds = windows[0].frame
-                                let ownedButtons = context.buttons.matching(continuePredicate)
                                 introductionContextValid = usableBounds(contextBounds) && usableBounds(windowBounds)
                                     && windowBounds.contains(contextBounds)
                                     && contextBounds.width * contextBounds.height < windowBounds.width * windowBounds.height
                                     && contextBounds.contains(textBounds)
                                     && contextBounds.intersects(keyboardBounds)
                                     && context.staticTexts.matching(introductionPredicate).count == 1
-                                    && ownedButtons.count == 1
                                 if introductionContextValid {
-                                    let ownedButton = ownedButtons.firstMatch
-                                    introductionContextValid = ownedButton.exists && ownedButton.isHittable && ownedButton.isEnabled
+                                    let ownedButtons = context.buttons.matching(continuePredicate).allElementsBoundByAccessibilityElement
+                                    introductionContextValid = ownedButtons.count == 1
                                     if introductionContextValid {
-                                        let ownedBounds = ownedButton.frame
-                                        introductionContextValid = usableBounds(ownedBounds)
+                                        let ownedButton = ownedButtons[0]
+                                        introductionContextValid = ownedButton.exists && ownedButton.isHittable && ownedButton.isEnabled
                                         if introductionContextValid {
-                                            let insideIntroduction = contextBounds.contains(ownedBounds)
-                                            continueFrameInsideIntroduction = insideIntroduction
-                                            if insideIntroduction {
-                                                candidates = [ownedButton]
-                                                continueInIntroductionCount = 1
+                                            let ownedBounds = ownedButton.frame
+                                            introductionContextValid = usableBounds(ownedBounds)
+                                            if introductionContextValid {
+                                                let insideIntroduction = contextBounds.contains(ownedBounds)
+                                                continueFrameInsideIntroduction = insideIntroduction
+                                                if insideIntroduction {
+                                                    candidates = [ownedButton]
+                                                    continueInIntroductionCount = 1
+                                                }
                                             }
                                         }
                                     }

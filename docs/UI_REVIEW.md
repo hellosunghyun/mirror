@@ -138,6 +138,18 @@ Mac14에서는 확정 창잘림·빈상세·과도한완료버튼 blocker/P2가 
 
 S-02/S-03은 숫자 count를 요구하지 않는다. Form의 선택 count만 제거하고 Q-003의 500 확장 문자소 제한·정확한 고정 오류·자동 잘림 금지·실패 후 원문·복구 동작은 유지한다. 기존 501자 UI 사례는 그대로다. 기존 내일/검색 사례의 Phone 분기에는 실제 상태 표시줄·검색 키보드와 고유 상단 Button의 경계·조작 가능·활성 상태를 요구하고 Button.minY ≥ StatusBar.maxY를 비교하는 회귀를 추가한다. AX 경계는 화면 point이며 PNG pixel과 섞지 않는다. 상태 표시줄의 runtime AX 노출과 수정 후 실제 통과는 GitHub Actions에서 확인한다. 누락을 skip하거나 임의 inset·첫 hittable 후보로 대체하지 않는다. 기존 여섯 사례·43장·모든 이전 assertions·대기/시간 제한·guard는 보존한다.
 
+## 시스템 상태 표시줄의 테스트 관측 범위
+
+`bd6899b`의 [Dark6](https://github.com/hellosunghyun/mirror/actions/runs/36974546315)는 준비·도메인159개·Mac 단위159개/UI6개·iPad 단위156개/UI6개 및 두 플랫폼의 guard·최종 xcresult6passed를 통과했다. iPhone은 컴파일201초·receipt verified 후 새 검색 회귀의108행에서 `app.statusBars.firstMatch.exists`가 false여서 실패했다. 이 결과는 시스템 상태 표시줄의 앱 AX 노출 전제가 충족되지 않았다는 증거이며, 실제 상단 버튼의 겹침 재발을 뜻하지 않는다. Phone 전체 실행 수·최종 guard/xcresult는 미관측이다. aggregate 실패·UI 증거 게시 skipped로 새43장 원본은 없고 HTTP 감시는 종료했다. 별도 직접 Swift #124는 취소됐으며 네 경로의 개별 결과나 실행 수를 추론하지 않는다.
+
+후속 검사는 DEBUG·iOS·UI 테스트·iPhone에서만 투명1pt UIKit 관측 뷰를 사용한다. 자체 host 창의 단일 foreground scene·단일 정상 key window와 실제 `statusBarManager`를 요구하고, 시스템 CGRect를 화면 point로 변환해 접근성 value의 기하 숫자4개로 전달한다. 모의 경계·고정 inset·이전 값 캐시는 없으며 UI 화면이나 Release에 표시하지 않는다. 관측 뷰의 정상 AX frame은 바꾸지 않는다. UIKit getter 측정과 AX snapshot의 갱신 시점·실제 OS27 API 컴파일/노출은 후속 Actions에서 확인한다.
+
+테스트는 전면 앱의 유일한 창·관측 ID의 유일성·숫자4개의 정확한 형식·유한한 양의 경계·실제 앱 창 포함을 요구한다. 검색 키보드와 두 실제 Button의 유일성·유효 경계·활성·조작 가능·Button.minY ≥ StatusBar.maxY 비교를 유지한다. 누락·unavailable·중복·잘못된 값은 실패하며 skip·fallback·추가 timeout은 없다. 기존6사례·43stage·모든 이전 assertions·시간 제한·guard를 보존한다. 기하 관측과 원본 PNG의 직접 시각 검토는 별개이며 최신 화면 수용은 대기 중이다.
+
+같은 source의 [AdHoc48](https://github.com/hellosunghyun/mirror/actions/runs/36974546392)은 준비·도메인159개·Mac 단위159개/UI6개·iPad 단위156개/UI6개 및 두 플랫폼의 guard·최종xcresult6passed를 통과했다. Phone의 최초 실패는817행의 키보드 안내 준비 `XCTAssertTrue`다. 안내 본문·고유 컨테이너/창·소유 Continue의 기존 조건이 확인됐지만 continueReadiness는19,225ms로 기존15초를 넘겼다. stdout의 capture/검색2failed·다른4passed는 최종xcresult/guard 수와 구별한다. 검색의 실제 실패 위치는 미관측으로 Dark6의108행을 대입하지 않는다. aggregate 실패·UI 증거/양archive/양publish skipped로 새 화면·설치 자산은 없고 HTTP 감시는 종료했다.
+
+키보드 안내 검사에서 같은 query의 결과를 매 반복 새 AX identity로 바인딩하고, 유효한 컨테이너/본문 검사를 통과한 뒤 소유 버튼 배열을 한 번 읽는다. 인덱스 재조회 비용을 줄일 후보이며19,225ms의 특정 호출 원인이나 실제 시간 개선을 확정한 것은 아니다. 선택 범위·모든 exists/hittable/enabled/기하/가장 깊은 컨테이너/소유 창 조건과 단일15초의 준비·tap·닫힘 예산, 이후 입력 키 검사는 보존한다. 반복 밖 캐시나 성공값 재사용은 없다. 실제 비용과 안정성은 다음 Actions에서 확인한다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.
