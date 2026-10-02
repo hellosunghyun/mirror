@@ -104,9 +104,17 @@ final class MirrorUITests: XCTestCase {
         if UIDevice.current.userInterfaceIdiom == .phone {
             lastActionDescription = "iPhone 검색 중 상태 표시줄과 상단 버튼 배치"
             let probes = app.descendants(matching: .any).matching(identifier: "ui.nativeStatusBar")
-            guard app.state == .runningForeground, app.windows.count == 1, probes.count == 1 else {
-                XCTFail("상태 표시줄 경계는 전면 앱의 유일한 창에서 실제 시스템 값을 관측해야 한다.")
-                throw UIHarnessError.missingElement("nativeStatusBarScope")
+            guard app.state == .runningForeground else {
+                XCTFail("상태 표시줄 관측에는 실제 전면 앱이 필요하다.")
+                throw UIHarnessError.missingElement("nativeStatusBarForeground")
+            }
+            guard app.windows.count == 1 else {
+                XCTFail("상태 표시줄 관측에는 유일한 실제 앱 창이 필요하다.")
+                throw UIHarnessError.missingElement("nativeStatusBarWindow")
+            }
+            guard probes.count == 1 else {
+                XCTFail("상태 표시줄 관측 요소는 실제 앱에 정확히 하나 있어야 한다.")
+                throw UIHarnessError.missingElement("nativeStatusBarProbe")
             }
             let coordinates = value(of: probes.firstMatch).split(separator: ",", omittingEmptySubsequences: false)
             guard coordinates.count == 4,

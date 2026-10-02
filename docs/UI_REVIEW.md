@@ -150,6 +150,10 @@ S-02/S-03은 숫자 count를 요구하지 않는다. Form의 선택 count만 제
 
 키보드 안내 검사에서 같은 query의 결과를 매 반복 새 AX identity로 바인딩하고, 유효한 컨테이너/본문 검사를 통과한 뒤 소유 버튼 배열을 한 번 읽는다. 인덱스 재조회 비용을 줄일 후보이며19,225ms의 특정 호출 원인이나 실제 시간 개선을 확정한 것은 아니다. 선택 범위·모든 exists/hittable/enabled/기하/가장 깊은 컨테이너/소유 창 조건과 단일15초의 준비·tap·닫힘 예산, 이후 입력 키 검사는 보존한다. 반복 밖 캐시나 성공값 재사용은 없다. 실제 비용과 안정성은 다음 Actions에서 확인한다.
 
+`ed4ea9a`의 [Dark7](https://github.com/hellosunghyun/mirror/actions/runs/36978047439)는 준비·도메인159개·Mac 단위159개/UI6개·iPad 단위156개/UI6개 및 두 native의 guard·최종xcresult6passed를 통과했다. Phone 컴파일177초·receipt는 실제 검증됐지만 검색의108행에서 전면 상태·app 창1개·probe1개의 복합 scope guard가 실패했다. 어느 항목이 실패했는지는 미관측이며, native value 파싱이나 실제 버튼 경계 비교에는 도달하지 못했다. D6의 상태 표시줄 AX 부재를 이 source의 원인으로 대입하지 않는다. aggregate 실패·UI 증거 skipped로 새 다크43장은 없고 HTTP 감시를 종료했다.
+
+후속 DEBUG/iOS modifier는 UI 테스트 iPhone에서만 기존 root 콘텐츠를 첫 child로 유지한 ZStack에 투명1pt native 관측 뷰를 명시적 sibling으로 둔다. 배경 장식의 AX 노출 여부를 제어할 후보이며 이전 실패의 원인이나 실제 해결을 확정하지 않는다. Release/Mac에는 modifier가 컴파일되지 않고 iPad/일반 DEBUG 실행은 기존 content를 그대로 반환한다. 공통 inspector는 바깥의 같은 호스트, native getter·상태창·좌표·Button 조건과 모델·명령·저장·화면 상수는 보존한다. 세 기존 scope 조건은 순서대로 별도의 고정 실패행으로 나누어 원인을 구분하며 조건을 없애거나 fallback·skip·새 timeout을 추가하지 않는다. SDK·AX 노출과 새 UI6/43원본 수용은 후속 Actions에서 확인한다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.

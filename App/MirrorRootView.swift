@@ -32,6 +32,9 @@ struct MirrorRootView: View {
                 }
             }
         }
+        #if DEBUG && os(iOS)
+        .modifier(MirrorUITestingStatusBarContainer())
+        #endif
         .inspector(isPresented: taskInspectorPresentation) {
             NavigationStack {
                 if let task = model.selectedTask {
@@ -58,15 +61,6 @@ struct MirrorRootView: View {
         }
         .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
         .onOpenURL { url in Task { await model.handleURL(url) } }
-        #if DEBUG && os(iOS)
-        .background(alignment: .topLeading) {
-            if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
-               UIDevice.current.userInterfaceIdiom == .phone {
-                MirrorUITestingStatusBarProbe()
-                    .frame(width: 1, height: 1)
-            }
-        }
-        #endif
         #if os(macOS)
         // Inspector는 자신의 최소 폭을 별도로 더하므로, 열렸을 때는 탐색 영역만 확보한다.
         .frame(minWidth: isTaskInspectorVisible ? 520 : 760, minHeight: 520)
@@ -218,6 +212,19 @@ struct MirrorRootView: View {
 }
 
 #if DEBUG && os(iOS)
+@MainActor
+private struct MirrorUITestingStatusBarContainer: ViewModifier {
+    func body(content: Content) -> some View {
+        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
+           UIDevice.current.userInterfaceIdiom == .phone {
+            ZStack(alignment: .topLeading) {
+                content
+                MirrorUITestingStatusBarProbe().frame(width: 1, height: 1)
+            }
+        } else { content }
+    }
+}
+
 // 시스템 상태 표시줄은 앱의 AX 트리에 없을 수 있다. 실제 창의 UIKit 경계만 관측한다.
 @MainActor
 private struct MirrorUITestingStatusBarProbe: UIViewRepresentable {
