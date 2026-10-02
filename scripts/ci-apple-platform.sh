@@ -16,6 +16,28 @@ case "$mode" in
   unit|ui-build|ui|all) ;;
   *) echo '지원하지 않는 실행 단계입니다: unit, ui-build, ui 또는 all을 지정하세요.' >&2; exit 2 ;;
 esac
+# 고정 enum의 관측 annotation만 출력한다. 기존 명령의 결과와 gate는 바꾸지 않는다.
+ci_unit_phase_notice() {
+  case "$platform:$mode" in
+    iphone:unit|iphone:all|ipad:unit|ipad:all) ;;
+    *) return 0 ;;
+  esac
+  case "${1-}" in
+    prepare|simulator_select|compile|boot|bootstatus|test|summary|bundle|package) ;;
+    *) return 0 ;;
+  esac
+  case "${2-}" in
+    started|completed|failed) ;;
+    not_required)
+      if test "${1-}" != boot; then return 0; fi
+      ;;
+    *) return 0 ;;
+  esac
+  printf '::notice::Apple unit phase: {"scope":"unit","platform":"%s","phase":"%s","state":"%s"}\n' \
+    "$platform" "$1" "$2" || true
+  return 0
+}
+
 case "$platform" in
   macos)
     scheme=MirrorMac
@@ -27,6 +49,7 @@ case "$platform" in
     sdk=iphonesimulator
     if test "$mode" = unit || test "$mode" = all; then
       ci_phase='Simulator 선택'
+      ci_unit_phase_notice simulator_select started
       device_info=$(python3 - "$platform" <<'PY'
 import json
 import subprocess
@@ -50,6 +73,7 @@ PY
       )
       read -r device_id device_state <<< "$device_info"
       destination="platform=iOS Simulator,id=$device_id"
+      ci_unit_phase_notice simulator_select completed
     fi
     ;;
   *)
@@ -60,6 +84,7 @@ esac
 
 ci_phase='결과 디렉터리 준비'
 result_dir=".build/ci-$platform"
+ci_unit_phase_notice prepare started
 mkdir -p "$result_dir"
 bundle_status=0
 package_status=0
@@ -69,6 +94,7 @@ if test "$mode" = unit || test "$mode" = all; then
     exit 2
   fi
 
+  ci_unit_phase_notice prepare completed
   test_actions=(build test)
   if test "$platform" = macos; then
     ci_phase='실제 저장 writer 프로세스 helper 빌드'
@@ -83,30 +109,42 @@ if test "$mode" = unit || test "$mode" = all; then
   if test "$platform" != macos; then
     # 컴파일 오류는 Simulator를 시작하기 전에 확인한다. build-for-testing은 테스트를 실행하지 않는다.
     ci_phase='Simulator 시작 전 앱·확장·테스트 빌드'
+    ci_unit_phase_notice compile started
     if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
       -sdk "$sdk" -destination "$destination" -jobs 2 \
       -derivedDataPath "$result_dir/DerivedData" CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO build-for-testing \
       2>&1 | tee "$result_dir/test.log"; then
+      ci_unit_phase_notice compile completed
       if test "$device_state" != Booted; then
         ci_phase='Simulator 시작'
+        ci_unit_phase_notice boot started
         xcrun simctl boot "$device_id"
+        ci_unit_phase_notice boot completed
+      else
+        ci_unit_phase_notice boot not_required
       fi
       ci_phase='Simulator 준비 완료 확인'
+      ci_unit_phase_notice bootstatus started
       xcrun simctl bootstatus "$device_id" -b
+      ci_unit_phase_notice bootstatus completed
     else
       build_status=$?
+      ci_unit_phase_notice compile failed
       python3 scripts/ci_results.py diagnostics "$result_dir/test.log" || true
       exit "$build_status"
     fi
     test_actions=(test-without-building)
   fi
   ci_phase='단위·저장·시스템 테스트'
+  ci_unit_phase_notice test started
 
   if xcodebuild -project Mirror.xcodeproj -scheme "$scheme" -configuration Debug \
     -sdk "$sdk" -destination "$destination" -jobs 2 \
     -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/Tests.xcresult" \
     -parallel-testing-enabled NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO "${test_actions[@]}" 2>&1 | tee -a "$result_dir/test.log"; then
+    ci_unit_phase_notice test completed
     ci_phase='Xcode 테스트 결과 요약'
+    ci_unit_phase_notice summary started
     xcrun xcresulttool get test-results summary --path "$result_dir/Tests.xcresult" > "$result_dir/summary.json"
     xcrun xcresulttool get test-results tests --path "$result_dir/Tests.xcresult" > "$result_dir/tests.json"
     # 실제 build/test와 두 xcresult 추출이 끝난 뒤에만 독립 UI 단계를 허용한다.
@@ -127,16 +165,30 @@ PY
     if test -n "${GITHUB_OUTPUT:-}"; then
       printf 'unit_ready=true\n' >> "$GITHUB_OUTPUT"
     fi
+    ci_unit_phase_notice summary completed
     ci_phase='필수 unit/integration bundle 실행 확인'
+    ci_unit_phase_notice bundle started
     python3 scripts/ci_results.py bundles "$result_dir/tests.json" MirrorDomainTests MirrorDataTests MirrorSystemTests || bundle_status=$?
+    if test "$bundle_status" -eq 0; then
+      ci_unit_phase_notice bundle completed
+    else
+      ci_unit_phase_notice bundle failed
+    fi
   else
     test_status=$?
+    ci_unit_phase_notice test failed
     python3 scripts/ci_results.py diagnostics "$result_dir/test.log" || true
     exit "$test_status"
   fi
 
   ci_phase='앱과 확장 packaging 확인'
+  ci_unit_phase_notice package started
   python3 scripts/ci-package.py "$platform" "$result_dir/DerivedData" || package_status=$?
+  if test "$package_status" -eq 0; then
+    ci_unit_phase_notice package completed
+  else
+    ci_unit_phase_notice package failed
+  fi
   if test "$mode" = unit; then
     if test "$bundle_status" -ne 0 || test "$package_status" -ne 0; then
       ci_phase='필수 bundle·packaging 결과'

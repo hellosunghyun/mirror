@@ -154,6 +154,12 @@ S-02/S-03은 숫자 count를 요구하지 않는다. Form의 선택 count만 제
 
 후속 DEBUG/iOS modifier는 UI 테스트 iPhone에서만 기존 root 콘텐츠를 첫 child로 유지한 ZStack에 투명1pt native 관측 뷰를 명시적 sibling으로 둔다. 배경 장식의 AX 노출 여부를 제어할 후보이며 이전 실패의 원인이나 실제 해결을 확정하지 않는다. Release/Mac에는 modifier가 컴파일되지 않고 iPad/일반 DEBUG 실행은 기존 content를 그대로 반환한다. 공통 inspector는 바깥의 같은 호스트, native getter·상태창·좌표·Button 조건과 모델·명령·저장·화면 상수는 보존한다. 세 기존 scope 조건은 순서대로 별도의 고정 실패행으로 나누어 원인을 구분하며 조건을 없애거나 fallback·skip·새 timeout을 추가하지 않는다. SDK·AX 노출과 새 UI6/43원본 수용은 후속 Actions에서 확인한다.
 
+`3aed351`의 [AdHoc50](https://github.com/hellosunghyun/mirror/actions/runs/36981434872)과 [Dark8](https://github.com/hellosunghyun/mirror/actions/runs/36981434927)은 양 준비·도메인159개와 양 Mac 단위159개/UI6개·guard·최종xcresult6passed를 통과했다. 기본50 iPad도 단위156개/UI6개·guard·최종xcresult6passed를 통과했다. 두 Phone의 최초 유효 실패는 검색112행의 `app.windows.count == 1` 검사다. 전면 상태 뒤에 도달했지만 실제 창 수는 미관측이며 probe 유일성·좌표 파싱에는 도달하지 않았다. 기본50의 다른5개 stdout 사례는 통과했고, Dark8에는 추가 capture 실패와 거부 진단1건이 있으나 위치와 둘의 관계는 미확정이다. Dark8 iPad는 첫 앱·확장/단위·통합·구성 단계에서 실패하고 UI 빌드·실행이 skipped됐다. 공개 페이지에는 timed-out 표시가 있지만 어느 내부 명령에서 중단됐는지는 미관측이다. 두 aggregate 실패로 새43장과 기본50 설치 자산은 게시되지 않았다.
+
+후속 검색 검사는 관측 요소를 소유한 실제 창의 유일성을 확인한다. 앱 AX 트리의 모든 Window 개수와 native getter가 속한 scene의 key UIWindow 개수는 다른 범위다. 전면 앱·global probe1개를 확인한 뒤 probe ID를 포함하는 창을 현재 AX identity로 열거하고 owner1개 및 그 창의 실제 frame을 사용한다. 상태 표시줄의 정확한4개 숫자·유한 양의 경계·소유 창 포함, 실제 검색 키보드와 두 global Button의 고유성·유효 경계·hittable/enabled·상태 표시줄 비중첩 검사를 유지한다. 임의의 첫 창이나 고정 inset을 사용하지 않으며 기존6사례·43stage·모든 제품 assertions와 시간 제한을 보존한다. 이 소유 범위 교정의 실제 SDK/runtime 결과는 새 Actions에서 확인한다.
+
+Simulator unit 경로에는 고정 `scope/platform/phase/state` notice만 추가한다. 선택·컴파일·boot·준비 대기·단위 실행·요약·bundle·packaging 명령의 시작과 반환을 구분하며 경로·UDID·원문 로그·계정·서명 정보를 넣지 않는다. 기존 명령·인수·jobs2·trap·실패 코드·GITHUB_OUTPUT·gate·runner·SDK·시간 제한은 유지한다. 출력은 best-effort이고 마지막 미완료 marker는 마지막으로 관측된 구간만 뜻하며 시간 초과 원인을 증명하지 않는다. 로컬에서는 구문·diff만 확인하고 실제 검사는 Actions에서 수행한다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.

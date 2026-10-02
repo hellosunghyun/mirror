@@ -108,13 +108,15 @@ final class MirrorUITests: XCTestCase {
                 XCTFail("상태 표시줄 관측에는 실제 전면 앱이 필요하다.")
                 throw UIHarnessError.missingElement("nativeStatusBarForeground")
             }
-            guard app.windows.count == 1 else {
-                XCTFail("상태 표시줄 관측에는 유일한 실제 앱 창이 필요하다.")
-                throw UIHarnessError.missingElement("nativeStatusBarWindow")
-            }
             guard probes.count == 1 else {
                 XCTFail("상태 표시줄 관측 요소는 실제 앱에 정확히 하나 있어야 한다.")
                 throw UIHarnessError.missingElement("nativeStatusBarProbe")
+            }
+            let ownerWindows = app.windows.containing(NSPredicate(format: "identifier == %@", "ui.nativeStatusBar"))
+                .allElementsBoundByAccessibilityElement
+            guard ownerWindows.count == 1 else {
+                XCTFail("상태 표시줄 관측 요소를 소유한 실제 앱 창은 정확히 하나여야 한다.")
+                throw UIHarnessError.missingElement("nativeStatusBarWindow")
             }
             let coordinates = value(of: probes.firstMatch).split(separator: ",", omittingEmptySubsequences: false)
             guard coordinates.count == 4,
@@ -124,7 +126,7 @@ final class MirrorUITests: XCTestCase {
                 throw UIHarnessError.unexpectedValue("nativeStatusBarFrame")
             }
             let statusFrame = CGRect(x: x, y: y, width: width, height: height)
-            let windowFrame = app.windows.firstMatch.frame
+            let windowFrame = ownerWindows[0].frame
             guard [statusFrame, windowFrame].allSatisfy({ frame in
                 [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite })
                     && frame.width > 0 && frame.height > 0
