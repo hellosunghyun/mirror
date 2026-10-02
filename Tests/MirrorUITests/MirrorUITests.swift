@@ -407,6 +407,21 @@ final class MirrorUITests: XCTestCase {
         }
         try activate("capture.save", in: app)
         try waitForValue("", element: field)
+        if attachEvidence {
+            let confirmation = try requireElement("capture.feedback", in: app)
+            XCTAssertEqual(displayedText(of: confirmation), "보관함에 넣었어요.",
+                           "실제 저장을 확인한 뒤 연속 입력 화면 안에서 보관함 저장을 안내한다.")
+            XCTAssertTrue(confirmation.isHittable, "저장 안내는 입력 화면에서 보여야 한다.")
+            #if os(iOS)
+            let keyboard = app.keyboards.firstMatch
+            XCTAssertTrue(keyboard.exists, "연속 입력을 위해 저장 후에도 키보드를 유지한다.")
+            XCTAssertLessThanOrEqual(confirmation.frame.maxY, keyboard.frame.minY,
+                                     "저장 안내는 키보드에 가려지지 않는다.")
+            #endif
+            try replaceText(in: field, with: "UI next capture draft", app: app)
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "capture.feedback").firstMatch.exists,
+                           "다음 제목을 입력하면 직전 저장 안내를 접는다.")
+        }
         try activate("capture.close", in: app)
         try requireNoElement("capture.title", in: app)
     }

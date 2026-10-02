@@ -118,7 +118,7 @@ Mac14에서는 확정 창잘림·빈상세·과도한완료버튼 blocker/P2가 
 
 ## 쉽게 입력하고 미루는 화면 분배
 
-사용자가 입력과 미루기가 복잡하고 한 화면의 정보가 많다고 지적하여 흐름을 다시 정리한다. 빠른 입력은 제목과 키보드 위 저장을 먼저 보여 주며, 메모·링크는 접힌 영역에 둔다. 반복 안내·상시 글자 수를 숨기고 저장 시 제목 제한 오류는 고정 저장 영역 한 곳에서 안내한다. 여러 줄 입력은 하단의 한 개 저장과 본문의 나누기 미리 보기로 구분하며 원문·분할 확인·저장 receipt·취소·연속 입력 포커스를 유지한다.
+사용자가 입력과 미루기가 복잡하고 한 화면의 정보가 많다고 지적하여 흐름을 다시 정리한다. 빠른 입력은 제목과 키보드 위 저장을 먼저 보여 주며, 메모·링크는 접힌 영역에 둔다. 반복 안내·상시 글자 수를 숨기고 저장 시 제목 제한 오류는 고정 저장 영역 한 곳에서 안내한다. 여러 줄 입력은 하단의 한 개 저장과 본문의 나누기 미리 보기로 구분하며 원문·분할 확인·저장 receipt·취소·연속 입력 포커스를 유지한다. 연속 입력에서는 실제 저장과 projection 갱신을 확인한 뒤 입력 화면 안에 “보관함에 넣었어요.”를 한 줄로 표시한다. 다음 제목·메모·링크 입력이나 저장 시도에서 이전 안내를 지우고 오류·저장 중·projection 확인 중에는 성공 안내를 숨긴다. 단일 입력의 닫힘과 재확인 token의 귀속은 유지한다.
 
 목록의 미완료 작업에는 `미루기`를 표시하여 상세나 길게 누르기 없이 같은 화면의 작업 ID로 날짜 선택을 연다. 일반 날짜 선택은 오늘·내일을 즉시 선택하고 다른 날짜를 펼칠 수 있다. 정리/위젯에서 전체 달력을 요청한 경로는 처음부터 펼친다. 열기·취소·펼치기는 저장하지 않으며 모든 선택은 기존 고정 request의 context·expected versions·token과 공통 명령을 사용한다. 기존 Undo UI 사례 끝에 직접 미루기의 대상 ID·취소 후 미정 유지·내일 저장·Today 제외·미완료 상태 검사를 추가한다. 기존 여섯 사례·43앱샷·모든 기존 assertions·시간 제한·guard는 유지한다.
 
@@ -168,7 +168,9 @@ Simulator unit 경로에는 고정 `scope/platform/phase/state` notice만 추가
 
 일반 날짜 선택의 오늘·내일은 Button 바깥의 여백 대신 실제 Text label 안에 최소44pt 높이를 둔다. 표시된 작업 ID·expected versions·context·token과 기존 날짜 명령은 그대로 사용한다. 오늘 화면의 “이번 정리 결과”는 처음과 정리 종료 뒤에 접어 두며 필요할 때 펼칠 수 있다. 종료 수치·Undo와 오류 경로는 유지하고 목록이 먼저 보이게 한다.
 
-iOS의 compact 탐색 스택에는 `.toolbarMinimizationBehavior(.never, for: .navigationBar)`를 적용해 스크롤 중에도 상단 추가·설정 버튼을 유지하도록 한다. `3c1c164`의 [Dark10](https://github.com/hellosunghyun/mirror/actions/runs/36989502805) Phone은 단위156개/UI6개·guard·최종xcresult6passed를 통과했으며 기본52 Phone은 대기 중이다. 공개된 고정 toolbar aggregate는 미관측이고 toolbar 최소화가 이전 hittable 실패의 원인인지는 미확정이다. 이 API의 실제27 SDK/runtime 동작과 검색 키보드 중 버튼 사용성은 새 Actions의 기존 assertions·고정 관측·원본 화면으로 확인한다.
+첫 실제 입력 흐름에서는 저장 뒤 빈 입력칸·고정 성공 문구·입력 화면에서의 가시성, 모바일 키보드 유지·키보드 위 안내와 다음 제목에서 안내가 사라지는 동작을 검사한다. 기존 여섯 사례·모든 기존 assertions·46장 계약을 유지하며, 저장 성공 안내의 별도 원본 사진은 이 캡처 계약에 포함하지 않는다. 실제 검사의 통과와 VoiceOver 공지·실기기 수용은 구분한다.
+
+iOS의 compact 탐색 스택에는 `.toolbarMinimizationBehavior(.never, for: .navigationBar)`를 적용해 스크롤 중에도 상단 추가·설정 버튼을 유지하도록 한다. 직전 `3c1c164`의 [Dark10](https://github.com/hellosunghyun/mirror/actions/runs/36989502805)과 [일반52](https://github.com/hellosunghyun/mirror/actions/runs/36989502843) Phone은 각각 단위156개/UI6개·guard·최종xcresult6passed를 통과했고 양 모드 원본43장씩을 직접 검토했다. 이 결과는 새 toolbar 정책·44pt·46장 계약의 수용을 대신하지 않는다. 공개된 고정 toolbar aggregate는 미관측이고 toolbar 최소화가 이전 hittable 실패의 원인인지는 미확정이다. 이 API의 실제27 SDK/runtime 동작과 검색 키보드 중 버튼 사용성은 새 Actions의 기존 assertions·고정 관측·원본 화면으로 확인한다.
 
 기존 ReviewUndo 사례의 첫 일반 picker 열기에서 대상 제목·내일 hittable 검사를 유지하고 오늘 enabled/hittable 및 접힌 `plan.calendar` 부재를 추가로 확인한다. iPhone·iPad에서 두 고유한 실제 Button의 유한한 경계와 폭·높이44pt 이상을 검사하며 Mac에는 모바일 터치 크기를 강제하지 않는다. 첫 picker를 취소하기 직전에 `quick-plan-picker` 원본을 한 장 남긴 뒤 기존 취소 후 미정 유지·다시 내일 선택·Today 제외·10월1일·미완료 회귀를 끝까지 실행한다.
 

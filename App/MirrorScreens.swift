@@ -155,6 +155,7 @@ struct MirrorCaptureView: View {
     @State private var pendingLine: String?
     @State private var pendingSingle = false
     @State private var captureFlowStarted = false
+    @State private var showSavedFeedback = false
     private enum InputField: Hashable { case title, note, url }
     @FocusState private var focusedField: InputField?
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
@@ -184,7 +185,11 @@ struct MirrorCaptureView: View {
             .navigationTitle("일단 넣기")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.accessibilityIdentifier("capture.close") } }
             .onAppear { focusedField = .title; startCaptureFlow() }
-            .onChange(of: title) { _, value in if !value.isEmpty { startCaptureFlow() } }
+            .onChange(of: title) { _, value in
+                if !value.isEmpty { showSavedFeedback = false; startCaptureFlow() }
+            }
+            .onChange(of: note) { _, value in if !value.isEmpty { showSavedFeedback = false } }
+            .onChange(of: sourceURL) { _, value in if !value.isEmpty { showSavedFeedback = false } }
             .onChange(of: focusedField) { _, focused in model.isTextEditing = focused != nil }
             .onDisappear { model.isTextEditing = false }
             .onChange(of: model.lastCaptureCommittedToken) { _, token in
@@ -240,6 +245,12 @@ struct MirrorCaptureView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(problem).accessibilityIdentifier("state.error")
             }
+            if showSavedFeedback, model.problem == nil, !model.projectionPending, !model.isSaving {
+                Text("보관함에 넣었어요.").font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("capture.feedback")
+            }
             Button { save() } label: {
                 Text(model.isSaving ? "저장 중…" : lines.count > 1 ? "한 개로 저장" : "보관함에 넣기")
                     .foregroundStyle(MirrorPalette.onAccent)
@@ -258,6 +269,7 @@ struct MirrorCaptureView: View {
         }.padding(12).frame(maxWidth: .infinity).background(.bar)
     }
     private func save() {
+        showSavedFeedback = false
         startCaptureFlow()
         Task {
             requestToken = UUID().uuidString
@@ -272,6 +284,7 @@ struct MirrorCaptureView: View {
     private func finishSavedCapture() {
         // 원본 저장과 projection 갱신을 확인한 성공 경로에서만 단일 입력을 닫는다.
         let single = model.captureIsSingle
+        if !single { showSavedFeedback = true }
         focusedField = single ? nil : .title
         model.finishCapture()
         if single { dismiss() }
