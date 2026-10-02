@@ -128,7 +128,7 @@ struct MirrorTaskRow: View {
                 .contextMenu {
                     Button("상세 열기", action: openDetail)
                     Button(task.status == .completed ? "다시 열기" : "완료") { Task { await model.setCompleted(task, completed: task.status != .completed) } }
-                    if task.status == .open, let displayedContext {
+                    if task.status == .open, !model.isDetailEditing, let displayedContext {
                         Button("내일로 미루기") { Task { await model.postponeToTomorrow(task, context: displayedContext) } }
                     }
                     Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID]) }
@@ -143,7 +143,7 @@ struct MirrorTaskRow: View {
                         .background(MirrorPalette.accent.opacity(0.08), in: Capsule())
                 }
                     .buttonStyle(.borderless)
-                    .disabled(model.isSaving || model.projectionPending)
+                    .disabled(model.isSaving || model.projectionPending || model.isDetailEditing)
                     .accessibilityLabel("\(task.title), 미루기, 날짜 선택")
                     .accessibilityIdentifier("task.postpone.\(task.taskID.uuidString)")
             }
@@ -158,7 +158,7 @@ struct MirrorTaskRow: View {
         return style
     }
     private func tomorrowAction(context: PlanningContext?) -> (() -> Void)? {
-        guard task.status == .open, let context else { return nil }
+        guard task.status == .open, !model.isDetailEditing, let context else { return nil }
         return { Task { await model.postponeToTomorrow(task, context: context) } }
     }
     private func openDetail() {
