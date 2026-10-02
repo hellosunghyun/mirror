@@ -137,7 +137,7 @@ private func waitForProbeExit(_ children: [StoreProbeChild]) async throws {
 }
 #endif
 
-@Suite("실제 Core Data SQLite 저장과 복구")
+@Suite("실제 Core Data SQLite 저장과 복구", .serialized)
 struct StoreIntegrationTests {
     @Test("원본 저장 전 실패는 원본과 작업을 남기지 않는다")
     func failureBeforeCanonical() async throws {

@@ -192,6 +192,14 @@ iOS의 compact 탐색 스택에는 `.toolbarMinimizationBehavior(.never, for: .n
 
 원래 여섯 UI 메서드·82개 assertion 호출·25개 XCTFail 호출의 순서와 문구, timeout·tap·swipe 및46원본/49자산 계약을 정적으로 대조해 보존했다. assertion 호출 수는 실제 러너의 테스트 완료 수가 아니다. 성공 경로에는 추가 AX 조회나 행동을 넣지 않고 실패·throw·스크롤 횟수·기다림·skip·게시 조건도 바꾸지 않는다. 이번 변경은 원인 관측 준비이며 제품 수정이나 모바일 통과를 의미하지 않는다.
 
+## 저장소 통합 검사의 실행 순서
+
+`90f9c22`의 [일반57](https://github.com/hellosunghyun/mirror/actions/runs/37008995469) 도메인은36개·94개 그룹을 통과했지만29개 그룹이 실패했다. 고정 독립 인스턴스 진단은 `locallyCommitted`/`unavailable`, busy `false`/`true`다. 같은 소스의 [Dark15](https://github.com/hellosunghyun/mirror/actions/runs/37008995501) 도메인은159개를 통과했다. 일반57의 공개 source218행은 보였으나 실제 case event와 결합되지 않았으므로 추가 실패의 범위를 추정하지 않는다.
+
+실제 Core Data 저장소를 각각 만드는 `StoreIntegrationTests` suite의 검사들만 순서대로 실행한다. suite 내부의 독립 store 두 개는 기존 `async let`으로 동시에 실행하고, 실제 두 프로세스의 동일 token 경쟁과 잠금 timeout·취소·회수도 그대로 검증한다. 기존26개 Test 선언·158개 expect·32개 require·두 async let·다섯 timeLimit과 원래 실패 조건·설정·저장소 구현은 유지한다. 전체 Data29 완료 집계와 이 suite의 소스 선언26개를 구분한다.
+
+원본05 §5는250ms 내외의 짧은 재시도 목표와 초과 시 “다른 변경을 반영 중” 상태의 재시도를 요구한다. 이 변경은 서로 다른 테스트 저장소의 동시 디스크 부하를 제한하며 기존250ms를 늘리지 않는다. 다른 suite의 부하는 남으므로 잠금 실패의 원인 해결이나 실제 기기 성능 수용을 의미하지 않는다. 실제 실행과 기존159개·각 플랫폼 단위/UI·46원본·서명/게시 게이트는 후속 Actions에서 확인한다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.
