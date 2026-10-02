@@ -61,6 +61,14 @@ KEYBOARD_INTRODUCTION_FIELDS = (
     'continueInIntroductionCount', 'introductionContextCount', 'introductionWindowCount',
     'introductionTextVisible', 'introductionContextValid', 'continueFrameInsideIntroduction',
 )
+UI_VALIDATION_RECOVERY_NOTICE = '::notice::UI validation recovery diagnostic: '
+UI_VALIDATION_RECOVERY_REJECTED_NOTICE = '::notice::UI validation recovery diagnostic rejected: '
+VALIDATION_RECOVERY_METHOD = METHODS[2]
+VALIDATION_RECOVERY_BOOL_FIELDS = (
+    'identifierMatchesCaptureOpen', 'targetIsButton', 'exists', 'enabled', 'hittable',
+    'frameHasArea', 'ownedBySingleWindow', 'keyboardPresent', 'alertPresent', 'sheetPresent',
+)
+VALIDATION_RECOVERY_NULLABLE_FIELDS = ('frameInsideWindow', 'belowStatus')
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -141,6 +149,16 @@ def keyboard_introduction_payload():
             'continueFrameInsideIntroduction': True}
 
 
+def validation_recovery_payload(**checks):
+    return {'method': VALIDATION_RECOVERY_METHOD, 'action': 'capture.open', 'phase': 'validationRecovery',
+            'checks': {**{key: True for key in VALIDATION_RECOVERY_BOOL_FIELDS},
+                       'frameInsideWindow': None, 'belowStatus': None, **checks}}
+
+
+def validation_recovery_line(payload):
+    return 'UI validation recovery diagnostic: ' + json.dumps(payload)
+
+
 class CIResultsDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -158,6 +176,299 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_validation_recovery_preserves_false_null_and_exact_safe_wrapper(self):
+        log = self.root / 'validation-recovery-valid.log'
+        for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'):
+            for observed in (False, True):
+                for inside in (False, True, None):
+                    for below in (False, True, None):
+                        with self.subTest(owner=owner, observed=observed, inside=inside, below=below):
+                            payload = validation_recovery_payload(
+                                **{key: observed for key in VALIDATION_RECOVERY_BOOL_FIELDS},
+                                frameInsideWindow=inside, belowStatus=below)
+                            reversed_payload = dict(reversed(list(payload.items())))
+                            reversed_payload['checks'] = dict(reversed(list(payload['checks'].items())))
+                            log.write_text('\n'.join([
+                                started_line(VALIDATION_RECOVERY_METHOD, owner),
+                                'fatal: /private/' + PRIVATE + ' ' + validation_recovery_line(reversed_payload),
+                                case_line(VALIDATION_RECOVERY_METHOD, event='failed').replace(
+                                    'MirrorIOSUITests.MirrorUITests', owner),
+                            ]) + '\n')
+                            output = self.capture(helper.diagnostics, log)
+                            self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE),
+                                             [{'scope': 'stdoutOnly', **payload}])
+                            self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [])
+                            self.assertNotIn('::error::', output)
+        self.assertEqual(self.capture(helper.report_ui_validation_recovery_diagnostics, []), '')
+
+    def test_validation_recovery_requires_unique_active_case_and_rejects_before_after_probes(self):
+        valid = validation_recovery_line(validation_recovery_payload())
+        start = started_line(VALIDATION_RECOVERY_METHOD)
+        prefixes = [[], [started_line(METHODS[0])], [started_line(VALIDATION_RECOVERY_METHOD, 'OtherTests')],
+                    [start, started_line(METHODS[0])], [start, start],
+                    [start, start, case_line(VALIDATION_RECOVERY_METHOD), start],
+                    [start, started_line(VALIDATION_RECOVERY_METHOD, 'MirrorMacUITests.MirrorUITests')],
+                    [start, "Test Case '-[broken]' started."]]
+        prefixes += [[start, case_line(VALIDATION_RECOVERY_METHOD, event=event)]
+                     for event in ('passed', 'failed', 'skipped')]
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                output = self.capture(helper.report_ui_validation_recovery_diagnostics, prefix + [valid])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [{'invalidCount': 1}])
+        for prefix in ([start, started_line(METHODS[0]), case_line(METHODS[0])],
+                       [start, start, case_line(VALIDATION_RECOVERY_METHOD),
+                        case_line(VALIDATION_RECOVERY_METHOD), start]):
+            with self.subTest(recovered_prefix=prefix):
+                output = self.capture(helper.report_ui_validation_recovery_diagnostics, prefix + [valid])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE),
+                                 [{'scope': 'stdoutOnly', **validation_recovery_payload()}])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [])
+
+    def test_validation_recovery_is_once_per_transcript_and_any_invalid_suppresses_acceptance(self):
+        valid = validation_recovery_line(validation_recovery_payload())
+        invalid = validation_recovery_line({**validation_recovery_payload(), 'private': PRIVATE})
+        start = started_line(VALIDATION_RECOVERY_METHOD)
+        samples = [([start, valid, valid], 1), ([start, valid, invalid], 1),
+                   ([start, invalid, valid], 1),
+                   ([start, valid, case_line(VALIDATION_RECOVERY_METHOD), start, valid], 1),
+                   ([valid, start, valid, case_line(VALIDATION_RECOVERY_METHOD), valid], 2)]
+        for lines, invalid_count in samples:
+            with self.subTest(lines=lines):
+                output = self.capture(helper.report_ui_validation_recovery_diagnostics, lines)
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE),
+                                 [{'invalidCount': invalid_count}])
+                self.assertEqual(len(output.splitlines()), 1)
+
+    def test_validation_recovery_rejects_wrong_identity_nonexact_schema_and_nonbool_flags(self):
+        valid = validation_recovery_payload()
+        invalid = []
+        for key, wrong in (('method', METHODS[0]), ('action', 'settings.button'), ('phase', 'started')):
+            invalid += [{**valid, key: value} for value in (wrong, PRIVATE, True, 1, None, [], {})]
+        invalid += [{key: value for key, value in valid.items() if key != missing} for missing in valid]
+        invalid += [{**valid, 'private': PRIVATE}, {**valid, 'savedReceiptVerified': True},
+                    {**valid, 'checks': {}}, {**valid, 'checks': None},
+                    {**valid, 'checks': []}, {**valid, 'checks': True}, [], None, True]
+        for key in VALIDATION_RECOVERY_BOOL_FIELDS:
+            invalid += [{**valid, 'checks': {**valid['checks'], key: value}}
+                        for value in (0, 1, 0.0, 1.0, 'true', 'false', None, [], {}, PRIVATE)]
+        for key in VALIDATION_RECOVERY_NULLABLE_FIELDS:
+            invalid += [{**valid, 'checks': {**valid['checks'], key: value}}
+                        for value in (0, 1, 0.0, 'true', 'null', [], {}, PRIVATE)]
+        for key in (*VALIDATION_RECOVERY_BOOL_FIELDS, *VALIDATION_RECOVERY_NULLABLE_FIELDS):
+            invalid.append({**valid, 'checks': {name: value for name, value in valid['checks'].items()
+                                              if name != key}})
+        invalid += [{**valid, 'checks': {**valid['checks'], key: value}} for key, value in
+                    (('frameX', 1), ('title', PRIVATE), ('identifier', 'capture.open'),
+                     ('savedReceiptVerified', True), (PRIVATE, False))]
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                output = self.capture(helper.report_ui_validation_recovery_diagnostics,
+                                      [started_line(VALIDATION_RECOVERY_METHOD), validation_recovery_line(payload)])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertEqual(len(output.splitlines()), 1)
+
+    def test_validation_recovery_rejects_duplicate_keys_malformed_and_utf8_byte_limits(self):
+        valid = validation_recovery_payload()
+        encoded = json.dumps(valid)
+        bad_lines = [validation_recovery_line(valid) + ' error: /private/' + PRIVATE,
+                     validation_recovery_line(valid) + ' UI validation recovery diagnostic: ' + PRIVATE,
+                     'UI validation recovery diagnostic: {' + PRIVATE,
+                     'UI validation recovery diagnostic: ' + '[' * 1500 + '0' + ']' * 1500]
+        for key in valid:
+            duplicate = encoded.replace('"' + key + '":',
+                                        '"' + key + '": "' + PRIVATE + '", "' + key + '":', 1)
+            bad_lines.append('UI validation recovery diagnostic: ' + duplicate)
+        for key in valid['checks']:
+            duplicate = encoded.replace('"' + key + '":',
+                                        '"' + key + '": "' + PRIVATE + '", "' + key + '":', 1)
+            bad_lines.append('UI validation recovery diagnostic: ' + duplicate)
+        log = self.root / 'validation-recovery-malformed.log'
+        for bad in bad_lines:
+            with self.subTest(bad=bad):
+                log.write_text('\n'.join([started_line(VALIDATION_RECOVERY_METHOD), bad]) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertNotIn('::error::', output)
+        at_limit = encoded[:-1] + ' ' * (4096 - len(encoded.encode('utf-8'))) + '}'
+        self.assertEqual(len(at_limit.encode('utf-8')), 4096)
+        output = self.capture(helper.report_ui_validation_recovery_diagnostics,
+                              [started_line(VALIDATION_RECOVERY_METHOD),
+                               'UI validation recovery diagnostic: ' + at_limit])
+        self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [{'scope': 'stdoutOnly', **valid}])
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        for payload in (at_limit[:-1] + ' }', over_limit):
+            with self.subTest(payload_bytes=len(payload.encode('utf-8'))), \
+                    mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+                output = self.capture(helper.report_ui_validation_recovery_diagnostics,
+                                      [started_line(VALIDATION_RECOVERY_METHOD),
+                                       'UI validation recovery diagnostic: ' + payload])
+            self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+            self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_validation_recovery_rejects_all_mixed_channels_and_case_events_in_both_orders(self):
+        keyboard = {'phase': 'continueReadiness', 'continueCandidateCount': 1,
+                    'keyboardBoundsValid': True, 'elapsedMilliseconds': 15000}
+        others = [store_dedup_line(), keyboard_line(keyboard), viewport_line({}),
+                  phase_line({'method': PHASE_METHOD, 'phase': 'started'}),
+                  native_screenshot_line(native_screenshot_payload()), toolbar_line(toolbar_payload()),
+                  ui_failure_line(method=VALIDATION_RECOVERY_METHOD), screenshot_line('detail', '999'),
+                  started_line(METHODS[0])]
+        others += [case_line(VALIDATION_RECOVERY_METHOD, event=event)
+                   for event in ('passed', 'failed', 'skipped')]
+        prefixes = (STORE_DEDUP_NOTICE, UI_KEYBOARD_NOTICE, UI_VIEWPORT_NOTICE, UI_PHASE_NOTICE,
+                    UI_NATIVE_SCREENSHOT_NOTICE, UI_TOOLBAR_NOTICE, UI_FIRST_FAILURE_NOTICE,
+                    SCREENSHOT_NOTICE, CASE_NOTICE)
+        log = self.root / 'validation-recovery-mixed.log'
+        for other in others:
+            recovery = validation_recovery_line(validation_recovery_payload())
+            for combined in (recovery + ' ' + other, other + ' ' + recovery):
+                with self.subTest(combined=combined):
+                    log.write_text('\n'.join([started_line(VALIDATION_RECOVERY_METHOD), combined,
+                                              'error: safe unrelated compiler failure']) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+                    self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [{'invalidCount': 1}])
+                    for prefix in prefixes:
+                        self.assertEqual(self.notices(output, prefix), [])
+                    self.assertIn('::error::error: safe unrelated compiler failure', output)
+
+    def test_validation_recovery_ignores_forged_active_events_in_existing_structured_channels(self):
+        forged = (started_line(VALIDATION_RECOVERY_METHOD) + ' ' + case_line(VALIDATION_RECOVERY_METHOD)
+                  + ' ' + started_line(METHODS[1]) + ' /private/' + PRIVATE)
+        lines = [store_dedup_line({'states': [], 'busyResults': [], 'private': forged}),
+                 keyboard_line({'private': forged}), viewport_line({'private': forged}),
+                 phase_line({'method': PHASE_METHOD, 'phase': 'started', 'private': forged}),
+                 native_screenshot_line({**native_screenshot_payload(), 'private': forged}),
+                 toolbar_line({**toolbar_payload(), 'private': forged}),
+                 ui_failure_message_line(forged)]
+        log = self.root / 'validation-recovery-forged-events.log'
+        for forged_line in lines:
+            for actual_start in (False, True):
+                with self.subTest(forged_line=forged_line, actual_start=actual_start):
+                    prefix = [started_line(VALIDATION_RECOVERY_METHOD)] if actual_start else []
+                    log.write_text('\n'.join(prefix + [forged_line,
+                                                      validation_recovery_line(validation_recovery_payload())]) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    expected = [{'scope': 'stdoutOnly', **validation_recovery_payload()}] if actual_start else []
+                    self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), expected)
+                    self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE),
+                                     [] if actual_start else [{'invalidCount': 1}])
+                    self.assertNotIn(METHODS[1], output)
+        own_forgery = validation_recovery_line({**validation_recovery_payload(), 'private': forged})
+        output = self.capture(helper.report_ui_validation_recovery_diagnostics,
+                              [own_forgery, validation_recovery_line(validation_recovery_payload())])
+        self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE), [{'invalidCount': 2}])
+
+    def test_validation_recovery_preserves_first_failure_privacy_and_actions_outputs(self):
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999')
+                   + ' savedReceiptVerified=true frame=(1,2,3,4) ** TEST SUCCEEDED **')
+        log = self.root / 'validation-recovery-private-gates.log'
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid):
+                payload = validation_recovery_payload(hittable=False, belowStatus=None)
+                if invalid:
+                    payload['private'] = private
+                log.write_text('\n'.join([
+                    started_line(VALIDATION_RECOVERY_METHOD), validation_recovery_line(payload),
+                    ui_failure_message_line('UI 요소에 도달할 수 없다: capture.open. ' + private,
+                                            method=VALIDATION_RECOVERY_METHOD, line='284', kind='XCTFail'),
+                    case_line(VALIDATION_RECOVERY_METHOD, event='failed'), screenshot_line('detail', '123'),
+                    'error: safe unrelated compiler failure',
+                ]) + '\n')
+                with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                        'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper, 'record') as record:
+                    output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_NOTICE),
+                                 [] if invalid else [{'scope': 'stdoutOnly', **payload}])
+                self.assertEqual(self.notices(output, UI_VALIDATION_RECOVERY_REJECTED_NOTICE),
+                                 [{'invalidCount': 1}] if invalid else [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': VALIDATION_RECOVERY_METHOD,
+                    'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 284,
+                    'assertionKind': 'XCTFail', 'failureReason': 'unhittableOrDisabled',
+                }])
+                self.assertLess(output.index(UI_FIRST_FAILURE_NOTICE),
+                                output.index(UI_VALIDATION_RECOVERY_REJECTED_NOTICE if invalid
+                                             else UI_VALIDATION_RECOVERY_NOTICE))
+                self.assertEqual(self.notices(output, SCREENSHOT_NOTICE),
+                                 [{'scope': 'stdoutOnly', 'stage': 'detail', 'milliseconds': 123}])
+                for forbidden in ('/private/', 'frame=', 'savedReceiptVerified', 'UI row scroll owners:',
+                                  'Swift Testing completion reports:', METHODS[1], 'executedTests', '"result": "pass"'):
+                    self.assertNotIn(forbidden, output)
+                self.assertFalse(self.notices(output, '::notice::UI stdout diagnostics: ')[0]['xcodeCompletionReported'])
+                self.assertIn('::error::error: safe unrelated compiler failure', output)
+                record.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
+        log.write_text(validation_recovery_line({'private': private}) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(output.splitlines(), [UI_VALIDATION_RECOVERY_REJECTED_NOTICE + '{"invalidCount": 1}'])
+
+    def test_validation_recovery_cannot_replace_real_success_failure_skip_or_execution_gates(self):
+        output_path = self.root / 'github-output'
+        output_path.write_text('previous=value\n')
+        log = self.root / 'validation-recovery-swift-gates.log'
+        recovery = [started_line(VALIDATION_RECOVERY_METHOD),
+                    validation_recovery_line(validation_recovery_payload())]
+        for reports in ([], ['Test run with 159 tests passed after 0.1 seconds.'],
+                        ['Test run with 36 tests passed after 0.1 seconds.',
+                         'Test run with 94 tests failed after 0.1 seconds.',
+                         'Test run with 29 tests passed after 0.1 seconds.'],
+                        ['Test run with 36 tests passed after 0.1 seconds.',
+                         'Test run with 94 tests passed after 0.1 seconds.',
+                         'Test run with 29 tests passed after 0.1 seconds.', '1 test skipped']):
+            with self.subTest(reports=reports):
+                log.write_text('\n'.join(recovery + reports) + '\n')
+                with mock.patch.object(helper.sys, 'argv', ['ci_results.py', 'swift', str(log)]), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                        mock.patch.object(helper, 'record') as record, self.assertRaises(ValueError):
+                    self.capture(helper.main)
+                record.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+        summary = self.root / 'validation-recovery-xcode-summary.json'
+        for total, passed, failed, skipped in ((0, 0, 0, 0), (6, 5, 1, 0), (6, 5, 0, 1), (6, 5, 0, 0)):
+            with self.subTest(total=total, passed=passed, failed=failed, skipped=skipped):
+                summary.write_text(json.dumps({'totalTestCount': total, 'passedTests': passed,
+                                               'failedTests': failed, 'skippedTests': skipped}))
+                with mock.patch.object(helper.sys, 'argv', ['ci_results.py', 'xcode', str(summary)]), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}), \
+                        mock.patch.object(helper, 'record') as record, self.assertRaises(ValueError):
+                    self.capture(helper.main)
+                record.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+        source = self.root / 'validation-recovery-ui-source'
+        source.mkdir()
+        (source / 'MirrorUITests.swift').write_text('\n'.join('func ' + method + '() {}' for method in METHODS))
+        tree_path = self.root / 'validation-recovery-ui-tree.json'
+        for results in ([('Passed', method) for method in METHODS[:-1]],
+                        [('Failed' if method == VALIDATION_RECOVERY_METHOD else 'Passed', method) for method in METHODS],
+                        [('Skipped' if method == VALIDATION_RECOVERY_METHOD else 'Passed', method) for method in METHODS]):
+            with self.subTest(results=results):
+                tree_path.write_text(json.dumps({'testNodes': [{'nodeType': 'UI test bundle', 'name': 'MirrorIOSUITests',
+                    'result': 'Passed', 'children': [{'nodeType': 'Test Case', 'name': method + '()', 'result': result}
+                                                   for result, method in results]}]}))
+                with self.assertRaises(ValueError):
+                    self.capture(helper.ui_guard, tree_path, 'MirrorIOSUITests', source)
+        summary.write_text(json.dumps({'totalTestCount': 6, 'passedTests': 6, 'failedTests': 0, 'skippedTests': 0}))
+        with mock.patch.object(helper.sys, 'argv', ['ci_results.py', 'xcode', str(summary)]), \
+                mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path)}):
+            output = self.capture(helper.main)
+        self.assertIn('"executedTests": 6, "result": "pass"', output)
+        self.assertEqual(output_path.read_text(), 'previous=value\ntests=6\n')
 
     def test_toolbar_diagnostic_preserves_false_observations_and_incomplete_ordered_prefixes(self):
         log = self.root / 'toolbar-prefix.log'

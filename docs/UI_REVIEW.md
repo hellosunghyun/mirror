@@ -182,6 +182,16 @@ iOS의 compact 탐색 스택에는 `.toolbarMinimizationBehavior(.never, for: .n
 
 이 변경은 준비된 구현이며 실제44pt·접힘·새46원본 시각 수용은 후속 Actions 결과로 확인한다. 현재와 역사적43-stage run/자료를 새46-stage 결과로 계산하지 않는다. 현재 helper는 그대로 보존하고 새 실제 SHA/run/build/attempt 확인 뒤 별도46-stage 검토 helper를 준비한다. 과거14-stage baseline을 사용하는 SDK 진단 workflow는 변경하지 않으며 새46 collector를 그 과거 결과에 적용하면 새 stage 부재를 정상적으로 거절한다. 일반 picker 한 장은 다른 날짜를 펼친 모습·VoiceOver·최대 글자·실기기와 전체QA87 수용을 대신하지 않는다.
 
+## 입력 오류 뒤 재입력 실패의 제한된 관측
+
+`ac76af8`의 [Dark14](https://github.com/hellosunghyun/mirror/actions/runs/37001269475)는 도메인159개와 Mac 단위159개·UI6개·guard·최종xcresult6passed를 통과했지만 모바일 검증이 실패하여 앱샷 게시가 생략됐다. Phone의 첫 정제 실패는 긴 제목 사례의 원래399행 `capture.open` 활성화에서 `scrollContainerMissing`이다. 직전 일반55도 같은 사례·위치·분류였으며 실제 버튼 경계·키보드·modal 상태와 원인은 아직 확인하지 못했다. Pad는 첫 입력 사례의 원래1359행 `waitForValue`에서 실패했다. 어느 호출·기대값에서 멈췄는지는 미확정이며 Phone 실패와 같은 원인으로 취급하지 않는다. 이전 일반54·Dark12의 원본92장 검토와 서명 일반54 배포는 이 최신 실행의 통과를 대신하지 않는다.
+
+긴 제목 사례의 정상 재입력 호출에만 관측 flag를 전달한다. 기존 일반 스크롤 컨테이너 부재가 이미 결정된 뒤에 고정 메서드·`capture.open`·`validationRecovery`와 12개의 Bool/null 판정을 한 번 출력한다. 존재·활성·조작 가능·양의 경계·단일 소유 창·키보드/alert/sheet 존재와 창 안 배치·상태 표시줄 아래 배치 등을 구분한다. 실제 식별자·입력·AX dump·기기 정보·좌표는 직렬화하지 않는다. 창 안 배치는 유효한 단일 소유 창을 요구하고, 상태 표시줄 아래 배치는 같은 창의 고유한 native probe와 유효한 경계를 추가로 요구한다. 필요한 근거가 없으면 두 nullable 판정은 추정하지 않는다. 실패 결정 이후의 새 조회이므로 원래 실패 순간과 원자적으로 같은 상태를 보장하지 않는다.
+
+공개 parser는 실제 유일한 활성 baseline 사례에서 exact4키와 exact12판정, 진짜 Bool 및 지정된 두 nullable 필드만 허용한다. 전사에 후보가 반복되거나 무효 후보가 하나라도 섞이면 부분 승인도 출력하지 않고 거절 수만 남긴다. 중복 JSON 키·추가 필드·4096byte 초과·혼합 진단/실패/event·위조 활성 사례와 겹친 동일 사례의 불완전 종료를 거절한다. 정상 출력은 `stdoutOnly`이며 Actions 성공 출력·실행 수·UI guard를 대체하지 않는다. 이 개인정보·문맥·게이트 회귀9개는 GitHub Actions에서 실행한다.
+
+원래 여섯 UI 메서드·82개 assertion 호출·25개 XCTFail 호출의 순서와 문구, timeout·tap·swipe 및46원본/49자산 계약을 정적으로 대조해 보존했다. assertion 호출 수는 실제 러너의 테스트 완료 수가 아니다. 성공 경로에는 추가 AX 조회나 행동을 넣지 않고 실패·throw·스크롤 횟수·기다림·skip·게시 조건도 바꾸지 않는다. 이번 변경은 원인 관측 준비이며 제품 수정이나 모바일 통과를 의미하지 않는다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.

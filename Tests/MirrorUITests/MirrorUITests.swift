@@ -212,7 +212,7 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.row.")).count, 0)
 
         // 오류 뒤 정상 입력도 실제 원본 저장 경로로 복구되어야 한다.
-        try capture("UI corrected after validation", in: app)
+        try capture("UI corrected after validation", in: app, observeValidationRecovery: true)
         try showLibrary(in: app)
         XCTAssertTrue(value(of: try requireRow("UI corrected after validation", in: app)).contains("아직 정하지 않음"))
     }
@@ -395,8 +395,9 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func capture(_ title: String, in app: XCUIApplication, attachEvidence: Bool = false) throws {
-        try activate("capture.open", in: app)
+    private func capture(_ title: String, in app: XCUIApplication, attachEvidence: Bool = false,
+                         observeValidationRecovery: Bool = false) throws {
+        try activate("capture.open", in: app, observeValidationRecovery: observeValidationRecovery)
         let field = try requireElement("capture.title", in: app)
         try replaceText(in: field, with: title, app: app, prepareKeyboardBeforeTyping: attachEvidence)
         if attachEvidence {
@@ -1207,14 +1208,16 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func activate(_ identifier: String, in app: XCUIApplication,
+                          observeValidationRecovery: Bool = false,
                           file: StaticString = #filePath, line: UInt = #line) throws {
         lastActionDescription = "activate id=\(identifier)"
         let target = try requireElement(identifier, in: app, preferButtons: true, file: file, line: line)
-        try interact(with: target, in: app, file: file, line: line)
+        try interact(with: target, in: app, observeValidationRecovery: observeValidationRecovery, file: file, line: line)
     }
 
     @MainActor
     private func interact(with element: XCUIElement, in app: XCUIApplication,
+                          observeValidationRecovery: Bool = false,
                           file: StaticString = #filePath, line: UInt = #line) throws {
         lastActionDescription = "interact"
         // 원본 저장·projection 갱신 직후에는 action의 enabled/hittable 반영도 기다린다.
@@ -1238,6 +1241,9 @@ final class MirrorUITests: XCTestCase {
             guard !element.isHittable || rowNeedsScroll else { break }
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
             guard let surface = rowSurface ?? scrollContainer(containing: element, in: app) else {
+                if observeValidationRecovery {
+                    recordValidationRecoveryDiagnostic(for: element, identifier: identifier, in: app)
+                }
                 printFailurePrefix("대상 UI를 포함하는 스크롤 컨테이너가 없다")
                 XCTFail("대상 UI를 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
                 throw UIHarnessError.unhittable(identifier)
@@ -1262,6 +1268,71 @@ final class MirrorUITests: XCTestCase {
         #else
         element.tap()
         #endif
+    }
+
+    @MainActor
+    private func recordValidationRecoveryDiagnostic(for element: XCUIElement, identifier: String,
+                                                    in app: XCUIApplication) {
+        // 기존 일반 스크롤 실패가 결정된 뒤의 새 상태만 관측한다. 성공 경로의 조회·행동은 추가하지 않는다.
+        // 원문 ID·제목·AX dump·기기 정보·경계 좌표는 직렬화하지 않고 고정 Bool/null만 기록한다.
+        let exists = element.exists
+        let frame = exists ? element.frame : .zero
+        func hasArea(_ candidate: CGRect) -> Bool {
+            [candidate.minX, candidate.minY, candidate.width, candidate.height].allSatisfy { $0.isFinite }
+                && candidate.width > 0 && candidate.height > 0
+        }
+        let frameHasArea = hasArea(frame)
+        let ownerWindows = exists && !identifier.isEmpty
+            ? app.windows.containing(NSPredicate(format: "identifier == %@", identifier)).allElementsBoundByAccessibilityElement
+            : []
+        let ownedBySingleWindow = ownerWindows.count == 1
+        var frameInsideWindow: Any = NSNull()
+        var belowStatus: Any = NSNull()
+        if app.state == .runningForeground, exists, frameHasArea, ownedBySingleWindow {
+            let windowFrame = ownerWindows[0].frame
+            if hasArea(windowFrame) {
+                frameInsideWindow = windowFrame.contains(frame)
+                let probes = app.descendants(matching: .any).matching(identifier: "ui.nativeStatusBar")
+                if probes.count == 1 {
+                    let probeWindows = app.windows.containing(NSPredicate(format: "identifier == %@", "ui.nativeStatusBar"))
+                        .allElementsBoundByAccessibilityElement
+                    let ownerProbes = ownerWindows[0].descendants(matching: .any).matching(identifier: "ui.nativeStatusBar")
+                    if probeWindows.count == 1, ownerProbes.count == 1 {
+                        let coordinates = value(of: probes.firstMatch).split(separator: ",", omittingEmptySubsequences: false)
+                        if coordinates.count == 4,
+                           let x = Double(coordinates[0]), let y = Double(coordinates[1]),
+                           let width = Double(coordinates[2]), let height = Double(coordinates[3]) {
+                            let statusFrame = CGRect(x: x, y: y, width: width, height: height)
+                            if hasArea(statusFrame), windowFrame.contains(statusFrame) {
+                                belowStatus = frame.minY >= statusFrame.maxY
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let checks: [String: Any] = [
+            "identifierMatchesCaptureOpen": identifier == "capture.open",
+            "targetIsButton": exists && element.elementType == .button,
+            "exists": exists,
+            "enabled": exists && element.isEnabled,
+            "hittable": exists && element.isHittable,
+            "frameHasArea": frameHasArea,
+            "ownedBySingleWindow": ownedBySingleWindow,
+            "keyboardPresent": app.keyboards.firstMatch.exists,
+            "alertPresent": app.alerts.firstMatch.exists,
+            "sheetPresent": app.sheets.firstMatch.exists,
+            "frameInsideWindow": frameInsideWindow,
+            "belowStatus": belowStatus,
+        ]
+        let diagnostic: [String: Any] = [
+            "method": "testOverlongTitleShowsErrorAndPreservesEveryCharacter",
+            "action": "capture.open", "phase": "validationRecovery", "checks": checks,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            print("UI validation recovery diagnostic: \(json)")
+        }
     }
 
     @MainActor

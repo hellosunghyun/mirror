@@ -62,13 +62,21 @@ UI_KEYBOARD_DIAGNOSTIC_MARKER = 'UI keyboard introduction diagnostic:'
 UI_PHASE_DIAGNOSTIC_MARKER = 'UI test phase diagnostic:'
 UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER = 'UI native screenshot diagnostic:'
 UI_TOOLBAR_DIAGNOSTIC_MARKER = 'UI search toolbar diagnostic:'
+UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER = 'UI validation recovery diagnostic:'
 STRUCTURED_DIAGNOSTIC_MARKERS = frozenset({
     STORE_DEDUP_DIAGNOSTIC_MARKER, UI_VIEWPORT_DIAGNOSTIC_MARKER,
     UI_KEYBOARD_DIAGNOSTIC_MARKER, UI_PHASE_DIAGNOSTIC_MARKER,
     UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER, UI_TOOLBAR_DIAGNOSTIC_MARKER,
+    UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER,
 })
 UI_PHASE_METHOD = 'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary'
 UI_TOOLBAR_IDENTIFIERS = ('capture.open', 'settings.button')
+UI_VALIDATION_RECOVERY_METHOD = 'testOverlongTitleShowsErrorAndPreservesEveryCharacter'
+UI_VALIDATION_RECOVERY_BOOL_FIELDS = (
+    'identifierMatchesCaptureOpen', 'targetIsButton', 'exists', 'enabled', 'hittable',
+    'frameHasArea', 'ownedBySingleWindow', 'keyboardPresent', 'alertPresent', 'sheetPresent',
+)
+UI_VALIDATION_RECOVERY_NULLABLE_FIELDS = ('frameInsideWindow', 'belowStatus')
 UI_PHASE_NAMES = (
     'started', 'launched', 'captured', 'reviewOpened', 'tomorrowAssigned', 'reviewClosed',
     'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
@@ -161,6 +169,70 @@ def unique_active_ui_method(active_cases, method):
     owner, actual_method = next(iter(active_cases))
     return ((owner == 'MirrorUITests' or owner.endswith('.MirrorUITests'))
             and actual_method == method)
+
+
+def report_ui_validation_recovery_diagnostics(lines):
+    active_cases = set()
+    active_case_depths = {}
+    ambiguous_active = False
+    report = None
+    invalid_count = 0
+    for line in lines:
+        if UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER not in line:
+            if (not any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)
+                    and not is_ui_failure_candidate(line)):
+                event = UI_ANY_CASE_EVENT_PATTERN.search(line)
+                if event:
+                    case = (event[1], event[2])
+                    if event[3] == 'started':
+                        if active_case_depths.get(case, 0):
+                            # 동일 이름의 겹친 시작은 모두 닫힐 때까지 유일 실행으로 추정하지 않는다.
+                            ambiguous_active = True
+                        active_case_depths[case] = active_case_depths.get(case, 0) + 1
+                    elif active_case_depths.get(case, 0) > 1:
+                        active_case_depths[case] -= 1
+                    else:
+                        active_case_depths.pop(case, None)
+                elif re.search(r'\bTest\s+Case\b', line):
+                    active_case_depths.clear()
+            track_active_ui_cases(line, active_cases)
+            if not active_case_depths:
+                ambiguous_active = False
+            continue
+        try:
+            if 'UI screenshot timing:' in line:
+                raise ValueError('입력 오류 복구 진단에 screenshot timing을 연결하지 않습니다.')
+            candidate = fixed_diagnostic_json(line, UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER)
+            if (not isinstance(candidate, dict)
+                    or set(candidate) != {'method', 'action', 'phase', 'checks'}
+                    or candidate['method'] != UI_VALIDATION_RECOVERY_METHOD
+                    or candidate['action'] != 'capture.open'
+                    or candidate['phase'] != 'validationRecovery'
+                    or not isinstance(candidate['checks'], dict)
+                    or set(candidate['checks']) != set(UI_VALIDATION_RECOVERY_BOOL_FIELDS
+                                                      + UI_VALIDATION_RECOVERY_NULLABLE_FIELDS)
+                    or any(type(candidate['checks'][key]) is not bool
+                           for key in UI_VALIDATION_RECOVERY_BOOL_FIELDS)
+                    or any(candidate['checks'][key] is not None
+                           and type(candidate['checks'][key]) is not bool
+                           for key in UI_VALIDATION_RECOVERY_NULLABLE_FIELDS)
+                    or not unique_active_ui_method(active_cases, UI_VALIDATION_RECOVERY_METHOD)
+                    or ambiguous_active or report is not None):
+                raise ValueError('입력 오류 복구 진단은 유일한 baseline 사례의 고정 일회성 판정이어야 합니다.')
+            report = {
+                'scope': 'stdoutOnly', 'method': UI_VALIDATION_RECOVERY_METHOD,
+                'action': 'capture.open', 'phase': 'validationRecovery',
+                'checks': {key: candidate['checks'][key] for key in
+                           UI_VALIDATION_RECOVERY_BOOL_FIELDS + UI_VALIDATION_RECOVERY_NULLABLE_FIELDS},
+            }
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    # false/null을 보존한다. 무효 전사가 섞이면 일부 관측도 추정하거나 원문을 공개하지 않는다.
+    if invalid_count:
+        print('::notice::UI validation recovery diagnostic rejected: '
+              + json.dumps({'invalidCount': invalid_count}))
+    elif report is not None:
+        print('::notice::UI validation recovery diagnostic: ' + json.dumps(report))
 
 
 def report_ui_toolbar_diagnostics(lines):
@@ -583,6 +655,7 @@ def diagnostics(path):
     lines = [line for line in raw_lines
              if not any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)]
     report_ui_first_failure(lines)
+    report_ui_validation_recovery_diagnostics(raw_lines)
     report_ui_toolbar_diagnostics(raw_lines)
     report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)
