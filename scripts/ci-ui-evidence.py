@@ -230,14 +230,15 @@ def clean_icc(payload):
     return payload
 
 
-def clean_png(data):
-    """Pixel과 검증한 색관리는 유지하고 텍스트/EXIF/임의 chunk를 제거한다."""
+def clean_png(data, *, preserve_orientation=False):
+    """Pixel·색관리를 보존하고, 요청한 경우 유효한 EXIF orientation만 재구성한다."""
     require(data.startswith(PNG_SIGNATURE) and len(data) <= MAX_PNG_BYTES, 'invalidPNG')
     position, chunks, image_data = 8, [], []
     width = height = depth = color = None
     palette = transparency = False
     data_ended = ended = False
     color_chunks = set()
+    exif_count, orientation = 0, None
     while position < len(data):
         require(position + 12 <= len(data) and not ended, 'invalidPNG')
         length = struct.unpack('>I', data[position:position + 4])[0]
@@ -272,6 +273,10 @@ def clean_png(data):
         elif kind == b'IEND':
             require(length == 0 and image_data, 'invalidPNG')
             ended = True
+        elif kind == b'eXIf':
+            exif_count += 1
+            if preserve_orientation and exif_count == 1:
+                orientation = exif_orientation(payload)
         elif kind in (b'sRGB', b'gAMA', b'cHRM', b'iCCP'):
             require(not image_data and not palette and kind not in color_chunks, 'invalidPNG')
             if kind == b'sRGB':
@@ -306,14 +311,20 @@ def clean_png(data):
         raise EvidenceError('invalidPNG') from None
     require(len(raw) == expected_size and decoder.eof and not decoder.unused_data
             and not decoder.unconsumed_tail and all(raw[index] <= 4 for index in range(0, len(raw), row_size)), 'invalidPNG')
+    if preserve_orientation and exif_count == 1 and orientation is not None:
+        # IFD0의 SHORT orientation 하나와 next IFD 0만 남긴 26-byte classic TIFF다.
+        canonical = (b'II' + struct.pack('<HIH', 42, 8, 1)
+                     + struct.pack('<HHI', 0x0112, 3, 1)
+                     + struct.pack('<H', orientation) + b'\0\0' + struct.pack('<I', 0))
+        chunks.insert(1, png_chunk(b'eXIf', canonical))
     return PNG_SIGNATURE + b''.join(chunks), width, height
 
 
 def exif_orientation(payload):
     """한정된 classic TIFF IFD0의 orientation 숫자만 읽고 원문은 반환하지 않는다.
 
-    미지원·손상 구조와 중복 태그는 None이다. 이는 진단의 판독 범위이며 기존
-    PNG 정제·수용 조건을 바꾸지 않는다. 다른 IFD와 태그 문자열은 따라가지 않는다.
+    미지원·손상 구조와 중복 태그는 None이며 값을 추론하지 않는다.
+    다른 IFD와 태그 문자열은 따라가지 않는다.
     """
     if not 14 <= len(payload) <= 1024 * 1024:
         return None
@@ -396,6 +407,13 @@ def png_provenance(exported, cleaned):
             'cleanExifPresent': public['exifPresent']}
 
 
+def require_landscape_png(data, width, height):
+    """EXIF 적용 후 가로 크기만 확인한다. 회전 방향·화면 디자인은 판정하지 않는다."""
+    orientation = png_provenance_parts(data)['exifOrientation']
+    display_width, display_height = (height, width) if orientation in (5, 6, 7, 8) else (width, height)
+    require(display_width > display_height, 'invalidLandscapeGeometry')
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -409,7 +427,7 @@ def report(manifest, images):
              '<meta name="viewport" content="width=device-width,initial-scale=1">',
              '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'">',
              '<title>미러 UI 검토</title><style>body{font:16px system-ui;max-width:1200px;margin:2rem auto;padding:1rem}',
-             'img{max-width:100%;height:auto;border:1px solid #bbb}figure{margin:2rem 0}code{overflow-wrap:anywhere}</style>',
+             'img{max-width:100%;height:auto;image-orientation:from-image;border:1px solid #bbb}figure{margin:2rem 0}code{overflow-wrap:anywhere}</style>',
              '<h1>미러 UI 검토</h1><p>실제 앱 UI 테스트에서 수집한 화면입니다. 디자인 승인과 실기기 검증은 별도입니다.</p>',
              '<p>Commit <code>' + html.escape(manifest['commitSHA']) + '</code> · Build ' + manifest['buildNumber'] +
              ' · Run ' + manifest['runID'] + ' · Attempt ' + manifest['runAttempt'] + '</p>']
@@ -475,8 +493,12 @@ def validate_directory(directory, expected, aggregate=False):
     images = {}
     for shot in manifest['screenshots']:
         data = read_regular(directory / shot['file'], MAX_PNG_BYTES)
-        cleaned, width, height = clean_png(data)
+        platform = shot.get('platform', manifest.get('platform'))
+        preserve_orientation = platform == 'ipad' and shot['stage'] == 'ipad-landscape'
+        cleaned, width, height = clean_png(data, preserve_orientation=preserve_orientation)
         require(cleaned == data, 'unsafePNGMetadata')
+        if preserve_orientation:
+            require_landscape_png(cleaned, width, height)
         require((digest(data), len(data), width, height) ==
                 (shot['sha256'], shot['bytes'], shot['width'], shot['height']), 'checksumMismatch')
         images[shot['file']] = data
@@ -548,12 +570,15 @@ def prepare(source, output, platform, expected):
         candidates = by_basename.get(basename, [])
         require(len(candidates) == 1, 'missingScreenshot')
         exported_data = read_regular(candidates[0], MAX_PNG_BYTES)
-        data, width, height = clean_png(exported_data)
-        if platform == 'ipad' and SHOT_PATTERN.fullmatch(name)[1] == 'ipad-landscape':
+        stage = SHOT_PATTERN.fullmatch(name)[1]
+        preserve_orientation = platform == 'ipad' and stage == 'ipad-landscape'
+        data, width, height = clean_png(exported_data, preserve_orientation=preserve_orientation)
+        if preserve_orientation:
+            require_landscape_png(data, width, height)
             landscape_provenance = png_provenance(exported_data, data)
         filename = 'screenshots/' + name + '.png'
         images[filename] = data
-        shots.append({'name': name, 'stage': SHOT_PATTERN.fullmatch(name)[1], 'file': filename,
+        shots.append({'name': name, 'stage': stage, 'file': filename,
                       'sha256': digest(data), 'bytes': len(data), 'width': width, 'height': height})
     require(sum(map(len, images.values())) <= MAX_TOTAL_BYTES)
     manifest = {**expected, 'formatVersion': 1, 'kind': 'mirror-ui-evidence', 'platform': platform,

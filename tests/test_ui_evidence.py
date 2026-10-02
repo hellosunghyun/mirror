@@ -26,11 +26,13 @@ SDK_SUFFIX = '_1_12345678-90AB-CDEF-1234-567890ABCDEF.png'
 SCREENSHOT_COUNT = sum(len(helper.required_stages(platform)) for platform in helper.PLATFORMS)
 
 
-def png(extra=(), pixels=b'\xff\x00\x00\x00\xff\x00'):
+def png(extra=(), pixels=b'\xff\x00\x00\x00\xff\x00', *, width=2, height=1):
     # 두 RGB pixel을 가진 정상 PNG다. PNG signature만 맞춘 임의 bytes를 사용하지 않는다.
-    return (helper.PNG_SIGNATURE + helper.png_chunk(b'IHDR', struct.pack('>IIBBBBB', 2, 1, 8, 2, 0, 0, 0)) +
+    row_size = width * 3
+    filtered = b''.join(b'\0' + pixels[index:index + row_size] for index in range(0, len(pixels), row_size))
+    return (helper.PNG_SIGNATURE + helper.png_chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)) +
             b''.join(helper.png_chunk(kind, data) for kind, data in extra) +
-            helper.png_chunk(b'IDAT', zlib.compress(b'\0' + pixels)) + helper.png_chunk(b'IEND', b''))
+            helper.png_chunk(b'IDAT', zlib.compress(filtered)) + helper.png_chunk(b'IEND', b''))
 
 
 def chunks(data):
@@ -346,10 +348,40 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertNotIn(b'eXIf', cleaned_chunks)
         self.assertEqual(helper.clean_png(cleaned)[0], cleaned)
 
+    def test_orientation_cleaner_rebuilds_only_canonical_ifd0_and_is_idempotent(self):
+        for endian in ('<', '>'):
+            for value in range(1, 9):
+                with self.subTest(endian=endian, value=value):
+                    exif = tiff_orientation(value, endian=endian, private=PRIVATE.encode() + b'\0')
+                    next_offset = len(exif) + len(exif) % 2
+                    # 별도 IFD의 서로 다른 orientation은 따라가거나 공개하지 않는다.
+                    exif = (exif[:34] + struct.pack(endian + 'I', next_offset) + exif[38:]
+                            + (b'\0' if len(exif) % 2 else b'')
+                            + tiff_orientation(9 - value, endian=endian)[8:])
+                    original = png(((b'gAMA', struct.pack('>I', 45455)), (b'eXIf', exif),
+                                    (b'tEXt', b'Comment\0' + PRIVATE.encode()),
+                                    (b'iTXt', PRIVATE.encode()), (b'zTXt', PRIVATE.encode())))
+                    cleaned, width, height = helper.clean_png(original, preserve_orientation=True)
+                    canonical = (bytes.fromhex('49492a000800000001001201030001000000')
+                                 + struct.pack('<H', value) + b'\0' * 6)
+                    self.assertEqual(len(canonical), 26)
+                    image_chunks = chunks(cleaned)
+                    self.assertEqual(image_chunks[1], (b'eXIf', canonical))
+                    self.assertEqual(sum(kind == b'eXIf' for kind, _ in image_chunks), 1)
+                    self.assertEqual((width, height), (2, 1))
+                    self.assertEqual(helper.exif_orientation(image_chunks[1][1]), value)
+                    preserved = (b'IHDR', b'gAMA', b'IDAT', b'IEND')
+                    self.assertEqual([(kind, data) for kind, data in image_chunks if kind != b'eXIf'],
+                                     [(kind, data) for kind, data in chunks(original) if kind in preserved])
+                    self.assertNotIn(PRIVATE.encode(), cleaned)
+                    self.assertEqual(helper.clean_png(cleaned, preserve_orientation=True)[0], cleaned)
+                    self.assertEqual(helper.clean_png(cleaned)[0], helper.clean_png(original)[0])
+                    self.assertNotIn(b'eXIf', dict(chunks(helper.clean_png(original)[0])))
+
     def test_ipad_png_provenance_reports_one_safe_notice_without_asset_or_schema_changes(self):
         source, output = self.root / 'provenance-raw', self.root / 'provenance-out'
         image = png(((b'tEXt', b'Comment\0' + PRIVATE.encode()),
-                     (b'eXIf', tiff_orientation(8, private=PRIVATE.encode() + b'\0'))))
+                     (b'eXIf', tiff_orientation(8, private=PRIVATE.encode() + b'\0'))), width=1, height=2)
         raw_export(source, stages=helper.IPAD_STAGES, image=image)
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -365,18 +397,26 @@ class UIEvidenceTests(unittest.TestCase):
         })
         self.assertEqual((diagnostic['platform'], diagnostic['stage']), ('ipad', 'ipad-landscape'))
         self.assertEqual((diagnostic['exportWidth'], diagnostic['exportHeight'],
-                          diagnostic['cleanWidth'], diagnostic['cleanHeight']), (2, 1, 2, 1))
+                          diagnostic['cleanWidth'], diagnostic['cleanHeight']), (1, 2, 1, 2))
         self.assertEqual(diagnostic['exportPNGHash'], helper.digest(image))
         for channel in ('IHDR', 'IDAT'):
             self.assertEqual(diagnostic['export' + channel + 'Hash'], diagnostic['clean' + channel + 'Hash'])
         self.assertIs(diagnostic['exportExifPresent'], True)
         self.assertEqual(diagnostic['exportExifOrientation'], 8)
-        self.assertIs(diagnostic['cleanExifPresent'], False)
+        self.assertIs(diagnostic['cleanExifPresent'], True)
         self.assertNotIn(PRIVATE, stdout.getvalue())
         self.assertEqual(len(manifest['screenshots']), 15)
         self.assertEqual(set(manifest), helper.MANIFEST_KEYS)
         _, files = helper.validate_directory(output, IDENTITY)
         self.assertEqual(set(files) - {shot['file'] for shot in manifest['screenshots']}, helper.PREPARE_STATIC)
+        for shot in manifest['screenshots']:
+            self.assertEqual((shot['width'], shot['height']), (1, 2))
+            image_chunks = chunks(files[shot['file']])
+            if shot['stage'] == 'ipad-landscape':
+                self.assertEqual(image_chunks[1], (b'eXIf', tiff_orientation(8)))
+                self.assertEqual(sum(kind == b'eXIf' for kind, _ in image_chunks), 1)
+            else:
+                self.assertNotIn(b'eXIf', dict(image_chunks))
         for data in files.values():
             self.assertNotIn(PRIVATE.encode(), data)
 
@@ -395,6 +435,13 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertEqual(diagnostic['exportIHDRHash'], diagnostic['cleanIHDRHash'])
         self.assertEqual([payload for kind, payload in chunks(original) if kind == b'IDAT'],
                          [payload for kind, payload in chunks(cleaned) if kind == b'IDAT'])
+        oriented, width, height = helper.clean_png(original, preserve_orientation=True)
+        self.assertEqual((width, height), (2, 1))
+        self.assertEqual(dict(chunks(oriented))[b'IHDR'], dict(chunks(original))[b'IHDR'])
+        self.assertEqual([payload for kind, payload in chunks(original) if kind == b'IDAT'],
+                         [payload for kind, payload in chunks(oriented) if kind == b'IDAT'])
+        self.assertEqual(chunks(oriented)[1], (b'eXIf', tiff_orientation(6)))
+        self.assertEqual(helper.clean_png(oriented, preserve_orientation=True)[0], oriented)
 
     def test_exif_orientation_reads_only_valid_ifd0_short_values_in_both_byte_orders(self):
         for endian in ('<', '>'):
@@ -433,6 +480,9 @@ class UIEvidenceTests(unittest.TestCase):
                 self.assertIs(diagnostic['cleanExifPresent'], False)
                 self.assertNotIn(PRIVATE, json.dumps(diagnostic))
                 self.assertEqual(diagnostic['exportIDATHash'], diagnostic['cleanIDATHash'])
+                oriented, _, _ = helper.clean_png(original, preserve_orientation=True)
+                self.assertEqual(oriented, cleaned)
+                self.assertNotIn(b'eXIf', dict(chunks(oriented)))
 
     def test_duplicate_exif_chunks_do_not_select_one_orientation(self):
         original = png(((b'eXIf', tiff_orientation(3)), (b'eXIf', tiff_orientation(8))))
@@ -441,6 +491,7 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertIs(diagnostic['exportExifPresent'], True)
         self.assertIsNone(diagnostic['exportExifOrientation'])
         self.assertIs(diagnostic['cleanExifPresent'], False)
+        self.assertEqual(helper.clean_png(original, preserve_orientation=True)[0], cleaned)
         absent = helper.png_provenance(png(), png())
         self.assertIs(absent['exportExifPresent'], False)
         self.assertIsNone(absent['exportExifOrientation'])
@@ -508,6 +559,135 @@ class UIEvidenceTests(unittest.TestCase):
         for shot in manifest['screenshots']:
             self.assertTrue(shot['file'].startswith('mirror-ui-' + shot['platform'] + '-'))
         helper.validate_directory(output, IDENTITY, aggregate=True)
+
+    def test_prepare_aggregate_and_publish_preserve_orientation_only_for_ipad_landscape(self):
+        image = png(((b'eXIf', tiff_orientation(8, endian='>', private=PRIVATE.encode() + b'\0')),
+                     (b'tEXt', b'Comment\0' + PRIVATE.encode())), width=1, height=2)
+        default_cleaned = helper.clean_png(image)[0]
+        self.assertNotIn(b'eXIf', dict(chunks(default_cleaned)))
+        for platform in helper.PLATFORMS:
+            source, output = self.root / ('raw-' + platform), self.root / 'inputs' / platform
+            raw_export(source, stages=helper.required_stages(platform), image=image)
+            helper.prepare(source, output, platform, IDENTITY)
+            helper.validate_directory(output, IDENTITY)
+        output = self.root / 'public'
+        helper.aggregate(self.root / 'inputs', output, IDENTITY)
+        manifest, files = helper.validate_directory(output, IDENTITY, aggregate=True)
+        default_count = 0
+        for shot in manifest['screenshots']:
+            data = files[shot['file']]
+            self.assertEqual((shot['width'], shot['height']), (1, 2))
+            self.assertEqual(dict(chunks(data))[b'IHDR'], dict(chunks(image))[b'IHDR'])
+            self.assertEqual([payload for kind, payload in chunks(data) if kind == b'IDAT'],
+                             [payload for kind, payload in chunks(image) if kind == b'IDAT'])
+            self.assertNotIn(PRIVATE.encode(), data)
+            if (shot['platform'], shot['stage']) == ('ipad', 'ipad-landscape'):
+                self.assertEqual(chunks(data)[1], (b'eXIf', tiff_orientation(8)))
+                self.assertEqual(sum(kind == b'eXIf' for kind, _ in chunks(data)), 1)
+            else:
+                default_count += 1
+                self.assertEqual(data, default_cleaned)
+        self.assertEqual(default_count, 42)
+        self.assertEqual(set(manifest), helper.AGGREGATE_KEYS)
+        self.assertTrue(all(set(shot) == helper.PUBLIC_SHOT_KEYS for shot in manifest['screenshots']))
+        self.assertIn(b'image-orientation:from-image', files['ui-review.html'])
+        client = FakeGitHub()
+        helper.publish(client, output, IDENTITY)
+        self.assertFalse(client.release['draft'])
+        self.assertEqual(len(client.release['assets']), SCREENSHOT_COUNT + len(helper.PUBLIC_STATIC))
+
+    def test_prepare_requires_landscape_display_geometry_before_output_and_notice(self):
+        cases = ((2, 1, None, True), (1, 2, None, False), (2, 2, None, False), (2, 2, 8, False))
+        cases += tuple((2, 1, value, True) for value in (1, 2, 3, 4))
+        cases += tuple((1, 2, value, False) for value in (1, 2, 3, 4))
+        cases += tuple((1, 2, value, True) for value in (5, 6, 7, 8))
+        cases += tuple((2, 1, value, False) for value in (5, 6, 7, 8))
+        for index, (width, height, orientation, accepted) in enumerate(cases):
+            with self.subTest(width=width, height=height, orientation=orientation):
+                source, output = self.root / ('geometry-' + str(index)), self.root / ('out-' + str(index))
+                raw_export(source, stages=helper.IPAD_STAGES)
+                extra = () if orientation is None else ((b'eXIf', tiff_orientation(orientation)),)
+                pixels = b'\xff\x00\x00\x00\xff\x00' * (2 if width == height == 2 else 1)
+                image = png(extra, pixels, width=width, height=height)
+                (source / ('export-' + str(len(helper.IPAD_STAGES)) + '.png')).write_bytes(image)
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    if accepted:
+                        manifest = helper.prepare(source, output, 'ipad', IDENTITY)
+                    else:
+                        self.expect_error('invalidLandscapeGeometry',
+                                          lambda: helper.prepare(source, output, 'ipad', IDENTITY))
+                if accepted:
+                    shot = next(shot for shot in manifest['screenshots'] if shot['stage'] == 'ipad-landscape')
+                    self.assertEqual((shot['width'], shot['height']), (width, height))
+                    helper.validate_directory(output, IDENTITY)
+                else:
+                    self.assertFalse(output.exists())
+                    self.assertNotIn('UI PNG provenance diagnostic: ', stdout.getvalue())
+                self.assertNotIn(PRIVATE, stdout.getvalue())
+
+    def test_prepare_does_not_guess_landscape_orientation_from_malformed_or_duplicate_exif(self):
+        valid = tiff_orientation(8)
+        duplicate_tag = valid[:8] + struct.pack('<H', 2) + valid[10:22] * 2 + struct.pack('<I', 0)
+        cases = (((b'eXIf', valid[:-1]),), ((b'eXIf', duplicate_tag),),
+                 ((b'eXIf', valid), (b'eXIf', tiff_orientation(6))),
+                 ((b'eXIf', valid), (b'eXIf', PRIVATE.encode())))
+        for index, extra in enumerate(cases):
+            with self.subTest(case=index):
+                source, output = self.root / ('invalid-exif-' + str(index)), self.root / ('out-' + str(index))
+                raw_export(source, stages=helper.IPAD_STAGES)
+                image = png(extra, width=1, height=2)
+                (source / ('export-' + str(len(helper.IPAD_STAGES)) + '.png')).write_bytes(image)
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.expect_error('invalidLandscapeGeometry',
+                                      lambda: helper.prepare(source, output, 'ipad', IDENTITY))
+                self.assertFalse(output.exists())
+                self.assertNotIn('UI PNG provenance diagnostic: ', stdout.getvalue())
+                self.assertNotIn(PRIVATE, stdout.getvalue())
+
+    def test_single_and_aggregate_reject_nonlandscape_display_before_publish_requests(self):
+        public = self.aggregate_all()
+        cases = (png(width=1, height=2), png(((b'eXIf', tiff_orientation(8)),)),
+                 png(((b'eXIf', tiff_orientation(1)),), width=1, height=2),
+                 png(((b'eXIf', tiff_orientation(8)),),
+                     b'\xff\x00\x00\x00\xff\x00' * 2, width=2, height=2))
+        for aggregate, output in ((False, self.root / 'inputs' / 'ipad'), (True, public)):
+            manifest_name = 'ui-review-manifest.json' if aggregate else 'manifest.json'
+            original = json.loads((output / manifest_name).read_text())
+            images = {shot['file']: (output / shot['file']).read_bytes() for shot in original['screenshots']}
+            for index, image in enumerate(cases):
+                with self.subTest(aggregate=aggregate, case=index):
+                    manifest = copy.deepcopy(original)
+                    shot = next(shot for shot in manifest['screenshots'] if shot['stage'] == 'ipad-landscape')
+                    width, height = struct.unpack('>II', dict(chunks(image))[b'IHDR'][:8])
+                    shot.update(sha256=helper.digest(image), bytes=len(image), width=width, height=height)
+                    rewritten = {**images, shot['file']: image}
+                    for name, data in helper.payload(manifest, rewritten, aggregate=aggregate).items():
+                        (output / name).write_bytes(data)
+                    self.expect_error('invalidLandscapeGeometry',
+                                      lambda: helper.validate_directory(output, IDENTITY, aggregate=aggregate))
+                    if aggregate:
+                        client = FakeGitHub()
+                        self.expect_error('invalidLandscapeGeometry', lambda: helper.publish(client, output, IDENTITY))
+                        self.assertEqual(client.calls, [])
+
+    def test_other_public_stages_reject_orientation_metadata_before_publish_requests(self):
+        output = self.aggregate_all()
+        original = json.loads((output / 'ui-review-manifest.json').read_text())
+        images = {shot['file']: (output / shot['file']).read_bytes() for shot in original['screenshots']}
+        image = png(((b'eXIf', tiff_orientation(8)),), width=1, height=2)
+        for platform in helper.PLATFORMS:
+            with self.subTest(platform=platform):
+                manifest = copy.deepcopy(original)
+                shot = next(shot for shot in manifest['screenshots']
+                            if shot['platform'] == platform and shot['stage'] == 'initial-today')
+                shot.update(sha256=helper.digest(image), bytes=len(image), width=1, height=2)
+                for name, data in helper.payload(manifest, {**images, shot['file']: image}, aggregate=True).items():
+                    (output / name).write_bytes(data)
+                client = FakeGitHub()
+                self.expect_error('unsafePNGMetadata', lambda: helper.publish(client, output, IDENTITY))
+                self.assertEqual(client.calls, [])
 
     def test_duplicate_platform_is_rejected(self):
         for platform in helper.PLATFORMS:

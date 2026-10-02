@@ -362,7 +362,7 @@ final class MirrorUITests: XCTestCase {
                 XCTFail("가로 화면 캡처의 논리적 화면 범위를 앱과 주 창이 채워야 한다.")
                 throw UIHarnessError.missingElement("landscapeScreenshotScope")
             }
-            // 동일 screenshot을 그대로 첨부한다. 픽셀 회전·렌더링·후처리는 없다.
+            // 동일 native screenshot의 픽셀을 보존하고 방향만 PNG 메타데이터로 직렬화한다.
             appScreenshot = screenScreenshot
         } else { appScreenshot = app.screenshot() }
         #else
@@ -380,7 +380,15 @@ final class MirrorUITests: XCTestCase {
         XCTAssertLessThanOrEqual(frame.maxX, screenSize.width + 1, "창 오른쪽이 화면 안에 남는다.")
         XCTAssertLessThanOrEqual(frame.maxY, screenSize.height + 1, "창 아래쪽이 화면 안에 남는다.")
         #endif
-        let screenshot = XCTAttachment(screenshot: appScreenshot)
+        let screenshot: XCTAttachment
+        #if os(iOS)
+        if stage == "ipad-landscape" {
+            screenshot = XCTAttachment(data: try landscapeScreenshotPNG(appScreenshot),
+                                       uniformTypeIdentifier: "public.png")
+        } else { screenshot = XCTAttachment(screenshot: appScreenshot) }
+        #else
+        screenshot = XCTAttachment(screenshot: appScreenshot)
+        #endif
         screenshot.name = screenshotName
         screenshot.lifetime = .keepAlways
         add(screenshot)
@@ -394,6 +402,126 @@ final class MirrorUITests: XCTestCase {
     }
 
     #if os(iOS)
+    @MainActor
+    private func landscapeScreenshotPNG(_ screenshot: XCUIScreenshot) throws -> Data {
+        // 픽셀을 회전·렌더링·재압축하지 않는다. 기존 eXIf만 실제 native 방향으로 교체한다.
+        // collector의 MAX_PNG_BYTES와 한 변 크기 한도를 따른다.
+        let maximumPNGBytes = 64 * 1024 * 1024
+        let maximumImageExtent = 16_384
+        let native = screenshot.image
+        let orientation: UInt8
+        switch native.imageOrientation {
+        case .up: orientation = 1
+        case .upMirrored: orientation = 2
+        case .down: orientation = 3
+        case .downMirrored: orientation = 4
+        case .leftMirrored: orientation = 5
+        case .right: orientation = 6
+        case .rightMirrored: orientation = 7
+        case .left: orientation = 8
+        @unknown default: throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+        }
+        guard let bitmap = native.cgImage else {
+            throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+        }
+        let original = screenshot.pngRepresentation
+        let signature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        guard original.count >= signature.count, original.count <= maximumPNGBytes,
+              original.starts(with: signature) else {
+            throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+        }
+        let bytes = [UInt8](original)
+        func bigEndianUInt32(at index: Int) -> UInt32 {
+            (UInt32(bytes[index]) << 24) | (UInt32(bytes[index + 1]) << 16)
+                | (UInt32(bytes[index + 2]) << 8) | UInt32(bytes[index + 3])
+        }
+        // PNG eXIf에는 JPEG의 Exif prefix 없이 classic TIFF 하나만 저장한다.
+        // II, magic 42, IFD0 offset 8, SHORT orientation 하나, next IFD 0: 정확히 26 bytes.
+        let tiff: [UInt8] = [
+            0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+            0x01, 0x00, 0x12, 0x01, 0x03, 0x00, 0x01, 0x00,
+            0x00, 0x00, orientation, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]
+        let ihdr: [UInt8] = [0x49, 0x48, 0x44, 0x52]
+        let idat: [UInt8] = [0x49, 0x44, 0x41, 0x54]
+        let iend: [UInt8] = [0x49, 0x45, 0x4e, 0x44]
+        let exif: [UInt8] = [0x65, 0x58, 0x49, 0x66]
+        var metadataChunk: [UInt8] = [0x00, 0x00, 0x00, 0x1a] + exif + tiff
+        // 새 chunk의 type과 payload만 IEEE CRC32로 계산하고 원래 chunk CRC는 그대로 복사한다.
+        var crc: UInt32 = 0xffff_ffff
+        for byte in metadataChunk.dropFirst(4) {
+            crc ^= UInt32(byte)
+            for _ in 0..<8 {
+                crc = (crc >> 1) ^ (((crc & 1) == 1) ? 0xedb8_8320 : 0)
+            }
+        }
+        crc ^= 0xffff_ffff
+        metadataChunk.append(contentsOf: [
+            UInt8(truncatingIfNeeded: crc >> 24), UInt8(truncatingIfNeeded: crc >> 16),
+            UInt8(truncatingIfNeeded: crc >> 8), UInt8(truncatingIfNeeded: crc),
+        ])
+        var output = signature
+        var position = signature.count
+        var sawHeader = false
+        var sawImageData = false
+        var imageDataEnded = false
+        var sawEnd = false
+        while position < bytes.count {
+            guard bytes.count - position >= 12 else {
+                throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+            }
+            let length = Int(bigEndianUInt32(at: position))
+            guard length <= maximumPNGBytes, length <= bytes.count - position - 12 else {
+                throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+            }
+            let end = position + length + 12
+            let kind = Array(bytes[(position + 4)..<(position + 8)])
+            guard kind.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) }),
+                  (65...90).contains(kind[2]) else {
+                throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+            }
+            if !sawHeader {
+                guard kind == ihdr, length == 13 else {
+                    throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+                }
+                let width = Int(bigEndianUInt32(at: position + 8))
+                let height = Int(bigEndianUInt32(at: position + 12))
+                guard width > 0, height > 0,
+                      width <= maximumImageExtent, height <= maximumImageExtent,
+                      width == bitmap.width, height == bitmap.height else {
+                    throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+                }
+                sawHeader = true
+            } else if kind == ihdr {
+                throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+            }
+            if kind == idat {
+                guard !imageDataEnded else {
+                    throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+                }
+                sawImageData = true
+            } else if sawImageData { imageDataEnded = true }
+            if kind == iend {
+                guard length == 0, sawImageData, end == bytes.count else {
+                    throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+                }
+                sawEnd = true
+            }
+            if kind != exif {
+                output.append(contentsOf: bytes[position..<end])
+                if kind == ihdr { output.append(contentsOf: metadataChunk) }
+                guard output.count <= maximumPNGBytes else {
+                    throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+                }
+            }
+            position = end
+        }
+        guard sawHeader, sawImageData, sawEnd else {
+            throw UIHarnessError.missingElement("landscapeScreenshotMetadata")
+        }
+        return Data(output)
+    }
+
     @MainActor
     private func recordNativeScreenshotDiagnostic(_ screenshot: XCUIScreenshot) {
         // 동일 native screenshot의 scalar와 원본 PNG hash만 읽는다. 픽셀을 변환하지 않는다.

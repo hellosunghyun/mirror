@@ -108,6 +108,12 @@
 
 ## 수용 기준과 검증 한계
 
+[build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.
+
+후속 수정은 가로 한 장만 같은 native screenshot의 `imageOrientation`을 PNG eXIf의 26-byte orientation 전용 TIFF로 직렬화하여 data attachment로 첨부한다. 원본 IHDR·모든 IDAT와 기존 chunk CRC는 그대로 복사하며 픽셀 회전·crop·렌더링·재압축을 하지 않는다. 파일 전체의 bytes·hash는 메타데이터 때문에 달라질 수 있다. collector는 정확한 iPad 가로 stage에서 유효하고 단일한 방향값만 재구성하며 다른 EXIF 태그·IFD·text를 제거한다. 다른 42장의 기본 정제 정책과 manifest의 raw width·height, schema·14키 provenance 계약은 유지한다. prepare·단일/집계 재검증과 게시 전에 EXIF 적용 후 가로 크기를 요구하지만, 이 검사는 CW/CCW 방향이나 시각 수용을 판정하지 않는다.
+
+회귀 6개는 양 byte order·방향값 1–8·다른 IFD/개인 metadata 제거·멱등성, 가로 stage만 보존 및 다른 42장 기존 결과 유지, prepare의 표시 크기, 손상·중복 방향 추론 금지, 정합한 hash/dimensions를 가진 잘못된 가로 증거의 단일/집계 거절과 게시 요청 0회, 다른 stage의 EXIF 게시 거절을 검사한다. SDK attachment export가 eXIf를 보존하는지, 원본/export/public IHDR·IDAT가 같은지, 새 가로 PNG의 글자가 정방향이고 두 열·시스템 노출이 정상인지는 새 Actions와 실제 원본에서 확인한다.
+
 밝은 모양의 기본 검증·서명 배포와 별개로 어두운 모양 검증 workflow를 각 관련 push에 실행한다. 같은6사례·43장과 각 플랫폼 시간 제한을 독립 run/SHA/build/attempt·receipt·Release로 유지한다. 두 Dark shared scheme의 TestAction에만 고정 dark 값을 전달하고 CI는 UI build/test만 해당 scheme으로 선택한다. receipt의 기존 ui_scheme 필드를 실제 선택값과 대조해 밝은/어두운 산출물 교환을 거부한다. 앱은 DEBUG·MIRROR_UI_TESTING=1인 main window에만 강제 모양을 적용하고 Release·기본 scheme은 기존 시스템 모양을 유지한다. 전역 host/Simulator 모양은 바꾸지 않는다. 실제 SDK 환경 전달과 어두운 원본43장을 확인하기 전에는 다크 검증 완료로 기록하지 않는다.
 
 - 기존 여섯 UI 흐름의 실제 완료·실패 0·skip 0와 모든 필수 메서드를 확인한다. assertion·guard·실행 제한을 낮추지 않는다.
