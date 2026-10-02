@@ -9,6 +9,8 @@ on:
       - 'Resources/**'
       - 'Sources/**'
       - 'Tests/**'
+      - 'tests/**'
+      - '.github/workflows/validation.yml'
       - 'Mirror.xcodeproj/**'
       - 'Package.swift'
       - 'scripts/ci*'

@@ -626,7 +626,7 @@ class UIEvidenceTests(unittest.TestCase):
             else:
                 default_count += 1
                 self.assertEqual(data, default_cleaned)
-        self.assertEqual(default_count, 42)
+        self.assertEqual(default_count, SCREENSHOT_COUNT - 1)
         self.assertEqual(set(manifest), helper.AGGREGATE_KEYS)
         self.assertTrue(all(set(shot) == helper.PUBLIC_SHOT_KEYS for shot in manifest['screenshots']))
         self.assertIn(b'image-orientation:from-image', files['ui-review.html'])
