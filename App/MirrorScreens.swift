@@ -986,42 +986,57 @@ struct MirrorTaskDetail: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        DisclosureGroup("변경 이력과 관리", isExpanded: $showHistory) {
-                            VStack(alignment: .leading, spacing: 16) {
-                                if task.status == .open {
-                                    Button("당분간 보관") { Task { await model.park(task) } }.frame(minHeight: 44)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button { showHistory.toggle() } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: showHistory ? "chevron.down" : "chevron.right")
+                                        .font(.caption.weight(.semibold)).accessibilityHidden(true)
+                                    Text("변경 이력과 관리")
+                                    Spacer(minLength: 0)
                                 }
-                                if task.deadline == nil {
-                                    Button { showDeadline = true } label: { Label("실제 마감 추가", systemImage: "flag") }
-                                        .frame(minHeight: 44)
-                                }
-                                if task.deadline != nil {
-                                    Button("실제 마감 알림 설정") { showDeadline = true }.frame(minHeight: 44)
-                                    if model.preferences.deadlineAlarmDates[task.taskID] != nil {
-                                        Button("이 작업 마감 알림 끄기") { model.setDeadlineAlarm(task, fireAt: nil) }.frame(minHeight: 44)
+                                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("변경 이력과 관리")
+                            .accessibilityValue(showHistory ? "펼쳐짐" : "접힘")
+                            .accessibilityIdentifier("detail.history")
+                            if showHistory {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    if task.status == .open {
+                                        Button("당분간 보관") { Task { await model.park(task) } }.frame(minHeight: 44)
                                     }
-                                    Button("실제 마감 지우기") { Task { await model.setDeadline(task, deadline: nil) } }.frame(minHeight: 44)
-                                }
-                                ForEach(model.history(for: task.taskID), id: \.operationID) { record in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(record.kindLabel).font(.callout)
-                                        Text(record.recordedAt, style: .date).font(.caption).foregroundStyle(.secondary)
-                                        if !record.undoValues.isEmpty {
-                                            Button("이 변경 되돌리기") { Task { await model.undo(record) } }
-                                                .frame(minHeight: 44)
-                                                .accessibilityIdentifier("history.undo.\(record.commandKind.rawValue).\(record.operationID)")
+                                    if task.deadline == nil {
+                                        Button { showDeadline = true } label: { Label("실제 마감 추가", systemImage: "flag") }
+                                            .frame(minHeight: 44)
+                                    }
+                                    if task.deadline != nil {
+                                        Button("실제 마감 알림 설정") { showDeadline = true }.frame(minHeight: 44)
+                                        if model.preferences.deadlineAlarmDates[task.taskID] != nil {
+                                            Button("이 작업 마감 알림 끄기") { model.setDeadlineAlarm(task, fireAt: nil) }.frame(minHeight: 44)
+                                        }
+                                        Button("실제 마감 지우기") { Task { await model.setDeadline(task, deadline: nil) } }.frame(minHeight: 44)
+                                    }
+                                    ForEach(model.history(for: task.taskID), id: \.operationID) { record in
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(record.kindLabel).font(.callout)
+                                            Text(record.recordedAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                                            if !record.undoValues.isEmpty {
+                                                Button("이 변경 되돌리기") { Task { await model.undo(record) } }
+                                                    .frame(minHeight: 44)
+                                                    .accessibilityIdentifier("history.undo.\(record.commandKind.rawValue).\(record.operationID)")
+                                            }
                                         }
                                     }
-                                }
-                                if task.status == .deleted {
-                                    Text("개별 작업의 이력은 영구 삭제하지 않아요.").font(.caption).foregroundStyle(.secondary)
-                                } else {
-                                    Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }.frame(minHeight: 44)
-                                }
-                            }.buttonStyle(.borderless).padding(.top, 12)
+                                    if task.status == .deleted {
+                                        Text("개별 작업의 이력은 영구 삭제하지 않아요.").font(.caption).foregroundStyle(.secondary)
+                                    } else {
+                                        Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }.frame(minHeight: 44)
+                                    }
+                                }.buttonStyle(.borderless).padding(.top, 12)
+                            }
                         }
                         .font(.callout).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("detail.history")
                     }
                 }.padding(24).frame(maxWidth: 600, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -353,6 +353,7 @@ final class MirrorUITests: XCTestCase {
         // 이후 배치가 생기면 거절될 이전 계획의 실제 고유 ID를 미리 읽는다.
         let historyOpenDeadline = Date().addingTimeInterval(15)
         let historyControl = try requireElement("detail.history", in: app, timeout: max(0, historyOpenDeadline.timeIntervalSinceNow), preferButtons: true)
+        XCTAssertEqual(historyControl.elementType, .button, "이력 펼치기는 내용 컨테이너와 구분된 실제 버튼이다.")
         let historyScroll = try requireHistoryScroll(containing: historyControl, in: app)
         _ = try revealHistoryTarget(historyControl, in: historyScroll, app: app, deadline: historyOpenDeadline)
         try activate("detail.history", in: app, timeout: max(0, historyOpenDeadline.timeIntervalSinceNow))
