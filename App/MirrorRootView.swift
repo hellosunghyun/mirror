@@ -21,6 +21,20 @@ struct MirrorRootView: View {
         return false
         #endif
     }
+    private var usesTabStatusBar: Bool {
+        #if os(iOS)
+        return isCompact && UIDevice.current.userInterfaceIdiom == .phone
+        #else
+        return false
+        #endif
+    }
+    private var commonToolbarPlacement: ToolbarItemPlacement {
+        #if os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .phone ? .topBarTrailing : .primaryAction
+        #else
+        return .primaryAction
+        #endif
+    }
     var body: some View {
         @Bindable var model = model
         Group {
@@ -75,13 +89,7 @@ struct MirrorRootView: View {
             } else if !model.preferences.onboardingComplete {
                 MirrorOnboardingView().accessibilityIdentifier("onboarding.screen")
             } else if isCompact {
-                TabView(selection: destinationSelection) {
-                    ForEach(MirrorDestination.allCases) { destination in
-                        Tab(destination.title, systemImage: destination.symbol, value: destination) {
-                            mainContent(destination)
-                        }
-                    }
-                }
+                compactNavigation
             } else {
                 NavigationSplitView {
                     List(selection: sidebarSelection) {
@@ -112,6 +120,22 @@ struct MirrorRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    @ViewBuilder private var compactNavigation: some View {
+        let tabs = TabView(selection: destinationSelection) {
+            ForEach(MirrorDestination.allCases) { destination in
+                Tab(destination.title, systemImage: destination.symbol, value: destination) {
+                    mainContent(destination)
+                }
+            }
+        }
+        #if os(iOS)
+        if usesTabStatusBar {
+            tabs.safeAreaBar(edge: .bottom) { statusBar }
+        } else { tabs }
+        #else
+        tabs
+        #endif
+    }
     private var isTaskInspectorVisible: Bool {
         model.preferences.onboardingComplete && !model.isLoading && !model.showReview && model.selectedTask != nil
     }
@@ -134,7 +158,9 @@ struct MirrorRootView: View {
                     #endif
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(MirrorPalette.canvas)
-                    .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if !usesTabStatusBar { statusBar }
+                    }
                     .toolbar { commonToolbar }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -155,7 +181,7 @@ struct MirrorRootView: View {
         }
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
+        ToolbarItemGroup(placement: commonToolbarPlacement) {
             Button { model.openCapture() } label: { Label("일단 넣기", systemImage: "plus") }
                 .accessibilityIdentifier("capture.open")
                 .keyboardShortcut("n", modifiers: .command)
