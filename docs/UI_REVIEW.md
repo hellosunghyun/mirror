@@ -98,6 +98,8 @@
 
 ## 수용 기준과 검증 한계
 
+밝은 모양의 기본 검증·서명 배포와 별개로 어두운 모양 검증 workflow를 각 관련 push에 실행한다. 같은6사례·43장과 각 플랫폼 시간 제한을 독립 run/SHA/build/attempt·receipt·Release로 유지한다. 두 Dark shared scheme의 TestAction에만 고정 dark 값을 전달하고 CI는 UI build/test만 해당 scheme으로 선택한다. receipt의 기존 ui_scheme 필드를 실제 선택값과 대조해 밝은/어두운 산출물 교환을 거부한다. 앱은 DEBUG·MIRROR_UI_TESTING=1인 main window에만 강제 모양을 적용하고 Release·기본 scheme은 기존 시스템 모양을 유지한다. 전역 host/Simulator 모양은 바꾸지 않는다. 실제 SDK 환경 전달과 어두운 원본43장을 확인하기 전에는 다크 검증 완료로 기록하지 않는다.
+
 - 기존 여섯 UI 흐름의 실제 완료·실패 0·skip 0와 모든 필수 메서드를 확인한다. assertion·guard·실행 제한을 낮추지 않는다.
 - Mac 완료 버튼의 실제 접근성 경계가 폭 220pt·높이 46pt를 넘지 않는 회귀를 추가했다. 목표 버튼 최대 200×44pt에 네이티브 렌더링 경계 오차를 허용한 검사다.
 - Mac에서 미저장 상세 편집 중 빠른 입력을 열고 닫은 뒤 보관함·오늘로 이동해도 입력이 유지되는 경로를 확인한다.

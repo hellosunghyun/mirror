@@ -269,6 +269,12 @@ final class MirrorUITests: XCTestCase {
         app.launchEnvironment["MIRROR_UI_TESTING"] = "1"
         app.launchEnvironment["MIRROR_TEST_DATE"] = "2026-09-30T03:00:00Z"
         app.launchArguments = ["-AppleLanguages", "(ko)", "-AppleLocale", "ko_KR"]
+        let appearance = ProcessInfo.processInfo.environment["MIRROR_UI_APPEARANCE"] ?? "system"
+        guard appearance == "system" || appearance == "dark" else {
+            XCTFail("UI 모양은 기본 시스템 모양 또는 명시한 어두운 모양이어야 한다.")
+            throw UIHarnessError.missingElement("uiAppearanceConfiguration")
+        }
+        if appearance == "dark" { app.launchEnvironment["MIRROR_UI_APPEARANCE"] = appearance }
         // store 경로를 주입하지 않는다. 각 launch는 앱의 temporaryDirectory에 새 실제 store를 연다.
         app.launch()
         do {

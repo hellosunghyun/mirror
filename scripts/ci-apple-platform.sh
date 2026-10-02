@@ -7,6 +7,11 @@ cd "$(dirname "$0")/.."
 platform="${1:?macos, iphone 또는 ipad를 지정하세요}"
 mode="${2:-all}"
 build_number="${GITHUB_RUN_NUMBER:-1}"
+ui_appearance="${MIRROR_UI_APPEARANCE-system}"
+case "$ui_appearance" in
+  system|dark) ;;
+  *) echo '지원하지 않는 UI 표시 모드입니다: system 또는 dark를 지정하세요.' >&2; exit 2 ;;
+esac
 case "$mode" in
   unit|ui-build|ui|all) ;;
   *) echo '지원하지 않는 실행 단계입니다: unit, ui-build, ui 또는 all을 지정하세요.' >&2; exit 2 ;;
@@ -173,6 +178,10 @@ print(context['scheme'], context['sdk'], context['destination'], sep='\t')
 PY
 )
 IFS=$'\t' read -r scheme sdk destination <<< "$context_values"
+ui_scheme="${scheme}UI"
+if test "$ui_appearance" = dark; then
+  ui_scheme="${scheme}UIDark"
+fi
 
 if test "$platform" != macos; then
   ci_phase='UI 직전 같은 Simulator runtime·기기 상태 확인'
@@ -230,7 +239,7 @@ else
 fi
 
 ui_build_receipt() {
-  python3 - "$1" "$result_dir" "$platform" "$scheme" "$sdk" "$destination" "$build_number" <<'PY'
+  python3 - "$1" "$result_dir" "$platform" "$scheme" "$sdk" "$destination" "$build_number" "$ui_scheme" <<'PY'
 import hashlib
 import json
 import os
@@ -239,7 +248,7 @@ import plistlib
 import subprocess
 import sys
 
-action, directory, platform, scheme, sdk, destination, build = sys.argv[1:]
+action, directory, platform, scheme, sdk, destination, build, ui_scheme = sys.argv[1:]
 directory = Path(directory).resolve()
 products = (directory / 'DerivedData/Build/Products').resolve()
 receipt_path = directory / 'ui-build-receipt.json'
@@ -280,6 +289,8 @@ def bundle_record(bundle):
             'executable': file_record(executables[0]), 'build_number': build}
 
 def current_state():
+    if ui_scheme not in (scheme + 'UI', scheme + 'UIDark'):
+        fail('UI 빌드 receipt의 선택 scheme이 현재 플랫폼의 UI scheme과 다릅니다.')
     if not products.is_relative_to(directory) or not products.is_dir():
         fail('현재 UI 빌드의 Products 디렉터리를 확인할 수 없습니다.')
     unit_path = directory / 'unit-context.json'
@@ -311,7 +322,7 @@ def current_state():
     if not ui_bundles:
         fail('현재 UI build-for-testing의 필수 테스트 bundle 산출물이 없습니다.')
     # Products 루트와 Runner 안의 복사본이 함께 존재해도 실제 경로·내용을 모두 검증한다.
-    return {'format_version': 1, 'context': context, 'ui_scheme': scheme + 'UI',
+    return {'format_version': 1, 'context': context, 'ui_scheme': ui_scheme,
             'configuration': 'Debug', 'code_coverage': False, 'code_signing_allowed': False,
             'unit_context_sha256': hashlib.sha256(unit_bytes).hexdigest(),
             'xctestruns': xctestrun_records, 'app': app,
@@ -346,7 +357,7 @@ if test "$mode" = ui-build || test "$mode" = all; then
   fi
   ui_build_started_seconds=$SECONDS
   touch "$result_dir/ui-build-start.marker"
-  if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
+  if xcodebuild -project Mirror.xcodeproj -scheme "$ui_scheme" -configuration Debug \
     -sdk "$sdk" -destination "$destination" -jobs 2 \
     -derivedDataPath "$result_dir/DerivedData" -parallel-testing-enabled NO \
     -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO build-for-testing \
@@ -373,7 +384,7 @@ ci_phase='UI 시작시각 기록'
 touch "$result_dir/ui-start.marker"
 ui_execution_started_seconds=$SECONDS
 ci_phase='실제 UI 테스트'
-if xcodebuild -project Mirror.xcodeproj -scheme "${scheme}UI" -configuration Debug \
+if xcodebuild -project Mirror.xcodeproj -scheme "$ui_scheme" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
   -parallel-testing-enabled NO -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO test-without-building 2>&1 | tee "$result_dir/ui.log"; then

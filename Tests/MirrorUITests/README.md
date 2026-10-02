@@ -4,6 +4,8 @@
 
 앱에 `MIRROR_UI_TESTING=1`과 `MIRROR_TEST_DATE=2026-09-30T03:00:00Z`를 전달한다. 제목·계획 데이터는 UI 입력으로만 만든다. 앱이 자신의 임시 디렉터리에 새 UUID의 실제 Core Data 저장소를 열고 계획 시간대는 Asia/Seoul로 고정한다. 저장소 경로 주입, 작업 seed, mock 성공, skip은 사용하지 않는다.
 
+별도 어두운 모양 검증은 같은 테스트 소스의 `MirrorIOSUIDark`·`MirrorMacUIDark` shared scheme을 사용한다. TestAction의 명시한 `MIRROR_UI_APPEARANCE=dark`를 runner에서 앱으로 전달하며, 앱은 DEBUG·UI testing일 때만 main window에 `.preferredColorScheme(.dark)`를 적용한다. 기본 scheme과 Release 앱에는 강제 모양을 적용하지 않는다. 전역 시스템 모양은 바꾸지 않으며 메뉴바·시스템 창·키보드 전체의 모양을 main window 설정만으로 보장하지 않는다. 실제 전달과 원본43장의 어두운 렌더링은 해당 Actions 실행에서 확인한다.
+
 | 테스트 | 요구사항·QA 연결 | UI에서 확인하는 상태 |
 |---|---|---|
 | Capture → 오늘 명시 배치 | FR-001/006, Q-001/009 | 입력 후 unassigned·미완료이고 Today에 없음. 오늘 선택 이후 정확한 날짜·미완료 상태로 Today에 표시 |

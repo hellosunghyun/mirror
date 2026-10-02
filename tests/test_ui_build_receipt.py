@@ -78,6 +78,7 @@ class UIBuildReceiptTests(unittest.TestCase):
         self.receipt.unlink(missing_ok=True)
         mac = platform == 'macos'
         scheme, sdk = ('MirrorMac', 'macosx') if mac else ('MirrorIOS', 'iphonesimulator')
+        self.ui_scheme = scheme + 'UI'
         destination = 'platform=macOS,arch=arm64' if mac else 'platform=iOS Simulator,id=' + '1' * 36
         self.context = {'platform': platform, 'scheme': scheme, 'sdk': sdk, 'destination': destination,
                         'run_id': '31415', 'run_attempt': '1', 'commit': self.sha, 'build_number': '30'}
@@ -99,7 +100,7 @@ class UIBuildReceiptTests(unittest.TestCase):
         environment = dict(self.environment, GITHUB_RUN_ID=self.context['run_id'],
                            GITHUB_RUN_ATTEMPT=self.context['run_attempt'], GITHUB_SHA=self.context['commit'])
         arguments = [action, str(self.directory), *(self.context[key] for key in
-                     ('platform', 'scheme', 'sdk', 'destination', 'build_number'))]
+                     ('platform', 'scheme', 'sdk', 'destination', 'build_number')), self.ui_scheme]
         return subprocess.run([sys.executable, '-c', BODY, *arguments], cwd=self.checkout,
                               env=environment, capture_output=True, text=True, timeout=20)
 
@@ -146,6 +147,31 @@ class UIBuildReceiptTests(unittest.TestCase):
                     self.context = copy.deepcopy(original)
                     self._write_context()
         self._accept('verify')
+
+    def test_light_and_dark_ui_scheme_receipts_cannot_be_interchanged(self):
+        for platform in ('macos', 'iphone', 'ipad'):
+            for recorded_suffix, other_suffix in (('UI', 'UIDark'), ('UIDark', 'UI')):
+                with self.subTest(platform=platform, recorded=recorded_suffix):
+                    self._configure(platform)
+                    base = self.context['scheme']
+                    self.ui_scheme = base + recorded_suffix
+                    self._accept('record')
+                    self._accept('verify')
+                    receipt = json.loads(self.receipt.read_bytes())
+                    self.assertEqual(receipt['ui_scheme'], self.ui_scheme)
+                    self.assertEqual(receipt['context'], self.context)
+                    self.ui_scheme = base + other_suffix
+                    self._reject('verify')
+                    self.ui_scheme = base + recorded_suffix
+                    self._accept('verify')
+
+    def test_unapproved_ui_scheme_is_rejected_before_receipt_creation(self):
+        for value in ('MirrorMac', 'MirrorIOSUI', 'UnknownUIDark', '../MirrorMacUI'):
+            with self.subTest(scheme=value):
+                self._configure('macos')
+                self.ui_scheme = value
+                self._reject('record')
+                self.assertFalse(self.receipt.exists())
 
     def test_changed_xctestrun_app_or_ui_binary_is_rejected(self):
         self._accept('record')

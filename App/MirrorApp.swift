@@ -15,6 +15,7 @@ struct MirrorApp: App {
         WindowGroup(id: "main") {
             MirrorRootView()
                 .environment(model)
+                .preferredColorScheme(uiTestingColorScheme)
         }
         #if os(macOS)
         .commands { MirrorCommands(model: model) }
@@ -40,6 +41,16 @@ struct MirrorApp: App {
         MenuBarExtra("미러", systemImage: "sun.max") {
             MirrorMenuBarContent().environment(model)
         }.menuBarExtraStyle(.window)
+        #endif
+    }
+
+    private var uiTestingColorScheme: ColorScheme? {
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["MIRROR_UI_TESTING"] == "1" else { return nil }
+        return environment["MIRROR_UI_APPEARANCE"] == "dark" ? .dark : nil
+        #else
+        return nil
         #endif
     }
 }

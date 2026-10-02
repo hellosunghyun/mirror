@@ -39,6 +39,11 @@ on:
         type: boolean
         required: false
         default: false
+      ui_appearance:
+        description: 기존 시스템 모드 또는 별도 다크 UI scheme을 선택한다.
+        type: string
+        required: false
+        default: system
 
 permissions:
   contents: read
@@ -49,6 +54,7 @@ concurrency:
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+  MIRROR_UI_APPEARANCE: ${{ inputs.ui_appearance || 'system' }}
 
 jobs:
   domain:

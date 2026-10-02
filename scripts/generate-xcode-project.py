@@ -249,7 +249,7 @@ def buildable(parent, target):
 
 
 for target in ('MirrorIOS', 'MirrorMac'):
-    for ui in (False, True):
+    for ui, appearance in ((False, None), (True, None), (True, 'dark')):
         test_targets = [target + 'UITests'] if ui else list(UNIT_TESTS)
         scheme = ET.Element('Scheme', LastUpgradeVersion='2700', version='1.3')
         action = ET.SubElement(scheme, 'BuildAction', parallelizeBuildables='YES', buildImplicitDependencies='YES')
@@ -269,6 +269,11 @@ for target in ('MirrorIOS', 'MirrorMac'):
             testable = ET.SubElement(testables, 'TestableReference', skipped='NO', parallelizable='NO')
             buildable(testable, name)
         buildable(ET.SubElement(test, 'MacroExpansion'), target)
+        if appearance == 'dark':
+            test.set('shouldUseLaunchSchemeArgsEnv', 'NO')
+            variables = ET.SubElement(test, 'EnvironmentVariables')
+            ET.SubElement(variables, 'EnvironmentVariable', key='MIRROR_UI_APPEARANCE',
+                          value='dark', isEnabled='YES')
         launch = ET.SubElement(scheme, 'LaunchAction', buildConfiguration='Debug',
                               selectedDebuggerIdentifier='Xcode.DebuggerFoundation.Debugger.LLDB',
                               selectedLauncherIdentifier='Xcode.IDEFoundation.Launcher.LLDB', launchStyle='0',
@@ -281,5 +286,6 @@ for target in ('MirrorIOS', 'MirrorMac'):
         ET.SubElement(scheme, 'AnalyzeAction', buildConfiguration='Debug')
         ET.SubElement(scheme, 'ArchiveAction', buildConfiguration='Release', revealArchiveInOrganizer='YES')
         ET.indent(scheme, space='   ')
-        ET.ElementTree(scheme).write(schemes / f'{target}{"UI" if ui else ""}.xcscheme', encoding='UTF-8', xml_declaration=True)
-print(f'Xcode 프로젝트 생성: {len(TARGETS)} targets, {len(OBJECTS)} objects, 4 schemes')
+        suffix = 'UIDark' if appearance == 'dark' else 'UI' if ui else ''
+        ET.ElementTree(scheme).write(schemes / f'{target}{suffix}.xcscheme', encoding='UTF-8', xml_declaration=True)
+print(f'Xcode 프로젝트 생성: {len(TARGETS)} targets, {len(OBJECTS)} objects, 6 schemes')
