@@ -477,6 +477,12 @@ final class AppModel {
                                    token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week)
     }
 
+    func canPostponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext) -> Bool {
+        guard task.status == .open,
+              let tomorrow = try? displayedContext.planningDay.addingDays(1) else { return false }
+        return task.plan.target != .day(tomorrow)
+    }
+
     func postponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext) async {
         guard task.status == .open, !isSaving, !projectionPending,
               !showCapture, !showSettings, !showReview, !isDetailEditing,
@@ -485,6 +491,7 @@ final class AppModel {
             problem = "내일 날짜를 확인할 수 없어요."
             return
         }
+        guard task.plan.target != .day(tomorrow) else { return }
         let request = PlanPickerRequest(taskIDs: [task.taskID],
                                         expected: [PlanCommandItem(taskID: task.taskID, expected: ExpectedVersions(task))],
                                         displayedContext: displayedContext, token: UUID().uuidString,

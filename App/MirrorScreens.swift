@@ -128,11 +128,14 @@ struct MirrorTaskRow: View {
                 .contextMenu {
                     Button("상세 열기", action: openDetail)
                     Button(task.status == .completed ? "다시 열기" : "완료") { Task { await model.setCompleted(task, completed: task.status != .completed) } }
-                    if task.status == .open, !model.isDetailEditing, let displayedContext {
+                    if task.status == .open, !model.isDetailEditing, let displayedContext,
+                       model.canPostponeToTomorrow(task, context: displayedContext) {
                         Button("내일로 미루기") { Task { await model.postponeToTomorrow(task, context: displayedContext) } }
                     }
-                    Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID]) }
-                    Button("당분간 보관") { Task { await model.park(task) } }
+                    if task.status == .open, !model.isDetailEditing {
+                        Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID]) }
+                        Button("당분간 보관") { Task { await model.park(task) } }
+                    }
                     Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }
                 }
             if task.status == .open {
@@ -159,6 +162,7 @@ struct MirrorTaskRow: View {
     }
     private func tomorrowAction(context: PlanningContext?) -> (() -> Void)? {
         guard task.status == .open, !model.isDetailEditing, let context else { return nil }
+        guard model.canPostponeToTomorrow(task, context: context) else { return nil }
         return { Task { await model.postponeToTomorrow(task, context: context) } }
     }
     private func openDetail() {
@@ -944,7 +948,8 @@ struct MirrorTaskDetail: View {
                             Text(planLabel(task.plan.target)).font(.body).accessibilityIdentifier("detail.plan")
                             if task.status == .open {
                                 MirrorActionGroup {
-                                    if !model.showReview, let displayedContext = model.context {
+                                    if !model.showReview, let displayedContext = model.context,
+                                       model.canPostponeToTomorrow(task, context: displayedContext) {
                                         Button {
                                             Task { await model.postponeToTomorrow(task, context: displayedContext) }
                                         } label: {

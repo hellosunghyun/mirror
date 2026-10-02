@@ -334,6 +334,7 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
         XCTAssertEqual(displayedText(of: try requireElement("task.complete", in: app)), "완료",
                        "내일로 미루기는 제목이나 미완료 상태를 변경하지 않는다.")
+        try requireNoElement("detail.postponeTomorrow", in: app)
         try activate("task.undo", in: app)
         try waitForLabelContaining("9월 30일", element: requireElement("detail.plan", in: app))
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
