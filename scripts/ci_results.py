@@ -74,6 +74,10 @@ UI_KEYBOARD_COUNT_FIELDS = (
     'continueQueryCount', 'continueExistingCount', 'continueHittableCount',
     'continueEnabledCount', 'continueInKeyboardCount',
 )
+UI_KEYBOARD_FRAME_FIELDS = (
+    'continueFrameHasArea', 'continueFrameInsideKeyboard',
+    'continueFrameCenterInsideKeyboard', 'continueFrameIntersectsKeyboard',
+)
 UI_VIEWPORT_CHECK_NAMES = frozenset({
     'foreground', 'appBoundsValid', 'appOrientationMatches', 'windowExists', 'todayExists',
     'reviewExists', 'windowInApp', 'windowOrientationMatches', 'todayInWindow', 'reviewInToday',
@@ -356,8 +360,10 @@ def report_ui_keyboard_diagnostics(lines):
                 raise ValueError('keyboard payload가 너무 깁니다.')
             report = json.loads(payload, object_pairs_hook=unique_fields)
             basic_fields = {'phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds'}
+            count_fields = basic_fields | set(UI_KEYBOARD_COUNT_FIELDS)
+            frame_fields = count_fields | set(UI_KEYBOARD_FRAME_FIELDS)
             if (not isinstance(report, dict)
-                    or set(report) not in (basic_fields, basic_fields | set(UI_KEYBOARD_COUNT_FIELDS))):
+                    or set(report) not in (basic_fields, count_fields, frame_fields)):
                 raise ValueError('keyboard 필드가 고정 계약과 다릅니다.')
             count, milliseconds = report['continueCandidateCount'], report['elapsedMilliseconds']
             if (report['phase'] not in ('continueReadiness', 'introductionDismissal')
@@ -371,6 +377,20 @@ def report_ui_keyboard_diagnostics(lines):
                         or any(previous < current for previous, current in zip(counts, counts[1:]))
                         or counts[-1] != count):
                     raise ValueError('keyboard count는 기존 AX 조회 순서의 단조 감소이며 최종 후보 수와 같아야 합니다.')
+            if set(report) == frame_fields:
+                has_area, inside, center_inside, intersects = [report[key] for key in UI_KEYBOARD_FRAME_FIELDS]
+                if report['continueEnabledCount'] != 1:
+                    if any(value is not None for value in (has_area, inside, center_inside, intersects)):
+                        raise ValueError('유일한 enabled 후보가 없으면 frame 진단은 모두 null이어야 합니다.')
+                elif type(has_area) is not bool:
+                    raise ValueError('유일한 enabled 후보의 면적 판정은 bool이어야 합니다.')
+                elif not has_area:
+                    if count != 0 or any(value is not None for value in (inside, center_inside, intersects)):
+                        raise ValueError('면적이 없는 frame은 최종 후보가 아니며 나머지 판정은 null이어야 합니다.')
+                elif (any(type(value) is not bool for value in (inside, center_inside, intersects))
+                        or inside != (count == 1)
+                        or (inside and not (center_inside and intersects))):
+                    raise ValueError('frame 포함 판정은 최종 후보 수·중심·교차 판정과 일치해야 합니다.')
             reports.append({'scope': 'stdoutOnly', **report})
         except (ValueError, TypeError, RecursionError):
             invalid_count += 1
@@ -469,8 +489,13 @@ def report_ui_tree_timings(nodes):
                 visit(value)
 
     visit(nodes)
-    for case in cases.values():
-        print('::notice::UI case timing: ' + json.dumps(case))
+    if cases:
+        print('::notice::UI xcresult case timings: ' + json.dumps({
+            'scope': 'xcresult', 'cases': [
+                {'method': case['method'], 'event': case['event'], 'seconds': case['seconds']}
+                for case in cases.values()
+            ],
+        }))
 
 
 def diagnostics(path):

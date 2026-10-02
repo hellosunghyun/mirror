@@ -28,6 +28,7 @@ STAGES = (
     'library', 'library-search', 'detail', 'detail-edit', 'completion', 'undo', 'validation-error', 'ipad-landscape',
 )
 CASE_NOTICE = '::notice::UI case timing: '
+TREE_CASE_NOTICE = '::notice::UI xcresult case timings: '
 SCREENSHOT_NOTICE = '::notice::UI screenshot timing: '
 STORE_DEDUP_NOTICE = '::notice::Store dedup result diagnostic: '
 STORE_DEDUP_REJECTED_NOTICE = '::notice::Store dedup result diagnostic rejected: '
@@ -48,6 +49,10 @@ PHASES = (
     'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
     'futureRowVerified', 'searchTitleVerified', 'libraryScreenshotRecorded', 'detailOpened',
     'detailPlanVerified', 'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
+)
+KEYBOARD_FRAME_FIELDS = (
+    'continueFrameHasArea', 'continueFrameInsideKeyboard',
+    'continueFrameCenterInsideKeyboard', 'continueFrameIntersectsKeyboard',
 )
 
 
@@ -97,6 +102,15 @@ def native_screenshot_payload():
     return {'method': NATIVE_SCREENSHOT_METHOD, 'stage': 'ipad-landscape', 'orientation': 'left',
             'imageWidth': 1376.0, 'imageHeight': 1032.0, 'imageScale': 2.0,
             'cgImageWidth': 2752, 'cgImageHeight': 2064, 'pngSHA256': 'a' * 64}
+
+
+def keyboard_frame_payload():
+    return {'phase': 'continueReadiness', 'continueCandidateCount': 0,
+            'keyboardBoundsValid': True, 'elapsedMilliseconds': 15901,
+            'continueQueryCount': 1, 'continueExistingCount': 1, 'continueHittableCount': 1,
+            'continueEnabledCount': 1, 'continueInKeyboardCount': 0,
+            'continueFrameHasArea': True, 'continueFrameInsideKeyboard': False,
+            'continueFrameCenterInsideKeyboard': True, 'continueFrameIntersectsKeyboard': True}
 
 
 class CIResultsDiagnosticsTests(unittest.TestCase):
@@ -418,6 +432,128 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                                      [{'scope': 'stdoutOnly', **basic}, {'scope': 'stdoutOnly', **extended}])
                     self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
                     self.assertNotIn('::error::', output)
+
+    def test_keyboard_frame_diagnostic_preserves_legacy_schemas_and_nullable_singleton_contexts(self):
+        self.assertEqual(helper.UI_KEYBOARD_FRAME_FIELDS, KEYBOARD_FRAME_FIELDS)
+        valid = keyboard_frame_payload()
+        basic = {key: valid[key] for key in
+                 ('phase', 'continueCandidateCount', 'keyboardBoundsValid', 'elapsedMilliseconds')}
+        extended = {key: value for key, value in valid.items() if key not in KEYBOARD_FRAME_FIELDS}
+        samples = [basic, extended, valid]
+        for counts in ((0, 0, 0, 0, 0), (5, 4, 3, 2, 1), (100, 100, 100, 100, 100)):
+            samples.append({**valid, **dict(zip(helper.UI_KEYBOARD_COUNT_FIELDS, counts)),
+                            'continueCandidateCount': counts[-1],
+                            **dict.fromkeys(KEYBOARD_FRAME_FIELDS)})
+        samples.append({**valid, 'continueFrameHasArea': False,
+                        **dict.fromkeys(KEYBOARD_FRAME_FIELDS[1:])})
+        for inside, center, intersects in ((False, False, False), (False, False, True),
+                                          (False, True, True), (True, True, True)):
+            samples.append({**valid, 'continueCandidateCount': int(inside),
+                            'continueInKeyboardCount': int(inside),
+                            'continueFrameInsideKeyboard': inside,
+                            'continueFrameCenterInsideKeyboard': center,
+                            'continueFrameIntersectsKeyboard': intersects})
+        log = self.root / 'keyboard-frame-contexts.log'
+        for phase in ('continueReadiness', 'introductionDismissal'):
+            for milliseconds in (0, 1200000):
+                for sample in samples:
+                    with self.subTest(phase=phase, milliseconds=milliseconds, sample=sample):
+                        payload = {**sample, 'phase': phase, 'elapsedMilliseconds': milliseconds}
+                        log.write_text(keyboard_line(payload) + '\n')
+                        output = self.capture(helper.diagnostics, log)
+                        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE),
+                                         [{'scope': 'stdoutOnly', **payload}])
+                        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [])
+                        self.assertNotIn('::error::', output)
+
+    def test_keyboard_frame_diagnostic_rejects_wrong_null_context_types_and_geometry_contradictions(self):
+        valid = keyboard_frame_payload()
+        invalid = []
+        for key in KEYBOARD_FRAME_FIELDS:
+            invalid.append({name: value for name, value in valid.items() if name != key})
+            invalid += [{**valid, key: value} for value in (0, 1, 'true', [], {}, PRIVATE)]
+        invalid.append({**valid, 'continueFrameHasArea': None})
+        for key in KEYBOARD_FRAME_FIELDS[1:]:
+            invalid.append({**valid, key: None})
+        for key in helper.UI_KEYBOARD_COUNT_FIELDS:
+            invalid.append({name: value for name, value in valid.items() if name != key})
+            invalid += [{**valid, key: value} for value in (True, -1, 101, 1.0, None)]
+        invalid += [{**valid, 'continueExistingCount': 2},
+                    {**valid, 'continueCandidateCount': 1}]
+        for counts in ((0, 0, 0, 0, 0), (5, 4, 3, 2, 1), (100, 100, 100, 100, 100)):
+            missing_singleton = {**valid, **dict(zip(helper.UI_KEYBOARD_COUNT_FIELDS, counts)),
+                                 'continueCandidateCount': counts[-1],
+                                 **dict.fromkeys(KEYBOARD_FRAME_FIELDS)}
+            for key in KEYBOARD_FRAME_FIELDS:
+                invalid += [{**missing_singleton, key: value} for value in (False, True)]
+        no_area = {**valid, 'continueFrameHasArea': False, **dict.fromkeys(KEYBOARD_FRAME_FIELDS[1:])}
+        for key in KEYBOARD_FRAME_FIELDS[1:]:
+            invalid += [{**no_area, key: value} for value in (False, True)]
+        contained = {**valid, 'continueCandidateCount': 1, 'continueInKeyboardCount': 1,
+                     'continueFrameInsideKeyboard': True}
+        invalid += [
+            {**no_area, 'continueCandidateCount': 1, 'continueInKeyboardCount': 1},
+            {**valid, 'continueFrameInsideKeyboard': True},
+            {**contained, 'continueFrameInsideKeyboard': False},
+            {**contained, 'continueFrameCenterInsideKeyboard': False},
+            {**contained, 'continueFrameIntersectsKeyboard': False},
+            {**valid, 'frameX': 123}, {**valid, 'title': PRIVATE},
+        ]
+        log = self.root / 'keyboard-frame-invalid.log'
+        log.write_text('\n'.join(keyboard_line(payload) for payload in invalid) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(invalid)}])
+        self.assertNotIn('::error::', output)
+
+    def test_keyboard_frame_diagnostic_keeps_duplicate_byte_limit_mixed_privacy_and_no_success_guards(self):
+        valid = keyboard_frame_payload()
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999'))
+        bad_lines = [keyboard_line({**valid, 'private': private}),
+                     keyboard_line(valid) + ' error: ' + PRIVATE,
+                     keyboard_line(valid) + ' ' + keyboard_line(valid),
+                     'UI keyboard introduction diagnostic: {' + PRIVATE,
+                     'UI keyboard introduction diagnostic: ' + '[' * 1500 + '0' + ']' * 1500]
+        for key in KEYBOARD_FRAME_FIELDS:
+            text = 'true' if valid[key] else 'false'
+            bad_lines.append(keyboard_line(valid).replace(
+                '"' + key + '": ' + text,
+                '"' + key + '": "' + PRIVATE + '", "' + key + '": ' + text))
+        bad_lines += [keyboard_line(valid) + ' ' + other for other in
+                      (phase_line({'method': PHASE_METHOD, 'phase': 'started'}),
+                       native_screenshot_line(native_screenshot_payload()), viewport_line({}),
+                       store_dedup_line(), ui_failure_line())]
+        log = self.root / 'keyboard-frame-private.log'
+        log.write_text('\n'.join([keyboard_line(valid)] + bad_lines + [
+            screenshot_line('detail', '123'), 'error: safe unrelated compiler failure',
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [{'scope': 'stdoutOnly', **valid}])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': len(bad_lines)}])
+        self.assertNotIn('UI row scroll owners:', output)
+        self.assertNotIn('Swift Testing completion reports:', output)
+        self.assertNotIn(METHODS[1], output)
+        self.assertNotIn('executedTests', output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+        self.assertEqual(summary_path.read_text(), 'previous summary\n')
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+            output = self.capture(helper.report_ui_keyboard_diagnostics,
+                                  ['UI keyboard introduction diagnostic: ' + over_limit])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_KEYBOARD_REJECTED_NOTICE), [{'invalidCount': 1}])
 
     def test_extended_keyboard_diagnostic_rejects_noninteger_nonmonotonic_mismatch_and_partial_fields(self):
         fields = ('continueQueryCount', 'continueExistingCount', 'continueHittableCount',
@@ -1018,10 +1154,13 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
             {'nodeType': 'Test Case', 'name': 'test' + PRIVATE, 'result': 'Passed', 'durationInSeconds': 1.0},
         ]}
         output = self.capture(helper.report_ui_tree_timings, nodes)
-        self.assertEqual(self.notices(output, CASE_NOTICE), [
-            {'scope': 'xcresult', 'method': METHODS[0], 'event': 'passed', 'seconds': 0.0},
-            {'scope': 'xcresult', 'method': METHODS[1], 'event': 'failed', 'seconds': 1200.0},
-        ])
+        self.assertEqual(self.notices(output, TREE_CASE_NOTICE), [{
+            'scope': 'xcresult', 'cases': [
+                {'method': METHODS[0], 'event': 'passed', 'seconds': 0.0},
+                {'method': METHODS[1], 'event': 'failed', 'seconds': 1200.0},
+            ],
+        }])
+        self.assertEqual(self.notices(output, CASE_NOTICE), [])
         self.assertNotIn('nodeIdentifierURL', output)
         self.assertNotIn('/private/', output)
 
@@ -1040,11 +1179,44 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
         with mock.patch.object(helper, 'record') as record:
             output = self.capture(helper.report_ui_tree_timings, {'testNodes': nodes})
         record.assert_not_called()
-        cases = self.notices(output, CASE_NOTICE)
+        batches = self.notices(output, TREE_CASE_NOTICE)
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(set(batches[0]), {'scope', 'cases'})
+        self.assertEqual(batches[0]['scope'], 'xcresult')
+        cases = batches[0]['cases']
         self.assertEqual(len(cases), 6)
         self.assertEqual({case['method'] for case in cases}, set(METHODS))
         self.assertTrue(all(case['event'] == 'failed' and case['seconds'] == 2.0 for case in cases))
+        self.assertTrue(all(set(case) == {'method', 'event', 'seconds'} for case in cases))
+        self.assertEqual(self.notices(output, CASE_NOTICE), [])
         self.assertNotIn('executedTests', output)
+
+    def test_tree_timing_batch_preserves_zero_partial_and_all_six_cases_without_actions_writes(self):
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        for length in range(7):
+            with self.subTest(length=length):
+                nodes = {'testNodes': [{'nodeType': 'Test Case', 'name': method + '()',
+                                       'result': 'Passed', 'durationInSeconds': index,
+                                       'nodeIdentifierURL': '/private/' + PRIVATE}
+                                      for index, method in enumerate(METHODS[:length])]}
+                expected = [{'method': method, 'event': 'passed', 'seconds': index}
+                            for index, method in enumerate(METHODS[:length])]
+                with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                        'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper, 'record') as record:
+                    output = self.capture(helper.report_ui_tree_timings, nodes)
+                self.assertEqual(self.notices(output, TREE_CASE_NOTICE),
+                                 [{'scope': 'xcresult', 'cases': expected}] if length else [])
+                self.assertEqual(len(output.splitlines()), int(length > 0))
+                self.assertEqual(self.notices(output, CASE_NOTICE), [])
+                self.assertNotIn('executedTests', output)
+                self.assertNotIn('"result": "pass"', output)
+                record.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
 
 
 if __name__ == '__main__':

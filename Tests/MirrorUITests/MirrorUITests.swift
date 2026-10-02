@@ -283,7 +283,7 @@ final class MirrorUITests: XCTestCase {
     private func capture(_ title: String, in app: XCUIApplication, attachEvidence: Bool = false) throws {
         try activate("capture.open", in: app)
         let field = try requireElement("capture.title", in: app)
-        try replaceText(in: field, with: title, app: app)
+        try replaceText(in: field, with: title, app: app, prepareKeyboardBeforeTyping: attachEvidence)
         if attachEvidence {
             #if os(iOS)
             try dismissKeyboardIntroduction(in: app)
@@ -420,6 +420,7 @@ final class MirrorUITests: XCTestCase {
             var continueHittableCount = 0
             var continueEnabledCount = 0
             var continueInKeyboardCount = 0
+            var enabledFrameDiagnostics: [[String: Any]] = []
             var keyboardBoundsValid = false
             var continueReady = false
             func printIntroductionDiagnostic(phase: String) {
@@ -427,7 +428,7 @@ final class MirrorUITests: XCTestCase {
                 guard [candidates.count, continueQueryCount, continueExistingCount,
                        continueHittableCount, continueEnabledCount, continueInKeyboardCount]
                     .allSatisfy({ (0...100).contains($0) }) else { return }
-                let diagnostic: [String: Any] = [
+                var diagnostic: [String: Any] = [
                     "phase": phase,
                     "continueCandidateCount": candidates.count,
                     "continueQueryCount": continueQueryCount,
@@ -438,6 +439,12 @@ final class MirrorUITests: XCTestCase {
                     "keyboardBoundsValid": keyboardBoundsValid,
                     "elapsedMilliseconds": Int(min(1_200_000, max(0, Date().timeIntervalSince(introductionStarted) * 1_000))),
                 ]
+                // 유일한 enabled 후보의 기존 frame만 보고한다. 여러 후보의 경계를 섞지 않는다.
+                let frameDiagnostic = continueEnabledCount == 1 ? enabledFrameDiagnostics.first : nil
+                for key in ["continueFrameHasArea", "continueFrameInsideKeyboard",
+                            "continueFrameCenterInsideKeyboard", "continueFrameIntersectsKeyboard"] {
+                    diagnostic[key] = frameDiagnostic?[key] ?? NSNull()
+                }
                 if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
                    let json = String(data: data, encoding: .utf8) {
                     print("UI keyboard introduction diagnostic: \(json)")
@@ -454,6 +461,7 @@ final class MirrorUITests: XCTestCase {
                 continueHittableCount = 0
                 continueEnabledCount = 0
                 continueInKeyboardCount = 0
+                enabledFrameDiagnostics.removeAll(keepingCapacity: true)
                 if keyboardBoundsValid {
                     let buttons = continueButtons.allElementsBoundByIndex
                     continueQueryCount = buttons.count
@@ -465,7 +473,24 @@ final class MirrorUITests: XCTestCase {
                         guard $0.isEnabled else { return false }
                         continueEnabledCount += 1
                         let frame = $0.frame
-                        guard frame.width > 0 && frame.height > 0 && keyboardBounds.contains(frame) else { return false }
+                        let hasArea = frame.width > 0 && frame.height > 0
+                        guard hasArea else {
+                            enabledFrameDiagnostics.append([
+                                "continueFrameHasArea": false,
+                                "continueFrameInsideKeyboard": NSNull(),
+                                "continueFrameCenterInsideKeyboard": NSNull(),
+                                "continueFrameIntersectsKeyboard": NSNull(),
+                            ])
+                            return false
+                        }
+                        let insideKeyboard = keyboardBounds.contains(frame)
+                        enabledFrameDiagnostics.append([
+                            "continueFrameHasArea": true,
+                            "continueFrameInsideKeyboard": insideKeyboard,
+                            "continueFrameCenterInsideKeyboard": keyboardBounds.contains(CGPoint(x: frame.midX, y: frame.midY)),
+                            "continueFrameIntersectsKeyboard": keyboardBounds.intersects(frame),
+                        ])
+                        guard insideKeyboard else { return false }
                         continueInKeyboardCount += 1
                         return true
                     }
@@ -875,8 +900,15 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func replaceText(in field: XCUIElement, with text: String, app: XCUIApplication) throws {
+    private func replaceText(in field: XCUIElement, with text: String, app: XCUIApplication,
+                             prepareKeyboardBeforeTyping: Bool = false) throws {
         try interact(with: field, in: app)
+        #if os(iOS)
+        if prepareKeyboardBeforeTyping && UIDevice.current.userInterfaceIdiom == .phone {
+            // 첫 증거 입력은 실제 키가 준비된 뒤 시작한다. 입력 후 기존 검사도 유지한다.
+            try dismissKeyboardIntroduction(in: app)
+        }
+        #endif
         let current = value(of: field)
         #if os(macOS)
         field.typeKey("a", modifierFlags: .command)

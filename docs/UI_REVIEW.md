@@ -61,6 +61,10 @@
 
 후속 진단은 첫 실패·keyboard·viewport를 먼저 표시하고, 검증된 내일 작업 수행 단계 prefix를 하나의 배열 주석으로 집약한다. 원본 로그의19단계·활성 사례 귀속·순서·중복·잘못된 값 거절 계약은 유지한다. 성공한 UI 실행에서도 동일 native screenshot의 허용 metadata만 별도로 보고한다. 이 보고는 테스트·게시 성공 판정이나 Actions 출력값을 만들지 않는다. 공개 HTML의 주석 총수·페이지네이션 경로는 확인하지 못해 이전 진단 누락의 원인으로 단정하지 않는다. 테스트·빌드는 GitHub Actions에서만 다시 확인하며 기존 모든 assertions·6사례·43장·시간 제한은 유지한다.
 
+[후속 실행36945881039](https://github.com/hellosunghyun/mirror/actions/runs/36945881039), `80112be`·build38은 준비·도메인159개·Mac 검증을 통과했다. Mac 실제 xcresult6개 passed와 컴파일48초·receipt·UI501초를 확인했다. iPad도 검증 success·컴파일164초·receipt·UI739초이며 공개 xcresult에서는5개 사례 passed만 관측했다. 가로 native 캡처는 UIImage 방향 left·표시1376×1032/scale2·CGImage2064×2752다. 방향 표현만으로 정상 픽셀이나 원인을 판정하지 않는다. iPhone은 컴파일238초·receipt 뒤 최초 capture481행에서 실패했다. Continue의 조회·존재·hittable·enabled 수는 각각1개이나 마지막 면적·키보드 포함 조건을 통과한 것은0개였고 대기는15901ms였다. 내일 작업의19개 수행 단계는 complete까지 공개됐지만 각 assertion 결과와 별개로 본다. capture/긴 입력의 실패 및 일부 stdout 통과가 관측됐으나 최종 xcresult 수는 미확정이다. 전체 화면·설치 게시가 skipped되어 새38 자산은 없다.
+
+후속 보완은 첫 iPhone 증거 입력의 실제 field tap 뒤 키보드 안내·입력 키 준비를 확인하고 텍스트를 입력한다. 기존 입력 후 준비 검사도 유지한다. 다른 다섯 사례와 iPad·Mac의 입력 동작은 유지하며 모든 기존 assertions·각15초 예산·전체 실행 제한을 줄이거나 늘리지 않는다. 첫 Phone 사례에는 준비 조회 비용이 추가되므로 실제 런타임은 후속 Actions에서 확인한다. 유일한 enabled 후보의 이미 읽은 frame에서는 면적·전체 포함·중심 포함·교차 여부 네 값만 보고한다. 미평가·복수 후보는 null로 구분하며 좌표·추가 AX 조회는 없다. 기존 후보 선택 조건은 그대로다. 실제 xcresult 사례 시간도 수집한 전부를 한 주석 배열로 보존한다. 이 진단 집약은 테스트·게시 성공 판정을 바꾸지 않는다.
+
 목표 화면은 아래와 같으며 최종 게시 여부는 해당 실행으로 확인한다.
 
 | 플랫폼 | 명명된 앱 화면 |
