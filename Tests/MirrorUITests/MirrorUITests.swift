@@ -327,23 +327,35 @@ final class MirrorUITests: XCTestCase {
         // 상세의 빠른 미루기는 별도 날짜 선택 없이 내일로 옮기고 Undo로 기존 계획을 복원한다.
         try interact(with: reopened, in: app)
         // 이후 배치가 생기면 거절될 이전 계획의 실제 고유 ID를 미리 읽는다.
-        try activate("detail.history", in: app)
+        let historyOpenDeadline = Date().addingTimeInterval(15)
+        let historyControl = try requireElement("detail.history", in: app, timeout: max(0, historyOpenDeadline.timeIntervalSinceNow), preferButtons: true)
+        let historyScroll = try requireHistoryScroll(containing: historyControl, in: app)
+        _ = try revealHistoryTarget(historyControl, in: historyScroll, app: app, deadline: historyOpenDeadline)
+        try activate("detail.history", in: app, timeout: max(0, historyOpenDeadline.timeIntervalSinceNow))
         let previousPlanUndo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "history.undo.setPlan."))
-        XCTAssertTrue(previousPlanUndo.firstMatch.waitForExistence(timeout: 15), "이전 계획의 실제 이력 버튼이 나타나야 한다.")
+        let previousPlanDeadline = try revealHistoryTarget(previousPlanUndo.firstMatch, in: historyScroll, app: app)
+        XCTAssertTrue(previousPlanUndo.firstMatch.waitForExistence(timeout: max(0, previousPlanDeadline.timeIntervalSinceNow)), "이전 계획의 실제 이력 버튼이 나타나야 한다.")
         XCTAssertEqual(previousPlanUndo.count, 1, "이 사례의 이전 계획 변경은 오늘 배치 하나다.")
         let previousPlanUndoID = previousPlanUndo.firstMatch.identifier
-        try activate("detail.history", in: app)
-        XCTAssertTrue(try requireElement("detail.postponeTomorrow", in: app, preferButtons: true).isHittable,
+        let foldDeadline = try revealHistoryTarget(element("detail.history", in: app, preferButtons: true), in: historyScroll,
+                                                  app: app, scrollUpWhenMissing: true)
+        try activate("detail.history", in: app, timeout: max(0, foldDeadline.timeIntervalSinceNow))
+        let postponeDeadline = try revealHistoryTarget(app.buttons.matching(identifier: "detail.postponeTomorrow").firstMatch,
+                                                      in: historyScroll, app: app, scrollUpWhenMissing: true)
+        XCTAssertTrue(try requireElement("detail.postponeTomorrow", in: app, timeout: max(0, postponeDeadline.timeIntervalSinceNow), preferButtons: true).isHittable,
                       "내일로 미루기는 상세에서 바로 누를 수 있어야 한다.")
-        try activate("detail.postponeTomorrow", in: app)
+        try activate("detail.postponeTomorrow", in: app, timeout: max(0, postponeDeadline.timeIntervalSinceNow))
         try waitForLabelContaining("10월 1일", element: requireElement("detail.plan", in: app))
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
         XCTAssertEqual(displayedText(of: try requireElement("detail.contentTitle", in: app)), edited)
         XCTAssertEqual(displayedText(of: try requireElement("task.complete", in: app)), "완료",
                        "내일로 미루기는 제목이나 미완료 상태를 변경하지 않는다.")
         try requireNoElement("detail.postponeTomorrow", in: app)
-        try activate("detail.history", in: app)
-        try activate(previousPlanUndoID, in: app)
+        let reopenDeadline = try revealHistoryTarget(element("detail.history", in: app, preferButtons: true), in: historyScroll, app: app)
+        try activate("detail.history", in: app, timeout: max(0, reopenDeadline.timeIntervalSinceNow))
+        let staleUndoDeadline = try revealHistoryTarget(app.buttons.matching(identifier: previousPlanUndoID).firstMatch,
+                                                       in: historyScroll, app: app)
+        try activate(previousPlanUndoID, in: app, timeout: max(0, staleUndoDeadline.timeIntervalSinceNow))
         let historyError = try requireElement("detail.actionError", in: app)
         try waitForLabelContaining("그 이후의 변경", element: historyError)
         XCTAssertTrue(historyError.isHittable, "이력의 변경이 거절되면 상세 안에서 이유를 볼 수 있다.")
@@ -1268,10 +1280,95 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func activate(_ identifier: String, in app: XCUIApplication,
                           observeValidationRecovery: Bool = false,
+                          timeout: TimeInterval = 15,
                           file: StaticString = #filePath, line: UInt = #line) throws {
         lastActionDescription = "activate id=\(identifier)"
-        let target = try requireElement(identifier, in: app, preferButtons: true, file: file, line: line)
+        let target = try requireElement(identifier, in: app, timeout: timeout, preferButtons: true, file: file, line: line)
         try interact(with: target, in: app, observeValidationRecovery: observeValidationRecovery, file: file, line: line)
+    }
+
+    @MainActor
+    private func requireHistoryScroll(containing control: XCUIElement, in app: XCUIApplication,
+                                      file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+        guard app.state == .runningForeground else {
+            try failHistoryNavigation("이력 탐색 중 앱이 전경에서 실행되지 않는다", in: app, file: file, line: line)
+        }
+        let owners = app.scrollViews.allElementsBoundByIndex.filter { candidate in
+            candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: "detail.history").firstMatch.exists
+        }
+        guard control.exists, owners.count == 1,
+              let surface = scrollContainer(containing: control, in: app), surface.elementType == .scrollView,
+              [surface.frame.minX, surface.frame.minY, surface.frame.width, surface.frame.height].allSatisfy({ $0.isFinite }),
+              surface.frame.width > 0, surface.frame.height > 0 else {
+            try failHistoryNavigation("이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다", in: app, file: file, line: line)
+        }
+        return surface
+    }
+
+    @MainActor
+    private func revealHistoryTarget(_ target: XCUIElement, in surface: XCUIElement, app: XCUIApplication,
+                                     scrollUpWhenMissing: Bool = false,
+                                     deadline: Date = Date().addingTimeInterval(15),
+                                     file: StaticString = #filePath, line: UInt = #line) throws -> Date {
+        // 원래 존재 대기의 15초 안에서 같은 상세만 실제로 스크롤한다. 호출자의 wait도 남은 예산을 쓴다.
+        var scrolls = 0
+        while true {
+            guard app.state == .runningForeground else {
+                try failHistoryNavigation("이력 탐색 중 앱이 전경에서 실행되지 않는다", in: app, file: file, line: line)
+            }
+            guard Date() < deadline else {
+                try failHistoryNavigation("이력 스크롤 탐색의 기존 15초 예산을 초과했다", in: app, file: file, line: line)
+            }
+            guard surface.exists, surface.isHittable else {
+                try failHistoryNavigation("이력의 기존 상세 스크롤 소유자가 사라지거나 표시되지 않는다", in: app, file: file, line: line)
+            }
+            let viewport = surface.frame
+            guard [viewport.minX, viewport.minY, viewport.width, viewport.height].allSatisfy({ $0.isFinite }),
+                  viewport.width > 0, viewport.height > 0 else {
+                try failHistoryNavigation("이력의 기존 상세 스크롤 소유자가 사라지거나 표시되지 않는다", in: app, file: file, line: line)
+            }
+            var scrollUp = scrollUpWhenMissing
+            if target.exists {
+                let frame = target.frame
+                guard surface.descendants(matching: .any).matching(identifier: target.identifier).firstMatch.exists else {
+                    try failHistoryNavigation("이력 대상이 기존 상세 소유자 안에 없다", in: app, file: file, line: line)
+                }
+                let validFrame = [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite })
+                    && frame.width > 0 && frame.height > 0
+                if validFrame, rowCenterIsVisible(target, in: surface), target.isHittable, target.isEnabled {
+                    guard Date() < deadline else {
+                        try failHistoryNavigation("이력 스크롤 탐색의 기존 15초 예산을 초과했다", in: app, file: file, line: line)
+                    }
+                    return deadline
+                }
+                if validFrame, rowCenterIsVisible(target, in: surface), target.isHittable {
+                    RunLoop.current.run(until: min(Date().addingTimeInterval(0.1), deadline))
+                    continue
+                }
+                if validFrame { scrollUp = frame.minY < viewport.minY }
+            }
+            guard scrolls < 8 else {
+                try failHistoryNavigation("기존 8회 실제 스크롤 안에 이력 대상에 도달하지 못했다", in: app, file: file, line: line)
+            }
+            guard Date() < deadline else {
+                try failHistoryNavigation("이력 스크롤 탐색의 기존 15초 예산을 초과했다", in: app, file: file, line: line)
+            }
+            #if os(macOS)
+            surface.scroll(byDeltaX: 0, deltaY: scrollUp ? 250 : -250)
+            #else
+            if scrollUp { surface.swipeDown() }
+            else { surface.swipeUp() }
+            #endif
+            scrolls += 1
+        }
+    }
+
+    @MainActor
+    private func failHistoryNavigation(_ reason: String, in app: XCUIApplication,
+                                       file: StaticString, line: UInt) throws -> Never {
+        printFailurePrefix(reason)
+        XCTFail("\(reason). \(diagnostics(in: app))", file: file, line: line)
+        throw UIHarnessError.unhittable("detail.history")
     }
 
     @MainActor

@@ -1,5 +1,11 @@
 # iPhone·iPad·Mac UI 검토
 
+2026-10-02 source `84cb158`의 [밝은63](https://github.com/hellosunghyun/mirror/actions/runs/37028033628)·[다크21](https://github.com/hellosunghyun/mirror/actions/runs/37028033878)은 세 플랫폼의 단위·UI6·guard·최종xcresult·원본 게시를 통과했다. 실제 attempt1·각49자산/46PNG의 귀속·해시·크기·IHDR·CRC·EXIF와 원본 ZIP을 검증하고 두 모드의92원본을 각각 열었다. 작은 입력창·접힌 부가 정보·목록과 선택 상세의 분배가 읽혔고 해당 고정 화면에서 새 확정 겹침은 없었다. [빌드63 설치 파일](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-37028033628)의 IPA·Mac DMG를 포함한8자산도 두 게시 job 성공 뒤 체크섬·버전·서명/공증 게이트로 확인했다. 당시 외관·배포 증거이며 후속 Root 배치·이력 회귀·큰 글자·VoiceOver·실기기 전체 수용을 대신하지 않는다.
+
+source `80216d9`의 [다크22](https://github.com/hellosunghyun/mirror/actions/runs/37032573331)는 Mac·iPhone·iPad 모두 완료/Undo 사례의332행에서 이전 계획 이력 Button의 존재 검사에 실패했다. 원본 게시도 건너뛰었다. 실제 이력 데이터 부재·펼침 상태·접근성 식별/역할·화면 밖 노출 중 원인은 미확정이다. 기존 검사는 이력을 펼친 뒤 해당 내용으로 실제 스크롤하지 않았다.
+
+이력 검사의 동선은 첫 이력 제어를 소유한 유일한 상세 ScrollView를 확인하고, 그 안에서 일반 스크롤로 실제 버튼을 드러내도록 보완한다. 첫 계획 prefix와 다시 펼친 뒤의 같은 고유 ID, 접기·내일 행동에 접근하며 원래 Button·개수1·실제 ID·거절 후 내일 유지·최근 Undo로 오늘 복원 조건을 유지한다. 미노출 경계는 스크롤 기회를 주고 최종 유효 경계·소유·viewport 안 중심·hittable/enabled를 요구한다. 존재 탐색은 기존15초 예산에서 스크롤과 남은 대기를 함께 사용하고8회 이내로 제한한다. 기존 클릭 helper의 ready3초·최대8회 일반 스크롤·최종 조작 조건은 별도로 그대로 유지하며 전체 클릭이15초라고 주장하지 않는다. 기존99 assertions·25 XCTFail은 유지하고 새 탐색 실패 helper의 XCTFail1개로 합계26개가 된다. 여섯 사례·사진46장·실행/게시 게이트·앱 소스는 바꾸지 않는다. SDK 실행과 실제 이력 접근의 통과는 후속 Actions에서 확인한다.
+
 2026-10-02 source `8f9e8ee`·빌드59의 밝은 원본46장을 플랫폼별로 모두 개별 열람했다. iPhone 일정·보관함의 추가/설정이 상태 표시줄과 겹치고, 보관함의 저장 안내 일부가 하단 탭에 가려지는 두 종류의 시각 문제를 확인했다. iPad 빈 안내는 세로 초기·세로 선택 상세·가로 참고 일정의 세 조건에서 잘리지 않았으며 가로 선택 상세 조합은 미검증이다. Mac 고정 창에서는 확정된 겹침·잘림이 없었다. 이전 원본은 새 입력 composer·이력 Undo의 수용을 대신하지 않는다.
 
 후속 배치는 iPhone의 toolbar를 `topBarTrailing`으로 명시하고 compact Phone 안내의 공간을 `TabView.safeAreaBar`가 한 번만 확보한다. 이 경로의 내부 inset은 비우며 compact iPad·regular Phone·Mac에는 기존 inset을 남긴다. 상태 안내의 모든 표시 조건·문구·오류 채널·재시도·Undo 소유와 기존99 assertions/실패 조건/시간 제한/여섯 사례/원본46장 계약은 유지한다. 상단/하단 겹침의 원인 또는 실제 해결을 정적 변경만으로 확정하지 않으며 새 SDK·밝은/어두운 원본으로 확인한다.
