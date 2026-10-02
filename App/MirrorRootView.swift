@@ -135,6 +135,9 @@ struct MirrorRootView: View {
                     .toolbar { commonToolbar }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            #if os(iOS)
+            .toolbarMinimizationBehavior(isCompact ? .never : .automatic, for: .navigationBar)
+            #endif
             if showCalendar {
                 Divider()
                 NavigationStack {

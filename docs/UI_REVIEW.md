@@ -69,15 +69,15 @@
 
 | 플랫폼 | 명명된 앱 화면 |
 |---|---|
-| iPhone | 오늘 빈 화면, 입력, 일정, 설정, 보관함, 정리 카드, 오늘 목록, 검색, 상세, 상세 편집, 완료, Undo, 주 날짜 선택, 입력 오류: 14장 |
-| iPad | 같은 14장과 실제 기기 회전 후 가로 viewport 화면: 15장 |
-| Mac | 같은 14장: 14장 |
+| iPhone | 오늘 빈 화면, 입력, 일정, 설정, 보관함, 정리 카드, 오늘 목록, 검색, 상세, 상세 편집, 완료, Undo, 주 날짜 선택, 입력 오류, 일반 빠른 날짜 선택: 15장 |
+| iPad | 같은 15장과 실제 기기 회전 후 가로 viewport 화면: 16장 |
+| Mac | 같은 15장: 15장 |
 
-각 화면은 실제 XCUITest 입력과 Core Data 저장 경로의 native XCUIScreenshot을 첨부한다. iPad 가로 한 장은 `XCUIScreen.main.screenshot()`을 사용하며 전면 iPad 앱의 유일한 주 창·단일 화면과 동일 캡처의 논리적 화면 크기를 검사한다. 앱과 창이 화면 전체를1pt 오차 안에서 채우지 않으면 attachment를 남기지 않고 실패한다. 나머지42장은 `app.screenshot()`이다. 화면 캡처에는 시스템 chrome이 포함될 수 있으며, 앱·창 경계 검사가 알림 배너 부재까지 증명하지는 않는다. 합성 작업만 입력하는 CI Simulator 원본에서 다른 앱·개인 내용·시스템 overlay 노출을 직접 확인한다. 성공 mock·작업 seed·이미지 생성·임의 합성 화면으로 대체하지 않는다. 고정 테스트 날짜와 합성 작업 제목을 사용한다. 실제 개인 기기 화면·영상·원본 attachment JSON·로그는 공개 검토 폴더에서 제외한다.
+각 화면은 실제 XCUITest 입력과 Core Data 저장 경로의 native XCUIScreenshot을 첨부한다. iPad 가로 한 장은 `XCUIScreen.main.screenshot()`을 사용하며 전면 iPad 앱의 유일한 주 창·단일 화면과 동일 캡처의 논리적 화면 크기를 검사한다. 앱과 창이 화면 전체를1pt 오차 안에서 채우지 않으면 attachment를 남기지 않고 실패한다. 현재 계약의 나머지45장은 `app.screenshot()`이다. 화면 캡처에는 시스템 chrome이 포함될 수 있으며, 앱·창 경계 검사가 알림 배너 부재까지 증명하지는 않는다. 합성 작업만 입력하는 CI Simulator 원본에서 다른 앱·개인 내용·시스템 overlay 노출을 직접 확인한다. 성공 mock·작업 seed·이미지 생성·임의 합성 화면으로 대체하지 않는다. 고정 테스트 날짜와 합성 작업 제목을 사용한다. 실제 개인 기기 화면·영상·원본 attachment JSON·로그는 공개 검토 폴더에서 제외한다.
 
 현재 checkout SHA, 실제 앱의 `CFBundleVersion`, Actions run·attempt를 확인한다. 실제 SDK의 `xcresulttool export attachments --help`를 먼저 확인하고 명명된 앱샷만 추출한다. 세 플랫폼·각 필수 화면·PNG 내용·checksum·manifest의 SHA/build/run/attempt가 맞지 않으면 검토 자료를 게시하지 않는다.
 
-각 성공 실행의 별도 `ui-review-RUNID` prerelease에는 PNG 43장과 안전 manifest·`SHA256SUMS`·`ui-review.html`이 있다. HTML을 내려받으면 포함된 PNG를 브라우저에서 함께 볼 수 있다. 앱 배포의 `adhoc-RUNID`에 있는 IPA·DMG와 여덟 자산 계약은 유지한다.
+현재46-stage 계약을 따르는 성공 실행의 별도 `ui-review-RUNID` prerelease는 PNG46장과 안전 manifest·`SHA256SUMS`·`ui-review.html`의49자산을 요구한다. HTML을 내려받으면 포함된 PNG를 브라우저에서 함께 볼 수 있다. 과거43-stage 실행의 실제 자료 수는 해당 검증 기록을 따른다. 앱 배포의 `adhoc-RUNID`에 있는 IPA·DMG와 여덟 자산 계약은 유지한다.
 
 
 [후속 실행36949485800](https://github.com/hellosunghyun/mirror/actions/runs/36949485800), `634e208`·build39는 준비·도메인159개·Mac 단위159/UI6·iPad 단위156/UI6가 통과했다. Mac 컴파일28초·receipt·UI450초와 iPad 컴파일208초·receipt·UI919초, 실제 xcresult의 각6개와 실행 guard를 확인했다. Phone은 컴파일162초·receipt 뒤 최초 capture의506행 유일 후보 검사에서 실패했다. 실제 Continue는 query/existing/hittable/enabled 각1개이고 면적이 있으며 키보드와 교차하지만 중심·전체 포함은 false였다. 후보0개·경계유효·15443ms를 확인했다. 나머지5개는 stdout 통과이며 최종 xcresult 수로 합산하지 않는다. 모든 화면·설치 게시가 skipped되어39 새 원본은 없다.
@@ -122,7 +122,7 @@ Mac14에서는 확정 창잘림·빈상세·과도한완료버튼 blocker/P2가 
 
 목록의 미완료 작업에는 `미루기`를 표시하여 상세나 길게 누르기 없이 같은 화면의 작업 ID로 날짜 선택을 연다. 일반 날짜 선택은 오늘·내일을 즉시 선택하고 다른 날짜를 펼칠 수 있다. 정리/위젯에서 전체 달력을 요청한 경로는 처음부터 펼친다. 열기·취소·펼치기는 저장하지 않으며 모든 선택은 기존 고정 request의 context·expected versions·token과 공통 명령을 사용한다. 기존 Undo UI 사례 끝에 직접 미루기의 대상 ID·취소 후 미정 유지·내일 저장·Today 제외·미완료 상태 검사를 추가한다. 기존 여섯 사례·43앱샷·모든 기존 assertions·시간 제한·guard는 유지한다.
 
-정리 화면은 한 작업 카드, 오늘·내일의 큰 두 행동, 이번 주·다음 주·다른 날의 보조 세 행동으로 나눈다. 큰 글자와 좁은 폭에는 세로 배치를 사용하고 44pt 목표를 유지한다. 세션·card 고정, 키보드1~5·편집 중 비활성·포커스/공지·마감 확인·부분 종료·Undo는 그대로다. 오늘 화면의 날짜·반복 정보를 줄이고 날짜 미정 수는 정리 버튼에 짧게 표시한다. 종료의 세 수치 요약은 목록 아래에 처음 펼쳐서 표시하며 사용자가 접을 수 있다. 상세 편집은 내용에 집중하고 지정된 실제 마감과 충돌 안내는 계속 보인다. 일반 상세의 미설정 마감은 추가 행동 하나로 줄이며 이력/관리 기능은 접힌 영역에서 제공한다.
+정리 화면은 한 작업 카드, 오늘·내일의 큰 두 행동, 이번 주·다음 주·다른 날의 보조 세 행동으로 나눈다. 큰 글자와 좁은 폭에는 세로 배치를 사용하고 44pt 목표를 유지한다. 세션·card 고정, 키보드1~5·편집 중 비활성·포커스/공지·마감 확인·부분 종료·Undo는 그대로다. 오늘 화면의 날짜·반복 정보를 줄이고 날짜 미정 수는 정리 버튼에 짧게 표시한다. 종료의 세 수치 요약은 목록 아래에 기본적으로 접어서 두며 사용자가 필요할 때 펼칠 수 있다. 상세 편집은 내용에 집중하고 지정된 실제 마감과 충돌 안내는 계속 보인다. 일반 상세의 미설정 마감은 추가 행동 하나로 줄이며 이력/관리 기능은 접힌 영역에서 제공한다.
 
 넓은 iPad의 옆 일정은 날짜·해당 일의 작업/마감/약속과 값이 있는 요일 미정 바구니에 집중한다. 일간/주간 전체 탐색과 캘린더 선택·권한은 별도 일정/설정 화면에서 제공하며, 캘린더 오류는 참고 열에도 남긴다. 기존 인접2열·320pt 폭·선택 시 상세로 전환·세로에서 참고 열 부재·viewport의19조건/3회/0.5초/15초는 보존한다. Mac은 목록과 선택한 작업의 좁은 상세를 유지한다.
 
@@ -164,6 +164,18 @@ Simulator unit 경로에는 고정 `scope/platform/phase/state` notice만 추가
 
 후속 관측은 기존 각 버튼의 frame과 한 번의 `isHittable` 조회만 재사용한다. 고정 두 identifier·메서드와 hittable·창 안 경계·상태 표시줄 아래 배치의 Bool을 원래 assertion 직전에 기록한다. 좌표·제목·AX 원문·추가 조회는 없다. 공개 parser는 실제 유일한 활성 사례, exact5키, 진짜 Bool, 추가→설정의 길이1–2 prefix만 허용하며 무효 transcript는 전체를 거부한다. 원래 enabled 조회와 모든 assertions·여섯 사례·43단계·시간 제한·성공 게이트는 유지한다. 이 관측 추가는 UI 수정이나 전체 통과를 의미하지 않으며, 원인은 새 Actions 결과와 실제 원본에서 확인한다.
 
+## 빠른 날짜 선택의 터치 영역과 추가 원본
+
+일반 날짜 선택의 오늘·내일은 Button 바깥의 여백 대신 실제 Text label 안에 최소44pt 높이를 둔다. 표시된 작업 ID·expected versions·context·token과 기존 날짜 명령은 그대로 사용한다. 오늘 화면의 “이번 정리 결과”는 처음과 정리 종료 뒤에 접어 두며 필요할 때 펼칠 수 있다. 종료 수치·Undo와 오류 경로는 유지하고 목록이 먼저 보이게 한다.
+
+iOS의 compact 탐색 스택에는 `.toolbarMinimizationBehavior(.never, for: .navigationBar)`를 적용해 스크롤 중에도 상단 추가·설정 버튼을 유지하도록 한다. `3c1c164`의 [Dark10](https://github.com/hellosunghyun/mirror/actions/runs/36989502805) Phone은 단위156개/UI6개·guard·최종xcresult6passed를 통과했으며 기본52 Phone은 대기 중이다. 공개된 고정 toolbar aggregate는 미관측이고 toolbar 최소화가 이전 hittable 실패의 원인인지는 미확정이다. 이 API의 실제27 SDK/runtime 동작과 검색 키보드 중 버튼 사용성은 새 Actions의 기존 assertions·고정 관측·원본 화면으로 확인한다.
+
+기존 ReviewUndo 사례의 첫 일반 picker 열기에서 대상 제목·내일 hittable 검사를 유지하고 오늘 enabled/hittable 및 접힌 `plan.calendar` 부재를 추가로 확인한다. iPhone·iPad에서 두 고유한 실제 Button의 유한한 경계와 폭·높이44pt 이상을 검사하며 Mac에는 모바일 터치 크기를 강제하지 않는다. 첫 picker를 취소하기 직전에 `quick-plan-picker` 원본을 한 장 남긴 뒤 기존 취소 후 미정 유지·다시 내일 선택·Today 제외·10월1일·미완료 회귀를 끝까지 실행한다.
+
+원래43장을 제거하거나 대체하지 않고 세 플랫폼의 새 원본3장을 추가한다. 각 모양은 iPhone15·iPad16·Mac15의46 PNG와 static3개를 포함한49공개 자산을 요구한다. iPad16개 timing이 모두 남도록 고정 진단 tail도16개로 보존한다. stage 누락·중복 대체와 새 stage의 비공개 이름·영상 타입은 합성 fixture에서 거절하며 기존 exact coverage·identity·hash/bytes·정제·게시 게이트를 유지한다. 기존6메서드·모든 assertions·시간 제한·UI guard와 가로 PNG의 방향/원본 보존 계약은 낮추지 않는다.
+
+이 변경은 준비된 구현이며 실제44pt·접힘·새46원본 시각 수용은 후속 Actions 결과로 확인한다. 현재와 역사적43-stage run/자료를 새46-stage 결과로 계산하지 않는다. 현재 helper는 그대로 보존하고 새 실제 SHA/run/build/attempt 확인 뒤 별도46-stage 검토 helper를 준비한다. 과거14-stage baseline을 사용하는 SDK 진단 workflow는 변경하지 않으며 새46 collector를 그 과거 결과에 적용하면 새 stage 부재를 정상적으로 거절한다. 일반 picker 한 장은 다른 날짜를 펼친 모습·VoiceOver·최대 글자·실기기와 전체QA87 수용을 대신하지 않는다.
+
 ## 수용 기준과 검증 한계
 
 [build43](https://github.com/hellosunghyun/mirror/actions/runs/36960263569)은 세 플랫폼의 단위 검사·실제 UI 6개씩·guard와 앱샷 게시를 통과했다. 공개 46자산의 identity·bytes·SHA256을 확인하고 가로 원본 한 장을 직접 열었지만, main-screen 캡처도 내용이 90도 돌아가 시각 검증에 실패했다. native UIImage는 left, logical 1376×1032, CGImage와 공개 PNG는 2064×2752다. 공개 PNG에는 EXIF가 없지만 export 단계의 방향 정보는 확보하지 못했으므로 손실 단계를 확정하지 않는다. 이 실행의 나머지 42장을 새로 직접 검토했다고 기록하지 않는다.
@@ -172,7 +184,7 @@ Simulator unit 경로에는 고정 `scope/platform/phase/state` notice만 추가
 
 회귀 6개는 양 byte order·방향값 1–8·다른 IFD/개인 metadata 제거·멱등성, 가로 stage만 보존 및 다른 42장 기존 결과 유지, prepare의 표시 크기, 손상·중복 방향 추론 금지, 정합한 hash/dimensions를 가진 잘못된 가로 증거의 단일/집계 거절과 게시 요청 0회, 다른 stage의 EXIF 게시 거절을 검사한다. SDK attachment export가 eXIf를 보존하는지, 원본/export/public IHDR·IDAT가 같은지, 새 가로 PNG의 글자가 정방향이고 두 열·시스템 노출이 정상인지는 새 Actions와 실제 원본에서 확인한다.
 
-밝은 모양의 기본 검증·서명 배포와 별개로 어두운 모양 검증 workflow를 각 관련 push에 실행한다. 같은6사례·43장과 각 플랫폼 시간 제한을 독립 run/SHA/build/attempt·receipt·Release로 유지한다. 두 Dark shared scheme의 TestAction에만 고정 dark 값을 전달하고 CI는 UI build/test만 해당 scheme으로 선택한다. receipt의 기존 ui_scheme 필드를 실제 선택값과 대조해 밝은/어두운 산출물 교환을 거부한다. 앱은 DEBUG·MIRROR_UI_TESTING=1인 main window에만 강제 모양을 적용하고 Release·기본 scheme은 기존 시스템 모양을 유지한다. 전역 host/Simulator 모양은 바꾸지 않는다. 실제 SDK 환경 전달과 어두운 원본43장을 확인하기 전에는 다크 검증 완료로 기록하지 않는다.
+밝은 모양의 기본 검증·서명 배포와 별개로 어두운 모양 검증 workflow를 각 관련 push에 실행한다. 현재 계약은 같은6사례·46장과 각 플랫폼 시간 제한을 독립 run/SHA/build/attempt·receipt·Release로 유지한다. 두 Dark shared scheme의 TestAction에만 고정 dark 값을 전달하고 CI는 UI build/test만 해당 scheme으로 선택한다. receipt의 기존 ui_scheme 필드를 실제 선택값과 대조해 밝은/어두운 산출물 교환을 거부한다. 앱은 DEBUG·MIRROR_UI_TESTING=1인 main window에만 강제 모양을 적용하고 Release·기본 scheme은 기존 시스템 모양을 유지한다. 전역 host/Simulator 모양은 바꾸지 않는다. 실제 SDK 환경 전달과 현재 계약의 어두운 원본46장을 확인하기 전에는 새 다크 검증 완료로 기록하지 않는다.
 
 - 기존 여섯 UI 흐름의 실제 완료·실패 0·skip 0와 모든 필수 메서드를 확인한다. assertion·guard·실행 제한을 낮추지 않는다.
 - Mac 완료 버튼의 실제 접근성 경계가 폭 220pt·높이 46pt를 넘지 않는 회귀를 추가했다. 목표 버튼 최대 200×44pt에 네이티브 렌더링 경계 오차를 허용한 검사다.

@@ -30,7 +30,7 @@ PLATFORMS = ('iphone', 'ipad', 'mac')
 STAGES = (
     'initial-today', 'calendar', 'settings', 'capture-form', 'review-card', 'week-picker', 'today-populated',
     'library', 'library-search', 'detail', 'detail-edit', 'completion', 'undo',
-    'validation-error',
+    'validation-error', 'quick-plan-picker',
 )
 IPAD_STAGES = STAGES + ('ipad-landscape',)
 ALL_STAGES = IPAD_STAGES

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 struct MirrorTodayView: View {
     @Environment(AppModel.self) private var model
     @State private var showCompleted = false
-    @State private var showReviewSummary = true
+    @State private var showReviewSummary = false
     var body: some View {
         List {
             Section {
@@ -88,7 +88,7 @@ struct MirrorTodayView: View {
         .accessibilityIdentifier("today.list")
         .navigationTitle("오늘")
         .onChange(of: model.showReview) { _, isPresented in
-            if !isPresented { showReviewSummary = true }
+            if !isPresented { showReviewSummary = false }
         }
     }
 }
@@ -703,12 +703,14 @@ struct MirrorPlanPicker: View {
                     if usesQuickChoices {
                         Section("빠르게 정하기") {
                             MirrorActionGroup {
-                                Button("오늘") { choose(.day(request.displayedContext.planningDay)) }
-                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                Button { choose(.day(request.displayedContext.planningDay)) } label: {
+                                    Text("오늘").frame(maxWidth: .infinity, minHeight: 44)
+                                }
                                     .accessibilityIdentifier("plan.today")
                                 if let tomorrow = try? request.displayedContext.planningDay.addingDays(1) {
-                                    Button("내일") { choose(.day(tomorrow)) }
-                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                    Button { choose(.day(tomorrow)) } label: {
+                                        Text("내일").frame(maxWidth: .infinity, minHeight: 44)
+                                    }
                                         .accessibilityIdentifier("plan.tomorrow")
                                 }
                             }

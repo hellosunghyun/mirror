@@ -21,7 +21,7 @@ UI_BASELINE_METHODS = {
 UI_SCREENSHOT_STAGES = frozenset({
     'initial-today', 'calendar', 'settings', 'capture-form', 'review-card', 'week-picker',
     'today-populated', 'library', 'library-search', 'detail', 'detail-edit', 'completion',
-    'undo', 'validation-error', 'ipad-landscape',
+    'undo', 'validation-error', 'quick-plan-picker', 'ipad-landscape',
 })
 UI_CASE_EVENT_PATTERN = re.compile(
     r"Test Case '[-+]\[[^\s\]\r\n]+\.MirrorUITests (test[A-Za-z0-9_]+)\]' (started|passed|failed)(?=[\s.]|$)")
@@ -525,7 +525,7 @@ def report_ui_viewport_diagnostics(lines):
 
 def report_ui_timing_diagnostics(lines):
     cases = {}
-    captures = deque(maxlen=15)
+    captures = deque(maxlen=16)
     for line in lines:
         case = UI_CASE_TIMING_PATTERN.search(line)
         if case and case[1] in UI_BASELINE_METHODS:

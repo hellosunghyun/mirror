@@ -330,6 +330,24 @@ final class MirrorUITests: XCTestCase {
         try activate(postponeID, in: app)
         XCTAssertEqual(displayedText(of: try requireElement("plan.task.\(taskID)", in: app)), title)
         XCTAssertTrue(try requireElement("plan.tomorrow", in: app).isHittable)
+        let todayButton = try requireElement("plan.today", in: app, preferButtons: true)
+        XCTAssertTrue(todayButton.isEnabled, "일반 날짜 선택의 오늘 버튼은 활성화되어 있다.")
+        XCTAssertTrue(todayButton.isHittable, "오늘과 내일은 다른 날짜를 펼치지 않고 선택할 수 있다.")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists,
+                       "일반 날짜 선택은 다른 날짜를 처음에 접어 둔다.")
+        #if os(iOS)
+        for identifier in ["plan.today", "plan.tomorrow"] {
+            let buttons = app.buttons.matching(identifier: identifier)
+            XCTAssertEqual(buttons.count, 1, "빠른 날짜 선택은 고유한 실제 Button이어야 한다.")
+            let frame = buttons.firstMatch.frame
+            XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite }),
+                          "빠른 날짜 선택 버튼의 실제 경계는 유한해야 한다.")
+            XCTAssertGreaterThanOrEqual(frame.width, 44, "모바일 빠른 날짜 선택의 터치 목표 폭은 44pt 이상이다.")
+            XCTAssertGreaterThanOrEqual(frame.height, 44, "모바일 빠른 날짜 선택의 터치 목표 높이는 44pt 이상이다.")
+        }
+        #endif
+        try recordUI("quick-plan-picker", in: app,
+                     identifiers: ["plan.task.\(taskID)", "plan.today", "plan.tomorrow", "plan.cancel"])
         try activate("plan.cancel", in: app)
         try requireNoElement("plan.cancel", in: app)
         XCTAssertTrue(value(of: try requireRow(title, in: app)).contains("아직 정하지 않음"),

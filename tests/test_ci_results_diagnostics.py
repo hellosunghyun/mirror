@@ -25,7 +25,8 @@ METHODS = (
 )
 STAGES = (
     'initial-today', 'calendar', 'settings', 'capture-form', 'review-card', 'week-picker', 'today-populated',
-    'library', 'library-search', 'detail', 'detail-edit', 'completion', 'undo', 'validation-error', 'ipad-landscape',
+    'library', 'library-search', 'detail', 'detail-edit', 'completion', 'undo', 'validation-error',
+    'quick-plan-picker', 'ipad-landscape',
 )
 CASE_NOTICE = '::notice::UI case timing: '
 TREE_CASE_NOTICE = '::notice::UI xcresult case timings: '
@@ -1474,18 +1475,18 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                  for index, stage in enumerate(STAGES)]
         output = self.capture(helper.report_ui_timing_diagnostics, lines)
         shots = self.notices(output, SCREENSHOT_NOTICE)
-        self.assertEqual(len(shots), 15)
+        self.assertEqual(len(shots), 16)
         self.assertEqual({shot['stage'] for shot in shots}, set(STAGES))
         self.assertEqual(shots[0], {'scope': 'stdoutOnly', 'stage': STAGES[0], 'milliseconds': 0})
         self.assertTrue(all(type(shot['milliseconds']) is int for shot in shots))
         self.assertEqual(shots[-1]['milliseconds'], 1200000)
 
-    def test_screenshot_timing_retains_only_last_fifteen_valid_events(self):
+    def test_screenshot_timing_retains_only_last_sixteen_valid_events(self):
         lines = [screenshot_line(milliseconds=str(value)) for value in range(20)]
         lines += [screenshot_line(PRIVATE), screenshot_line(milliseconds='1200001')]
         output = self.capture(helper.report_ui_timing_diagnostics, lines)
         self.assertEqual([shot['milliseconds'] for shot in self.notices(output, SCREENSHOT_NOTICE)],
-                         list(range(5, 20)))
+                         list(range(4, 20)))
 
     def test_screenshot_timing_rejects_bad_tokens_and_trailing_payloads(self):
         lines = [screenshot_line(milliseconds=value) for value in

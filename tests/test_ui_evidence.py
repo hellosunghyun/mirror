@@ -287,6 +287,42 @@ class UIEvidenceTests(unittest.TestCase):
         self.expect_error('missingCoverage', lambda: helper.prepare(self.root / 'raw', self.root / 'out', 'ipad', IDENTITY))
         self.assertFalse((self.root / 'out').exists())
 
+    def test_quick_picker_is_required_for_each_platform_without_legacy_partial_output(self):
+        for platform in helper.PLATFORMS:
+            with self.subTest(platform=platform):
+                source, output = self.root / ('missing-quick-' + platform), self.root / ('out-' + platform)
+                stages = tuple(stage for stage in helper.required_stages(platform) if stage != 'quick-plan-picker')
+                raw_export(source, stages=stages)
+                self.expect_error('missingCoverage', lambda: helper.prepare(source, output, platform, IDENTITY))
+                self.assertFalse(output.exists())
+
+    def test_duplicate_quick_picker_cannot_replace_an_original_stage(self):
+        for platform in helper.PLATFORMS:
+            with self.subTest(platform=platform):
+                source, output = self.root / ('duplicate-quick-' + platform), self.root / ('out-' + platform)
+                stages = tuple(stage for stage in helper.required_stages(platform) if stage != 'initial-today')
+                raw_export(source, stages=stages + ('quick-plan-picker',))
+                self.expect_error('duplicateStage', lambda: helper.prepare(source, output, platform, IDENTITY))
+                self.assertFalse(output.exists())
+
+    def test_quick_picker_rejects_private_name_and_non_png_attachment_without_raw_fallback(self):
+        context = ['--sha', 'a' * 40, '--build-number', '27', '--run-id', '31415', '--attempt', '1']
+        cases = [('name', 'suggestedHumanReadableName', 'mirror-ui-quick-plan-picker-' + PRIVATE + '-1',
+                  'invalidAttachmentName'),
+                 ('type', 'uniformTypeIdentifier', 'public.movie', 'invalidAttachmentType')]
+        for case, key, bad_value, expected in cases:
+            with self.subTest(case=case):
+                source, output = self.root / ('private-quick-' + case), self.root / ('out-' + case)
+                value = raw_export(source)
+                quick = next(attachment for attachment in value[0]['attachments']
+                             if attachment['suggestedHumanReadableName'].startswith('mirror-ui-quick-plan-picker-'))
+                quick[key] = bad_value
+                rewrite_export(source, value)
+                code, summary, _ = self.invoke(['prepare', '--input', str(source), '--output', str(output),
+                                                '--platform', 'iphone'] + context)
+                self.assertEqual((code, summary['status']), (1, expected))
+                self.assertFalse(output.exists())
+
     def test_duplicate_stage_is_not_a_substitute_for_exact_baseline_coverage(self):
         raw_export(self.root / 'raw', stages=helper.STAGES + ('initial-today',))
         self.expect_error('duplicateStage', lambda: helper.prepare(self.root / 'raw', self.root / 'out', 'iphone', IDENTITY))
@@ -405,7 +441,7 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertEqual(diagnostic['exportExifOrientation'], 8)
         self.assertIs(diagnostic['cleanExifPresent'], True)
         self.assertNotIn(PRIVATE, stdout.getvalue())
-        self.assertEqual(len(manifest['screenshots']), 15)
+        self.assertEqual(len(manifest['screenshots']), 16)
         self.assertEqual(set(manifest), helper.MANIFEST_KEYS)
         _, files = helper.validate_directory(output, IDENTITY)
         self.assertEqual(set(files) - {shot['file'] for shot in manifest['screenshots']}, helper.PREPARE_STATIC)
@@ -556,6 +592,9 @@ class UIEvidenceTests(unittest.TestCase):
         self.assertEqual(manifest['platforms'], ['iphone', 'ipad', 'mac'])
         self.assertTrue(all(path.is_file() for path in output.iterdir()))
         self.assertEqual(len({shot['file'] for shot in manifest['screenshots']}), SCREENSHOT_COUNT)
+        quick = [shot for shot in manifest['screenshots'] if shot['stage'] == 'quick-plan-picker']
+        self.assertEqual({shot['platform'] for shot in quick}, {'iphone', 'ipad', 'mac'})
+        self.assertEqual(len(quick), 3)
         for shot in manifest['screenshots']:
             self.assertTrue(shot['file'].startswith('mirror-ui-' + shot['platform'] + '-'))
         helper.validate_directory(output, IDENTITY, aggregate=True)
@@ -845,7 +884,7 @@ class UIEvidenceTests(unittest.TestCase):
     def test_ipad_landscape_is_required_only_for_ipad(self):
         source, output = self.prepare_platform('ipad')
         manifest, _ = helper.validate_directory(output, IDENTITY)
-        self.assertEqual(len(manifest['screenshots']), 15)
+        self.assertEqual(len(manifest['screenshots']), 16)
         self.assertIn('ipad-landscape', {shot['stage'] for shot in manifest['screenshots']})
         without_landscape = self.root / 'without-landscape'
         raw_export(without_landscape)
