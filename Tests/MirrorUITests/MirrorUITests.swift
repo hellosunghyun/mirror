@@ -332,9 +332,30 @@ final class MirrorUITests: XCTestCase {
             XCTAssertGreaterThan(bounds.width, bounds.height, "실제 가로 앱 창을 캡처한다.")
             XCTAssertGreaterThan(bounds.height, 0)
             XCTAssertTrue(app.frame.insetBy(dx: -1, dy: -1).contains(bounds))
-            // 앱 범위의 가로 캡처에서 회전·검은 띠가 관찰돼 주 창 캡처로 다시 확인한다.
-            // 반환된 native screenshot을 그대로 첨부하며 픽셀 회전·렌더링·후처리를 하지 않는다.
-            appScreenshot = window.screenshot()
+            // 앱·주 창 캡처의 가로 PNG가 회전되어 별도의 native 화면 캡처를 확인한다.
+            // 전면 앱의 유일한 창이 단일 화면을 채울 때만 공개 attachment를 남긴다.
+            guard UIDevice.current.userInterfaceIdiom == .pad,
+                  app.state == .runningForeground, app.windows.count == 1,
+                  XCUIScreen.screens.count == 1 else {
+                XCTFail("가로 화면 캡처는 전면 iPad 앱의 유일한 창과 화면에 한정한다.")
+                throw UIHarnessError.missingElement("landscapeScreenshotScope")
+            }
+            let screenScreenshot = XCUIScreen.main.screenshot()
+            let displaySize = screenScreenshot.image.size
+            guard displaySize.width.isFinite && displaySize.height.isFinite,
+                  displaySize.width > displaySize.height, displaySize.height > 0,
+                  [bounds, app.frame].allSatisfy({ frame in
+                      frame.minX.isFinite && frame.minY.isFinite
+                          && frame.width.isFinite && frame.height.isFinite
+                          && abs(frame.minX) <= 1 && abs(frame.minY) <= 1
+                          && abs(frame.width - displaySize.width) <= 1
+                          && abs(frame.height - displaySize.height) <= 1
+                  }) else {
+                XCTFail("가로 화면 캡처의 논리적 화면 범위를 앱과 주 창이 채워야 한다.")
+                throw UIHarnessError.missingElement("landscapeScreenshotScope")
+            }
+            // 동일 screenshot을 그대로 첨부한다. 픽셀 회전·렌더링·후처리는 없다.
+            appScreenshot = screenScreenshot
         } else { appScreenshot = app.screenshot() }
         #else
         appScreenshot = app.screenshot()

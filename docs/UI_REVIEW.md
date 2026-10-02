@@ -73,7 +73,7 @@
 | iPad | 같은 14장과 실제 기기 회전 후 가로 viewport 화면: 15장 |
 | Mac | 같은 14장: 14장 |
 
-각 화면은 실제 XCUITest 입력과 Core Data 저장 경로의 native XCUIScreenshot을 첨부한다. iPad 가로 한 장은 실제 앱 주 창의 `window.screenshot()`이고 나머지는 `app.screenshot()`이다. 성공 mock·작업 seed·이미지 생성·임의 합성 화면으로 대체하지 않는다. 고정 테스트 날짜와 합성 작업 제목을 사용한다. 실제 기기 전체 화면·영상·원본 attachment JSON·로그는 공개 검토 폴더에서 제외한다.
+각 화면은 실제 XCUITest 입력과 Core Data 저장 경로의 native XCUIScreenshot을 첨부한다. iPad 가로 한 장은 `XCUIScreen.main.screenshot()`을 사용하며 전면 iPad 앱의 유일한 주 창·단일 화면과 동일 캡처의 논리적 화면 크기를 검사한다. 앱과 창이 화면 전체를1pt 오차 안에서 채우지 않으면 attachment를 남기지 않고 실패한다. 나머지42장은 `app.screenshot()`이다. 화면 캡처에는 시스템 chrome이 포함될 수 있으며, 앱·창 경계 검사가 알림 배너 부재까지 증명하지는 않는다. 합성 작업만 입력하는 CI Simulator 원본에서 다른 앱·개인 내용·시스템 overlay 노출을 직접 확인한다. 성공 mock·작업 seed·이미지 생성·임의 합성 화면으로 대체하지 않는다. 고정 테스트 날짜와 합성 작업 제목을 사용한다. 실제 개인 기기 화면·영상·원본 attachment JSON·로그는 공개 검토 폴더에서 제외한다.
 
 현재 checkout SHA, 실제 앱의 `CFBundleVersion`, Actions run·attempt를 확인한다. 실제 SDK의 `xcresulttool export attachments --help`를 먼저 확인하고 명명된 앱샷만 추출한다. 세 플랫폼·각 필수 화면·PNG 내용·checksum·manifest의 SHA/build/run/attempt가 맞지 않으면 검토 자료를 게시하지 않는다.
 
@@ -91,6 +91,10 @@
 오류 경로도 정상 입력과 같이 닫기 뒤 `capture.title`의 실제 소멸을 기존 helper로 확인한 후 보관함 탐색·새 입력 복구를 시작한다. 이는 닫힘 상태의 검증을 추가하는 동기화 수정이며, 이번 실패가 시트 전환 때문이었다고 단정하지 않는다. 새로운 고정 sleep·좌표 탭이나 기존 assertions·시간 제한의 변경은 없다. 추가 대기 비용은 기존 전체 제한 안에서 확인한다.
 
 후속 진단은 승인된 첫 XCTFail 본문의 정확한 고정 한국어 접두사와 경계만 고정 enum으로 공개한다. 앱 종료·필수 요소 부재·행/일반 소유 스크롤 부재·hittable/enabled 실패를 구별하고 불명 분기와 다른 assertion은 기존 다섯 필드를 유지한다. 원문·작업 제목·AX·좌표를 출력하거나 진단 조회를 추가하지 않는다. 세 회귀는 전달된284행·고정 분기·정확한 경계·첫 실패 선택·혼합/비공개 원문 제외·Actions 출력 불변을 검사한다. 실패 분기 재현과 해결은 후속 Actions에서 확인한다.
+
+[후속 실행36955448753](https://github.com/hellosunghyun/mirror/actions/runs/36955448753), `c380125`·build41은 준비·도메인159개·Mac 단위159개·iPhone/iPad 단위156개와 실제 UI6개씩/guard를 모두 통과했다. UI46자산·설치8자산을 다운로드하여 source/build/run/attempt·bytes·SHA256·PNG IHDR·43단계와 IPA본체/확장3개의 버전·최소OS27.0, Mac arm64 및 서명·공증 게이트를 확인했다. 원본43장도 모두 직접 열었다. iPhone14장·Mac14장·iPad세로14장에서는 확정 잘림·겹침을 발견하지 못했지만, iPad가로1장은2064×2752 PNG에 전체 내용이90도 돌아가 시각 검증에 실패했다. 이전 검은 띠는 없으며 목록과 독립 일정의 두 열은 보인다. native UIImage left·표시1376×1032/scale2·CG2064×2752만으로 정상 가로 pixels를 판정하지 않는다.
+
+후속 변경은 가로 한 장의 producer만 실제 main-screen native 캡처로 바꾸고 앱·주 창·화면 범위 검사를 강화한다. 동일 native 객체·기존 attachment·정제 경로와 모든 기존 기능 assertions·6사례·43장·시간 제한은 유지한다. 수동 회전·crop·렌더링으로 원본을 고치지 않는다. 실제 SDK 선언과 새 원본의 정방향·검은 띠·두 열·시스템 노출은 다음 Actions에서 확인하며, producer 변경만으로 해결했다고 기록하지 않는다.
 
 ## 수용 기준과 검증 한계
 
