@@ -291,6 +291,25 @@ final class MirrorUITests: XCTestCase {
                                  "Mac 완료 버튼의 클릭 경계는 44pt와 렌더링 오차 이내다.")
         #endif
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"), "완료는 계획을 지우지 않는다.")
+        #if os(macOS)
+        let verifiesEmptyTodayBesideInspector = true
+        #elseif os(iOS)
+        let verifiesEmptyTodayBesideInspector = UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        let verifiesEmptyTodayBesideInspector = false
+        #endif
+        if verifiesEmptyTodayBesideInspector {
+            let todayFrame = try requireElement("today.list", in: app).frame
+            for identifier in ["today.empty.title", "today.empty.description"] {
+                let emptyText = try requireElement(identifier, in: app)
+                XCTAssertTrue(emptyText.isHittable, "상세를 열어도 빈 Today 안내가 보여야 한다.")
+                let frame = emptyText.frame
+                XCTAssertTrue([frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite })
+                              && frame.width > 0 && frame.height > 0,
+                              "빈 Today 안내의 실제 경계는 유한하고 양수여야 한다.")
+                XCTAssertTrue(todayFrame.contains(frame), "빈 Today 안내 전체가 목록 안에 보여야 한다.")
+            }
+        }
         try recordUI("completion", in: app, identifiers: ["detail.contentTitle", "detail.plan", "task.complete", "task.undo", "detail.close"])
         try activate("task.undo", in: app)
         try waitForLabel("완료", element: requireElement("task.complete", in: app), in: app)

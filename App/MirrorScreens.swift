@@ -55,11 +55,24 @@ struct MirrorTodayView: View {
             }
             Section("오늘에 남긴 일") {
                 if model.todayTasks.isEmpty {
-                    ContentUnavailableView {
-                        Label("오늘에 남긴 일이 없어요", systemImage: "sun.max")
-                    } description: {
+                    VStack(spacing: 12) {
+                        Image(systemName: "sun.max")
+                            .font(.largeTitle).foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text("오늘에 남긴 일이 없어요")
+                            .font(.headline).accessibilityAddTraits(.isHeader)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("today.empty.title")
                         Text(model.pendingTasks.isEmpty ? "직접 날짜를 정한 일만 여기에 보여요." : "정하지 않은 일은 보관함에 있어요.")
-                    } actions: { Button("일단 넣기") { model.openCapture() } }
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("today.empty.description")
+                        Button("일단 넣기") { model.openCapture() }
+                            .buttonStyle(.borderless).frame(minHeight: 44)
+                    }
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
                 }
                 ForEach(model.todayTasks, id: \.taskID) {
                     MirrorTaskRow(task: $0).listRowSeparator(.hidden).listRowBackground(Color.clear)
