@@ -572,7 +572,7 @@ struct MirrorSettingsView: View {
     }
 
     private func settingNote(_ text: String) -> some View {
-        Text(text).font(.caption).foregroundStyle(.secondary)
+        Text(text).font(.caption).foregroundStyle(MirrorPalette.supportingText)
             .fixedSize(horizontal: false, vertical: true)
     }
 }

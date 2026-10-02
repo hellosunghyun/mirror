@@ -32,6 +32,8 @@ public enum MirrorPalette {
     public static var accent: Color { mirrorAdaptiveColor(light: 0x28663C, dark: 0xA9DCB7) }
     /// 채움 강조색 위에 표시하는 주요 동작 문구.
     public static var onAccent: Color { mirrorAdaptiveColor(light: 0xFFFFFF, dark: 0x16301E) }
+    /// 설정 설명처럼 읽을 수 있어야 하는 보조 문구.
+    public static var supportingText: Color { mirrorAdaptiveColor(light: 0x526155, dark: 0xAEBCAF) }
     /// 비어 있는 편집 입력란의 안내 문구.
-    public static var inputPrompt: Color { mirrorAdaptiveColor(light: 0x526155, dark: 0xAEBCAF) }
+    public static var inputPrompt: Color { supportingText }
 }
