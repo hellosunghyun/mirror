@@ -186,7 +186,8 @@ struct MirrorRootView: View {
                     if model.problem != nil || model.projectionPending {
                         Button("다시 확인") { Task { await model.retry() } }.accessibilityIdentifier("state.retry")
                     }
-                    if model.lastUndo != nil && model.selectedTaskID == nil {
+                    if let undo = model.lastUndo,
+                       !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
                         Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo")
                     }
                 }
