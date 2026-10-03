@@ -206,7 +206,7 @@ struct MirrorRootView: View {
                 .font(.title2.weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 12)
-            Button { captureOpenAction() } label: {
+            Button { captureOpenAction.callAsFunction() } label: {
                 Label("일단 넣기", systemImage: "plus")
                     .labelStyle(.iconOnly)
                     .frame(minWidth: 44, minHeight: 44)
@@ -279,7 +279,7 @@ struct MirrorRootView: View {
         #if os(iOS)
         ToolbarItem(placement: commonToolbarPlacement) {
             HStack(spacing: 8) {
-                Button { captureOpenAction() } label: {
+                Button { captureOpenAction.callAsFunction() } label: {
                     Label("일단 넣기", systemImage: "plus")
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
@@ -295,7 +295,7 @@ struct MirrorRootView: View {
         }
         #else
         ToolbarItemGroup(placement: commonToolbarPlacement) {
-            Button { captureOpenAction() } label: {
+            Button { captureOpenAction.callAsFunction() } label: {
                 Label("일단 넣기", systemImage: "plus")
                     #if os(iOS)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -391,18 +391,7 @@ struct MirrorRootView: View {
         }
     }
     private var captureOpenAction: MirrorCaptureOpenAction {
-        let model = model
-        let owner = sceneOwner
-        return {
-            if model.isLoading || model.context == nil {
-                Task {
-                    await model.start()
-                    model.openCapture(owner: owner)
-                }
-            } else {
-                model.openCapture(owner: owner)
-            }
-        }
+        MirrorCaptureOpenAction(model: model, owner: sceneOwner)
     }
     private var capturePresentation: Binding<CapturePresentationRequest?> {
         // Binding 생성 시의 요청을 닫는다. 오래된 false setter는 새 요청을 해제하지 못한다.
@@ -527,7 +516,7 @@ struct MirrorOnboardingView: View {
                 Text("잘 미루면,\n지금 할 일이 남는다.").font(.largeTitle.weight(.semibold))
                 Text("생각난 일은 보관함에 일단 넣으세요. 오늘 할 일은 정리할 때 직접 정해요. 날짜를 정하지 않은 일이 오늘 목록에 자동으로 들어가지 않아요.")
                 Text("계획 시간대: \(model.preferences.timeZoneID) · 설정에서 바꿀 수 있어요.").font(.caption)
-                Button { model.finishOnboarding(); openCapture?() } label: {
+                Button { model.finishOnboarding(); openCapture?.callAsFunction() } label: {
                     Text("첫 할 일 입력").foregroundStyle(MirrorPalette.onAccent)
                 }.disabled(openCapture == nil).buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
                 Button("바로 둘러보기") { model.preferences.onboardingComplete = true; model.savePreferences() }

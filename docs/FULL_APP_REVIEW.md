@@ -4,6 +4,10 @@
 
 ## 반영한 제품 방향과 구체적인 수정
 
+- 화면마다 입력 owner를 보유하고 활성 owner의 합집합으로 공통 단축키를 차단한다. 메뉴·입력·검색·상세가 공유 Bool을 덮어쓰던 경로를 제거해, A의 종료가 편집 중인 B를 해제하지 않게 했다. 기존 상세 claim과 저장·Undo·정리 단축키 조건은 유지한다. 같은 State를 보존한 재표시 때 현재 상태를 다시 등록하며, 실제 focus callback·키보드·두 창 종료는 native 검증 대상이다. 다른 창의 활성 입력도 공통 단축키를 차단하는 기존 정책과 창 사이의 공유 탐색·선택·검색은 별도 제한으로 남는다.
+- custom environment와 focused value의 입력 동작을 같은 모델·scene owner로 비교 가능한 값으로 전달한다. 선택적으로 전달되는 동작의 nil 처리, 시작 완료 뒤 열기, 온보딩·Cmd-N의 순서와 강한 참조 수명은 유지한다. 매번 생성한 closure의 비교 불가 상태를 줄이는 소스 보완이며 실제 렌더링 성능·접근성 실패 원인의 해결을 주장하지 않는다.
+- 목록의 내일 미루기는 실제 실행과 같은 저장·편집·열린 화면 조건으로 활성화한다. 다른 창의 입력/설정 때문에 실행을 거절하면서 버튼은 제공하던 불일치를 제거했다. 실행 guard·표시 당시 작업/버전/context·마감 확인·Undo는 유지하며 실제 두 창 UI는 검증 대상이다.
+- 실패한 Adaptive UI 실행에서도 완료된 fixture 앱 스크린샷을 별도 진단 artifact로 보존한다. 현재 빌드 receipt·소스·실패 outcome·실제 사례/구성·엄격한 recordComplete를 확인하고 PNG 메타데이터를 제거한다. 원 로그·AX 문자열·xcresult·export JSON은 게시하지 않는다. 기존 성공·전체 audit·테스트 수·시간 제한·릴리스 gate는 그대로이며 진단 이미지는 수용 결과가 아니다. timeout 등으로 native 종료 코드를 확보하지 못하면 진단도 거절한다. 실제 실패 export schema와 1분 진단 비용은 후속 Actions에서 검증한다.
 - 기본 입력은 제목과 저장을 우선한다. 메모·링크·날짜는 접고, 선택한 날짜는 제목과 원자 저장한다. 여러 줄을 모두 저장한 뒤 숨은 메모·링크가 다음 작업에 붙던 경로는 실제 성공 처리에서만 비우도록 수정했다. 실패·pending과 남은 줄은 보존한다.
 - 목록에서 내일·날짜를 선택하고, 상세는 요청할 때 연다. 선택하지 않은 상세와 기본 숨긴 iPad 보조 일정이 화면을 차지하지 않는다. iPhone/좁은 iPad는 세 탭, 넓은 iPad/Mac은 탐색·목록·선택 상세를 분배한다. 고급 설정·변경 이력은 별도 진입과 펼침 영역을 사용한다.
 - iOS 입력은 시스템 기본 sheet 크기를 사용하고, Mac은 기존 최소·이상 크기를 유지한다. 키보드 위 저장·오류 영역, 44pt 입력 제어, 큰 글자의 재배치를 유지한다. 실제 크기·접근성 수용은 아래 실패와 미검증 항목을 해소해야 한다.
@@ -15,6 +19,10 @@
 입력 소유권 suite에 pure state4개와 MainActor coordinator2개를 작성했다. 같은 owner의 id/mode/context 불변, 다른 owner 거부, stale close/finish 거부, single/continuous, 실제 weak 해제와 다음 owner 수용을 확인한다. 알림은 기존 review/task allowlist를 유지하고 capture 거부 assertion2개를 추가했다. 이는 작성한 회귀이며 실행 결과가 아니다. 상세의 기존 task ID·claim·관측 세대 보호를 뚫는 잘못된 작업 저장 반례는 이번 정적 검토에서 확인하지 못했다.
 
 ## 확인한 Actions 증거
+
+소스 `14ba05da745c5a188639a6f4dae2a9e74d456187`의 [Swift228](https://github.com/hellosunghyun/mirror/actions/runs/37150366851) iPad 앱·확장/단위·통합·구성 단계와 UI 러너 빌드는 실제 성공했다. [Adaptive23](https://github.com/hellosunghyun/mirror/actions/runs/37150364496)의 Mac 앱·러너도 성공했지만 UI는 실패했다. 네 사례는 전체 audit 호출 경계, 계획 입력은 오늘 선택의 고유 조회 경계에서 실패했으며 정확한 AX issue·값·원인은 확인되지 않았다. 기존 성공 gate 때문에 실패한 실행의 화면 artifact를 확보하지 못했다. 이 부분 성공을 위의 후속 편집 owner·입력 동작·진단 변경이나 전체 UI 수용으로 옮기지 않는다.
+
+편집 owner 회귀5개를 추가해 기존 SystemNavigationTests21개·150expect·11require를 보존했고, 작성 수는26개·168expect·11require다. 실패 이미지 회귀5개는 기존 Python64개를 보존하며 작성69개다. 작성 수·소스 비교·Python AST·bash 구문 검사는 실제 SDK·회귀 실행 결과가 아니며 새 소스의 GitHub Actions에서 확인한다.
 
 이 표는 입력 owner 보완 이전 소스 `10d2495dd2b9ce4e1d4ba0c7615712d40bf639fc`에 귀속된다. 후속 수정의 성공으로 옮기지 않는다.
 

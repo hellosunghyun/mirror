@@ -1056,6 +1056,132 @@ esac
 
 
 
+    def failure_image_fixture(self, directory):
+        root = Path(directory).resolve()
+        source, _ = self.progress_fixture()
+        path = root / helper.UI_FAILURE_SOURCE_FILE
+        path.parent.mkdir(parents=True)
+        path.write_text(source)
+        expected = {**EXPECTED, 'commitSHA': 'a' * 40, 'buildNumber': '23', 'runID': '34', 'runAttempt': '1'}
+        rows = [event(), helper.CONFIG_MARKER + json.dumps(helper.configuration(expected, CASE))]
+        for sequence, (phase, step) in enumerate(helper.PROGRESS_PROTOCOL[CASE], 1):
+            rows.append(self.progress_row(phase=phase, sequence=sequence, step=step))
+            if phase == 'recordComplete':
+                break
+        rows.append(event(state='failed'))
+        (root / 'test.log').write_text('\n'.join(rows))
+        outcome = {**expected, 'phase': 'test', 'status': 'failed', 'commandExitCode': 65, 'xcodebuildExitCode': 65}
+        (root / 'safe-outcome.json').write_text(json.dumps(outcome))
+        attachments = root / 'failure-attachments'
+        attachments.mkdir()
+        records = export()[:1]
+        records[0]['attachments'] = records[0]['attachments'][:1]
+        (attachments / 'manifest.json').write_text(json.dumps(records))
+        original = png(helper.chunk(b'tEXt', b'Comment\0' + PRIVATE.encode()), helper.chunk(b'eXIf', PRIVATE.encode()))
+        (attachments / records[0]['attachments'][0]['exportedFileName']).write_bytes(original)
+        return root, expected, outcome, records, original
+
+    def test_failure_images_are_source_bound_partial_diagnostics_without_acceptance_or_private_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, expected, _, _, original = self.failure_image_fixture(directory)
+            with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                    mock.patch('builtins.print') as output:
+                helper.failure_evidence(root, expected)
+            review = root / 'failure-review'
+            manifest = json.loads((review / 'manifest.json').read_text())
+            self.assertEqual({key: manifest[key] for key in expected}, expected)
+            self.assertEqual((manifest['kind'], manifest['scope'], manifest['semantics']),
+                             ('adaptive-failure-diagnostic', 'recordedFixtureAppImagesOnly', 'diagnosticOnlyNotAcceptanceOrAuditCause'))
+            self.assertEqual(len(manifest['screenshots']), 1)
+            shot = manifest['screenshots'][0]
+            self.assertEqual((shot['case'], shot['stage'], shot['sequence']), (CASE, 'max-capture', 1))
+            self.assertEqual((review / shot['file']).read_bytes(), helper.clean_png(original)[0])
+            self.assertNotIn(PRIVATE.encode(), (review / shot['file']).read_bytes())
+            for forbidden in (PRIVATE, str(root), 'testName', 'testIdentifier', 'passedTests', 'failedTests', 'auditType'):
+                self.assertNotIn(forbidden, json.dumps(manifest))
+                self.assertNotIn(forbidden, output.call_args[0][0])
+            self.assertEqual({p.name for p in review.iterdir()}, {'manifest.json', 'SHA256SUMS', 'screenshots'})
+            self.assertEqual((root / 'safe-outcome.json').read_text(), json.dumps({**expected, 'phase': 'test', 'status': 'failed', 'commandExitCode': 65, 'xcodebuildExitCode': 65}))
+            with self.assertRaises(helper.AdaptiveError):
+                helper.validate_outcome(manifest, expected)
+            with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                    self.assertRaises(helper.AdaptiveError) as error:
+                helper.failure_evidence(root, expected)
+            self.assertEqual(str(error.exception), 'staleReviewDirectory')
+
+    def test_failure_images_reject_success_build_unknown_native_and_every_foreign_identity_before_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, expected, outcome, _, _ = self.failure_image_fixture(directory)
+            variants = [{**outcome, 'status': 'buildComplete', 'phase': 'build', 'commandExitCode': 0, 'xcodebuildExitCode': 0},
+                        {**outcome, 'phase': 'build'}, {**outcome, 'xcodebuildExitCode': None},
+                        {**outcome, 'xcodebuildExitCode': 0}, {**outcome, 'xcodebuildExitCode': True}]
+            variants += [{**outcome, key: 'foreign'} for key in expected]
+            for value in variants:
+                with self.subTest(keys=tuple(value)):
+                    (root / 'safe-outcome.json').write_text(json.dumps(value))
+                    with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                            mock.patch.object(helper, 'directory_files') as files, self.assertRaises(helper.AdaptiveError):
+                        helper.failure_evidence(root, expected)
+                    files.assert_not_called()
+                    self.assertFalse((root / 'failure-review').exists())
+            (root / 'safe-outcome.json').write_text(json.dumps(outcome))
+            with mock.patch.object(helper, 'verify_receipt', side_effect=helper.AdaptiveError('buildReceiptMismatch')), \
+                    mock.patch.object(helper, 'directory_files') as files, self.assertRaises(helper.AdaptiveError):
+                helper.failure_evidence(root, expected)
+            files.assert_not_called()
+
+    def test_failure_images_require_actual_complete_phase_fixture_configuration_and_native_owner(self):
+        source, entries = self.progress_fixture()
+        expected = {**EXPECTED, 'commitSHA': 'a' * 40, 'buildNumber': '23', 'runID': '34', 'runAttempt': '1'}
+        rows = [event(), helper.CONFIG_MARKER + json.dumps(helper.configuration(expected, CASE))]
+        for sequence, (phase, step) in enumerate(helper.PROGRESS_PROTOCOL[CASE], 1):
+            rows.append(self.progress_row(phase=phase, sequence=sequence, step=step))
+            if phase == 'recordComplete':
+                break
+        self.assertEqual(helper.failure_recorded_screenshots('\n'.join(rows), expected, entries), {'mirror-adaptive-max-capture-1': CASE})
+        invalid = (rows[:-1], rows[:1] + rows[2:], [event(owner='Foreign.MirrorAdaptiveUITests')] + rows[1:],
+                   rows + [rows[-1]], rows[:1] + [helper.CONFIG_MARKER + json.dumps({**helper.configuration(expected, CASE), 'appearance': 'dark'})] + rows[2:],
+                   rows[:1] + ['prefix ' + rows[1]] + rows[2:])
+        for values in invalid:
+            with self.assertRaises(helper.AdaptiveError):
+                helper.failure_recorded_screenshots('\n'.join(values), expected, entries)
+        with self.assertRaises(helper.AdaptiveError):
+            helper.failure_recorded_screenshots('\n'.join(rows), expected, {CASE: 1})
+
+    def test_failure_export_rejects_traversal_duplicate_missing_and_wrong_type_and_ignores_system_images(self):
+        selected = {'mirror-adaptive-max-capture-1': CASE}
+        value = export()[:1]
+        value[0]['attachments'] = value[0]['attachments'][:1]
+        original = value[0]['attachments'][0]
+        automatic = {'name': PRIVATE, 'exportedFileName': '../' + PRIVATE, 'uniformTypeIdentifier': PRIVATE}
+        value[0]['attachments'].append(automatic)
+        self.assertEqual(helper.failure_export_entries(value, selected), [(CASE, 'mirror-adaptive-max-capture-1', 'shot-1-1.png')])
+        for changes in ({'exportedFileName': '../outside.png'}, {'exportedFileName': '/private/outside.png'},
+                        {'uniformTypeIdentifier': PRIVATE}, {'name': PRIVATE}):
+            with self.assertRaises(helper.AdaptiveError):
+                helper.failure_export_entries([{'attachments': [{**original, **changes}]}], selected)
+        for bad in ([{'attachments': [original, original]}], [{'attachments': []}], {'nested': value}, []):
+            with self.assertRaises(helper.AdaptiveError):
+                helper.failure_export_entries(bad, selected)
+
+    def test_failure_images_reject_symlinks_missing_source_and_bad_png_without_partial_review(self):
+        for kind in ('symlink', 'missingSource', 'badPNG'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root, expected, _, records, _ = self.failure_image_fixture(directory)
+                image = root / 'failure-attachments' / records[0]['attachments'][0]['exportedFileName']
+                if kind == 'symlink':
+                    image.rename(root / 'private-original.png')
+                    image.symlink_to(root / 'private-original.png')
+                elif kind == 'missingSource':
+                    (root / helper.UI_FAILURE_SOURCE_FILE).unlink()
+                else:
+                    image.write_bytes(b'not a PNG ' + PRIVATE.encode())
+                with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                        self.assertRaises(helper.AdaptiveError):
+                    helper.failure_evidence(root, expected)
+                self.assertFalse((root / 'failure-review').exists())
+
+
 class PublicSDKNoticeBoundsTests(unittest.TestCase):
     def excerpt(self, first, text):
         return {'firstLine': first, 'text': text,

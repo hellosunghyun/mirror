@@ -1098,6 +1098,138 @@ def evidence(directory, expected):
                'passedTests': count, 'failedTests': 0, 'skippedTests': 0, 'screenshotCount': len(screenshots)})
 
 
+def failure_recorded_screenshots(log, expected, entries):
+    # 부분 실행도 원래 고정 phase protocol과 실제 bundle/method 소유를 먼저 검증한다.
+    require(xctest_progress_diagnostics(log, expected, entries) is not None, 'invalidFailureScreenshotProgress')
+    active, configured, selected = None, set(), {}
+    for line in log.splitlines():
+        event = UI_CASE_EVENT.match(line)
+        if event is not None:
+            active = event[2] if event[3] == 'started' else None
+            continue
+        if CONFIG_MARKER in line:
+            require(active is not None and line.startswith(CONFIG_MARKER)
+                    and line.count(CONFIG_MARKER) == 1 and active not in configured,
+                    'invalidAppliedConfiguration')
+            value = strict_json(line[len(CONFIG_MARKER):])
+            require(isinstance(value, dict) and value == configuration(expected, active)
+                    and set(value) == set(configuration(expected, active)), 'invalidAppliedConfiguration')
+            configured.add(active)
+        if line.startswith(PROGRESS_MARKER):
+            value = strict_json(line[len(PROGRESS_MARKER):])
+            if value['phase'] == 'recordComplete':
+                require(active in configured and 1 <= value['step'] <= len(CASES[active]),
+                        'invalidFailureScreenshotProgress')
+                name = 'mirror-adaptive-' + CASES[active][value['step'] - 1] + '-' + str(value['step'])
+                require(name not in selected, 'duplicateFailureScreenshot')
+                selected[name] = active
+    require(selected, 'noRecordedFailureScreenshots')
+    return selected
+
+
+def failure_evidence_context(directory, expected):
+    receipt_hash = verify_receipt(directory, expected)
+    outcome = read_json(directory / 'safe-outcome.json')
+    validate_outcome(outcome, expected)
+    require(outcome['status'] == 'failed' and outcome['phase'] == 'test'
+            and type(outcome['xcodebuildExitCode']) is int and 1 <= outcome['xcodebuildExitCode'] <= 255,
+            'notNativeUIFailure')
+    require(source_location(UI_FAILURE_SOURCE_FILE, 1, 1, ROOT) is not None, 'invalidSourceEntries')
+    entries = source_method_entries(read_regular(ROOT / UI_FAILURE_SOURCE_FILE, MAX_JSON).decode('utf-8'),
+                                    expected['platform'])
+    require(entries is not None, 'invalidSourceEntries')
+    log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8')
+    return receipt_hash, failure_recorded_screenshots(log, expected, entries)
+
+
+def failure_export_entries(value, selected):
+    # 성공 exporter에서 이미 사용하는 명시 test-record/attachment schema만 허용한다.
+    if isinstance(value, list):
+        records = value
+    elif isinstance(value, dict) and set(value) == {'tests'} and isinstance(value['tests'], list):
+        records = value['tests']
+    elif isinstance(value, dict) and isinstance(value.get('attachments'), list):
+        records = [value]
+    else:
+        raise AdaptiveError('unsupportedAttachmentExport')
+    require(0 < len(records) <= MAX_FILES, 'invalidExportBounds')
+    entries = []
+    for record in records:
+        require(isinstance(record, dict) and isinstance(record.get('attachments'), list)
+                and len(record['attachments']) <= MAX_FILES, 'unsupportedAttachmentExport')
+        for attachment in record['attachments']:
+            require(isinstance(attachment, dict), 'unsupportedAttachmentExport')
+            human = attachment.get('suggestedHumanReadableName', attachment.get('name'))
+            if not isinstance(human, str) or not human.startswith('mirror-adaptive-'):
+                continue
+            name = attachment_name(human)
+            if name not in selected:
+                continue
+            if 'name' in attachment and 'suggestedHumanReadableName' in attachment:
+                require(attachment['name'] in (name, name + '.png', human), 'attachmentAliasMismatch')
+            basename = attachment.get('exportedFileName')
+            require(isinstance(basename, str) and SAFE_PNG.fullmatch(basename), 'unsafeAttachmentPath')
+            require(attachment.get('uniformTypeIdentifier') in (None, 'public.png'), 'invalidAttachmentType')
+            entries.append((selected[name], name, basename))
+            require(len(entries) <= sum(map(len, CASES.values())), 'invalidEvidenceBounds')
+    require({name for _, name, _ in entries} == set(selected)
+            and len(entries) == len(selected) and len({basename for _, _, basename in entries}) == len(entries),
+            'failureScreenshotSetMismatch')
+    return sorted(entries, key=lambda item: (tuple(CASES).index(item[0]), int(SHOT_PATTERN.fullmatch(item[1])[2])))
+
+
+def failure_evidence(directory, expected):
+    receipt_hash, selected = failure_evidence_context(directory, expected)
+    files = directory_files(directory / 'failure-attachments')
+    manifests = [path for path in files if path.name == 'manifest.json']
+    require(len(manifests) == 1, 'missingExportManifest')
+    entries = failure_export_entries(read_json(manifests[0]), selected)
+    output = directory / 'failure-review'
+    require(not output.exists() and not output.is_symlink(), 'staleReviewDirectory')
+    by_name = {}
+    for path in files:
+        by_name.setdefault(path.name, []).append(path)
+    images, screenshots = {}, []
+    for case, name, basename in entries:
+        candidates = by_name.get(basename, [])
+        require(len(candidates) == 1, 'missingScreenshot')
+        original = read_regular(candidates[0], MAX_PNG)
+        cleaned, width, height = clean_png(original)
+        match = SHOT_PATTERN.fullmatch(name)
+        filename = 'screenshots/' + name + '.png'
+        images[filename] = cleaned
+        screenshots.append({'case': case, 'stage': match[1], 'sequence': int(match[2]), 'file': filename,
+                            'sha256': digest(cleaned), 'exportSHA256': digest(original), 'bytes': len(cleaned),
+                            'width': width, 'height': height})
+    require(sum(map(len, images.values())) <= 512 * 1024 * 1024, 'invalidEvidenceBounds')
+    manifest = {**expected, 'formatVersion': 1, 'kind': 'adaptive-failure-diagnostic',
+                'scope': 'recordedFixtureAppImagesOnly', 'semantics': 'diagnosticOnlyNotAcceptanceOrAuditCause',
+                'buildReceiptSHA256': receipt_hash, 'screenshots': screenshots}
+    temporary = Path(tempfile.mkdtemp(prefix='.failure-review-', dir=directory))
+    try:
+        os.chmod(temporary, 0o700)
+        (temporary / 'screenshots').mkdir(mode=0o700)
+        for filename, data in images.items():
+            path = temporary / filename
+            with path.open('xb') as stream:
+                os.chmod(path, 0o600)
+                stream.write(data)
+        write_json(temporary / 'manifest.json', manifest, exclusive=True)
+        checksums = {**{name: digest(data) for name, data in images.items()},
+                     'manifest.json': digest(read_regular(temporary / 'manifest.json', MAX_JSON))}
+        sums = temporary / 'SHA256SUMS'
+        with sums.open('x', encoding='ascii') as stream:
+            os.chmod(sums, 0o600)
+            stream.write(''.join(value + '  ' + name + '\n' for name, value in sorted(checksums.items())))
+        temporary.rename(output)
+    finally:
+        if temporary.exists():
+            import shutil
+            shutil.rmtree(temporary)
+    print('::notice::Adaptive UI failure screenshot diagnostics: ' + json.dumps(
+        {**expected, 'status': 'diagnosticOnly', 'screenshotCount': len(screenshots)}, sort_keys=True))
+
+
 class SafeParser(argparse.ArgumentParser):
     def error(self, message):
         raise AdaptiveError('invalidArguments')
@@ -1106,7 +1238,7 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'adaptiveRemoteOnly')
     parser = SafeParser()
-    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure'))
+    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure', 'failure-evidence-prepare', 'failure-evidence'))
     parser.add_argument('--directory', required=True)
     parser.add_argument('--platform', required=True)
     parser.add_argument('--appearance', required=True)
@@ -1135,6 +1267,10 @@ def main():
         guard(directory, expected)
     elif args.command == 'evidence':
         evidence(directory, expected)
+    elif args.command == 'failure-evidence-prepare':
+        failure_evidence_context(directory, expected)
+    elif args.command == 'failure-evidence':
+        failure_evidence(directory, expected)
     elif args.command == 'outcome-verify':
         safe_directory(directory)
         validate_outcome(read_json(directory / 'safe-outcome.json'), expected)

@@ -2,6 +2,12 @@
 
 ## 후속 구현과 검증 · 2026-10-03
 
+FR-001/025/028의 입력·키보드 보호는 화면별 owner의 활성 집합으로 관리한다. 다른 화면의 종료가 현재 입력 중 상태를 해제하던 소스 경계를 제거하고 원래 Undo·정리 단축키와 상세 claim을 보존했다. 외부/stale owner 종료·동일 owner 중복·두 owner 순서/모두 종료의 pure 회귀5개를 작성했으며 기존21개를 포함한26개는 실행 수가 아니다. 입력 환경 동작은 모델/scene owner identity로 비교 가능한 값으로 전달하고 기존 startup·nil·Cmd-N·온보딩 순서를 유지한다. 실제 native focus·다중 창·동작 수명·렌더링 개선은 미검증이다.
+
+FR-009의 목록 내일 미루기는 실제 실행 guard와 같은 저장·편집·열린 화면 조건에서만 제공한다. 다른 창이 입력을 열었을 때 활성 버튼의 실행이 안내 없이 거절되던 소스 경계를 정합화했다. 실행·마감 확인·작업/버전/context·Undo는 유지하고 실제 다중 창 수용은 남긴다.
+
+Q-076/079의 Adaptive 실패 화면은 별도 진단 artifact로 보존한다. 실제 현재 source/receipt·실패 native outcome·fixture 구성과 recordComplete에 연결된 앱 PNG만 정제하며 원 성공·접근성 audit·UI/릴리스 gate는 유지한다. 새 Python 회귀5개와 기존64개는 Actions에서 실행한다. 종료 코드가 없는 timeout·미지원 export·누락 이미지는 진단도 거절하며, 진단 사진을 Q 통과·AX 원인·실기기 수용으로 기록하지 않는다.
+
 FR-001/006/009의 일반 입력 실패 재시도를 보완했다. 동일 봉투의 성공을 화면이 소비하지 않아 같은 제목 또는 분할의 실패 줄을 다시 생성할 수 있던 소스 반례를 확인했다. 모든 실패를 자기 token·원문5필드 snapshot으로 추적하고 현재 presentation/context의 자기 성공만 전용 receipt로 보존한다. 같은 전체 입력의 기본 저장은 실제 own retryEnvelope가 있을 때 같은 K를 재시도한다. 이전 성공은 수정한 제목·메모·링크·계획/context를 지우지 않고 분할의 동일 첫 줄만 소비한다. 외부 성공·stale token·반복 receipt와 새 실패 claim 교체를 검사하는 pure 회귀5개를 기존 suite에 더했다. 기존16개·126expect·11require와 원 명령/멱등성/Undo·owner/공간 계약을 보존했으며 작성21개·150expect·11require는 실제 실행 수가 아니다. 현재 보완의 native 실패 주입·두 창·관측 전달·SDK/UI는 후속 Actions 수용으로 남긴다.
 
 입력 owner pure state 회귀의16개 mutating 호출은 결과를 지역 Bool로 계산한 뒤 원래 #expect 조건을 검사하도록 분리했다. 실제414 Dark56의 immutable `$0` compiler 오류에 대한 최소 보완이며 호출 순서·인자·UUID 생성·테스트16개·expect126개와 기존10개/coordinator2개를 보존한다. 보완 소스68e2c73110a1f6510cf3c6d958f1e9b21ae06396의 Swift224 SwiftPM 및 iPhone/iPad native, Dark57 Mac/iPad native 빌드·단위 단계는 실제 성공했다. 개별 회귀 실행 수와 전체 UI/배포 수용은 별도로 미확인이다. Batch 초기 launch 조회가 Swift throw하면 자기 앱을 종료하고 같은 오류를 재throw하는 마지막 cleanup 보완은 기존2사례·53assertion·8XCTFail·시간·typed gate를 유지하며 새 소스의 Actions로 검증한다. 캐시 소스10d의 성능6은 실제1만작업·10만원본 baseline PASS이며 snapshot p95 77.794667ms·command p95 392.144084ms/20개 모두500ms 미만·232052338byte 왕복을 관측했다. export p95 21142.986916ms 및 실기기·Widget·EventKit/Q086 미측정을 함께 남기며 전체 성능 수용으로 확대하지 않는다.

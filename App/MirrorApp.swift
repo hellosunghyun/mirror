@@ -107,6 +107,7 @@ struct MirrorMenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @State private var title = ""
     @FocusState private var focused: Bool
+    @State private var textEditingOwnerID = UUID()
     @State private var captureFlowStarted = false
     @State private var captureRequestToken = UUID().uuidString
     @State private var submittedTitle: String?
@@ -137,10 +138,10 @@ struct MirrorMenuBarContent: View {
             Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
         }.padding().frame(width: 320)
             .task { await model.start() }
-            .onChange(of: focused) { _, value in model.isTextEditing = value }
+            .onChange(of: focused, initial: true) { _, value in model.setTextEditing(value, ownerID: textEditingOwnerID) }
             .onChange(of: title) { _, value in if !value.isEmpty { startCaptureFlow() } }
             .onChange(of: model.menuBarCaptureCommittedReceipt, initial: true) { _, receipt in acceptCaptureReceipt(receipt) }
-            .onDisappear { model.isTextEditing = false }
+            .onDisappear { model.setTextEditing(false, ownerID: textEditingOwnerID) }
     }
     private func saveCapture() {
         guard !submittingCapture, !model.isSaving, !model.projectionPending else { return }
@@ -201,7 +202,7 @@ struct MirrorCommands: Commands {
     @FocusedValue(\.mirrorCaptureOpen) private var openCapture
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("할 일 일단 넣기") { openCapture?() }
+            Button("할 일 일단 넣기") { openCapture?.callAsFunction() }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(openCapture == nil)
         }

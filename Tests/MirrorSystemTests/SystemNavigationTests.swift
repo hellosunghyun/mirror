@@ -28,6 +28,81 @@ private func notificationEvent(_ route: MirrorRoute, request: String,
 
 @Suite("시스템 탐색과 복구 중 외부 노출")
 struct SystemNavigationTests {
+    @Test("한 입력 owner가 끝나도 다른 owner의 편집은 계속 단축키를 차단한다")
+    func textEditingOneOwnerEndsWithoutClearingAnother() {
+        let first = UUID(), second = UUID()
+        var state = TextEditingOwnershipState()
+        #expect(!state.isEditing)
+        state.setEditing(true, ownerID: first)
+        state.setEditing(true, ownerID: second)
+        #expect(state.isEditing)
+        state.setEditing(false, ownerID: first)
+        #expect(state.isEditing)
+        state.setEditing(false, ownerID: second)
+        #expect(!state.isEditing)
+    }
+
+    @Test("등록하지 않은 다른 owner의 종료는 현재 활성 입력을 바꾸지 않는다")
+    func textEditingForeignOwnerClearPreservesActiveOwner() {
+        let active = UUID(), foreign = UUID()
+        var state = TextEditingOwnershipState()
+        state.setEditing(true, ownerID: active)
+        let beforeForeignClear = state
+        state.setEditing(false, ownerID: foreign)
+        #expect(state == beforeForeignClear)
+        state.setEditing(false, ownerID: UUID())
+        #expect(state == beforeForeignClear)
+        #expect(state.isEditing)
+    }
+
+    @Test("이전 owner의 늦은 종료는 새 owner의 입력을 해제하지 않는다")
+    func textEditingStaleDistinctOwnerClearPreservesReplacement() {
+        let previous = UUID(), current = UUID()
+        var state = TextEditingOwnershipState()
+        state.setEditing(true, ownerID: previous)
+        state.setEditing(false, ownerID: previous)
+        #expect(!state.isEditing)
+        state.setEditing(true, ownerID: current)
+        #expect(state.isEditing)
+        let beforeStaleClear = state
+        state.setEditing(false, ownerID: previous)
+        #expect(state == beforeStaleClear)
+    }
+
+    @Test("동일 owner의 중복 활성·종료는 한 번의 등록과 해제와 같다")
+    func textEditingSameOwnerRegistrationIsIdempotent() {
+        let owner = UUID()
+        var state = TextEditingOwnershipState()
+        state.setEditing(true, ownerID: owner)
+        let firstRegistration = state
+        state.setEditing(true, ownerID: owner)
+        #expect(state == firstRegistration)
+        state.setEditing(false, ownerID: owner)
+        #expect(!state.isEditing)
+        let firstClear = state
+        state.setEditing(false, ownerID: owner)
+        #expect(state == firstClear)
+    }
+
+    @Test("owner 등록 순서와 무관하게 같은 활성 입력 집합이며 모두 끝나면 비어 있다")
+    func textEditingOwnerOrderAndAllClearAreEquivalent() {
+        let first = UUID(), second = UUID()
+        var forward = TextEditingOwnershipState(), reverse = TextEditingOwnershipState()
+        forward.setEditing(true, ownerID: first)
+        forward.setEditing(true, ownerID: second)
+        reverse.setEditing(true, ownerID: second)
+        reverse.setEditing(true, ownerID: first)
+        #expect(forward == reverse)
+        forward.setEditing(false, ownerID: first)
+        reverse.setEditing(false, ownerID: first)
+        #expect(forward == reverse && forward.isEditing)
+        forward.setEditing(false, ownerID: second)
+        reverse.setEditing(false, ownerID: second)
+        #expect(forward == reverse)
+        #expect(!forward.isEditing)
+        #expect(forward == TextEditingOwnershipState())
+    }
+
     @Test("일반 저장 실패 뒤 자기 성공 receipt만 초안을 정확히 한 번 소비한다")
     func captureDraftFailureRetryConsumesOwnTokenOnce() {
         let draft = CaptureDraftSnapshot(title: "  실패 뒤 유지할 제목  ", note: "메모", sourceURL: "https://example.com/original")

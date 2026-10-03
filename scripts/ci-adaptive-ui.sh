@@ -10,12 +10,26 @@ fi
 adaptive_platform="${1:?iphone, ipad 또는 macos를 지정하세요}"
 adaptive_appearance="${2:?system 또는 dark를 지정하세요}"
 adaptive_mode="${3:?build 또는 test를 지정하세요}"
-case "$adaptive_mode" in build|test) ;; *) exit 2 ;; esac
+case "$adaptive_mode" in build|test|failure-evidence) ;; *) exit 2 ;; esac
 case "$adaptive_platform" in iphone|ipad|macos) ;; *) exit 2 ;; esac
 case "$adaptive_appearance" in system|dark) ;; *) exit 2 ;; esac
 adaptive_dir=".build/ci-adaptive-ui/$adaptive_platform-$adaptive_appearance"
 adaptive_native_status=-1
 adaptive_args=(--directory "$adaptive_dir" --platform "$adaptive_platform" --appearance "$adaptive_appearance")
+if [[ "$adaptive_mode" == failure-evidence ]]; then
+  # 별도 제한 시간의 진단 step 전용이다. 원 test/failure trap과 성공 gate를 호출하지 않는다.
+  umask 077
+  python3 scripts/ci-adaptive-ui-results.py failure-evidence-prepare "${adaptive_args[@]}"
+  [[ -d "$adaptive_dir/UI.xcresult" && ! -L "$adaptive_dir/UI.xcresult" ]] || exit 2
+  [[ ! -e "$adaptive_dir/failure-attachments" && ! -L "$adaptive_dir/failure-attachments" ]] || exit 2
+  xcrun xcresulttool export attachments --path "$adaptive_dir/UI.xcresult" \
+    --output-path "$adaptive_dir/failure-attachments" \
+    > "$adaptive_dir/failure-attachments-export.stdout" 2> "$adaptive_dir/failure-attachments-export.stderr"
+  python3 scripts/ci-adaptive-ui-results.py failure-evidence "${adaptive_args[@]}"
+  printf 'adaptive_failure_evidence_ready=true\n' >> "${GITHUB_OUTPUT:?}"
+  exit 0
+fi
+
 adaptive_finish() {
   local adaptive_exit_status=$?
   local adaptive_original_native_status="$adaptive_native_status"

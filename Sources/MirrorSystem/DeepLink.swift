@@ -2,6 +2,20 @@ import Foundation
 import Observation
 import MirrorDomain
 
+/// 공유 단축키 차단은 활성 입력 owner들의 합집합으로 유지한다.
+public struct TextEditingOwnershipState: Equatable, Sendable {
+    private var activeOwnerIDs: Set<UUID> = []
+
+    public init() {}
+
+    public var isEditing: Bool { !activeOwnerIDs.isEmpty }
+
+    public mutating func setEditing(_ active: Bool, ownerID: UUID) {
+        if active { activeOwnerIDs.insert(ownerID) }
+        else { activeOwnerIDs.remove(ownerID) }
+    }
+}
+
 /// 입력 presentation의 origin과 저장 뒤 동작은 생성 당시 값으로 고정한다.
 public struct CapturePresentationRequest: Identifiable, Equatable, Sendable {
     public let id: UUID

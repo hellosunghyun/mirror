@@ -12,7 +12,29 @@ struct MirrorTaskSelectionRequest: Equatable, Sendable {
     let workspaceEpoch: String
 }
 
-typealias MirrorCaptureOpenAction = @MainActor @Sendable () -> Void
+/// custom environment/focused value에는 동등한 scene 입력을 비교할 수 있는 값만 보관한다.
+nonisolated struct MirrorCaptureOpenAction: Equatable, Sendable {
+    let model: AppModel
+    let owner: CaptureSceneOwner
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.owner === rhs.owner
+    }
+
+    @MainActor
+    func callAsFunction() {
+        let model = model
+        let owner = owner
+        if model.isLoading || model.context == nil {
+            Task {
+                await model.start()
+                model.openCapture(owner: owner)
+            }
+        } else {
+            model.openCapture(owner: owner)
+        }
+    }
+}
 
 private struct MirrorCaptureOpenKey: EnvironmentKey {
     static let defaultValue: MirrorCaptureOpenAction? = nil
@@ -113,7 +135,7 @@ struct MirrorTodayView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("today.empty.description")
-                        Button("일단 넣기") { openCapture?() }
+                        Button("일단 넣기") { openCapture?.callAsFunction() }
                             .disabled(openCapture == nil)
                             .buttonStyle(.borderless).frame(minHeight: 44)
                     }
@@ -264,6 +286,7 @@ struct MirrorCaptureView: View {
     @State private var showDatePicker = false
     private enum InputField: Hashable { case title, note, url }
     @FocusState private var focusedField: InputField?
+    @State private var textEditingOwnerID = UUID()
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
     var body: some View {
         NavigationStack {
@@ -332,8 +355,8 @@ struct MirrorCaptureView: View {
             .onChange(of: more) { _, expanded in
                 if !expanded, focusedField == .note || focusedField == .url { focusedField = .title }
             }
-            .onChange(of: focusedField) { _, focused in model.isTextEditing = focused != nil }
-            .onDisappear { model.isTextEditing = false; model.clearCaptureInputProblem() }
+            .onChange(of: focusedField, initial: true) { _, focused in model.setTextEditing(focused != nil, ownerID: textEditingOwnerID) }
+            .onDisappear { model.setTextEditing(false, ownerID: textEditingOwnerID); model.clearCaptureInputProblem() }
             .onChange(of: model.presentedCaptureCommittedToken) { _, token in
                 acceptCaptureCommit(token)
             }
@@ -580,6 +603,7 @@ struct MirrorLibraryView: View {
     @State private var selectedTaskIDs: Set<UUID> = []
     @State private var pendingBatchPickerID: UUID?
     @FocusState private var searchFocused: Bool
+    @State private var textEditingOwnerID = UUID()
     private var filtered: [TaskProjection] {
         model.tasks.filter { task in
             let matchesSearch = model.search.isEmpty || task.title.localizedStandardContains(model.search)
@@ -620,7 +644,7 @@ struct MirrorLibraryView: View {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
                         TextField(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색", text: $model.search)
                             .textFieldStyle(.plain).focused($searchFocused).accessibilityIdentifier("library.search")
-                            .onSubmit { searchFocused = false; model.isTextEditing = false }
+                            .onSubmit { searchFocused = false; model.setTextEditing(false, ownerID: textEditingOwnerID) }
                         if !model.search.isEmpty {
                             Button { model.search = "" } label: {
                                 Image(systemName: "xmark.circle.fill")
@@ -766,8 +790,8 @@ struct MirrorLibraryView: View {
             selectedTaskIDs.formIntersection(visibleIDs)
         }
         .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
-        .onChange(of: searchFocused) { _, focused in model.isTextEditing = focused }
-        .onDisappear { model.isTextEditing = false }
+        .onChange(of: searchFocused, initial: true) { _, focused in model.setTextEditing(focused, ownerID: textEditingOwnerID) }
+        .onDisappear { model.setTextEditing(false, ownerID: textEditingOwnerID) }
     }
     private func toggleSelection(_ task: TaskProjection) {
         guard task.status == .open else { return }
@@ -797,7 +821,7 @@ struct MirrorLibraryView: View {
     }
     private func openDetail(_ task: TaskProjection) {
         searchFocused = false
-        model.isTextEditing = false
+        model.setTextEditing(false, ownerID: textEditingOwnerID)
         if let selectTask { selectTask(task.taskID) }
         else { model.selectedTaskID = task.taskID }
     }
@@ -1678,12 +1702,12 @@ struct MirrorTaskDetail: View {
                 .accessibilityIdentifier("detail.keepEditing")
         }
         .disabled(model.isSaving)
-        .onChange(of: editing) { _, value in
-            model.isTextEditing = value
+        .onChange(of: editing, initial: true) { _, value in
+            model.setTextEditing(value, ownerID: detailEditorOwnerID)
         }
         .onDisappear {
             model.endDetailEditing(ownerID: detailEditorOwnerID, claim: editingClaim)
-            editingClaim = nil; model.isTextEditing = false
+            editingClaim = nil; model.setTextEditing(false, ownerID: detailEditorOwnerID)
             if draftTaskID == task.taskID { draftTaskID = nil }
             if closeRequestedID == task.taskID { closeRequestedID = nil }
             if selectionRequested?.ownerID == task.taskID { selectionRequested = nil }

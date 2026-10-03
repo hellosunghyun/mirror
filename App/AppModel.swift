@@ -88,7 +88,11 @@ final class AppModel {
     }
     var search = ""
     var searchRequested = false
-    var isTextEditing = false
+    private var textEditingOwnership = TextEditingOwnershipState()
+    var isTextEditing: Bool { textEditingOwnership.isEditing }
+    func setTextEditing(_ active: Bool, ownerID: UUID) {
+        textEditingOwnership.setEditing(active, ownerID: ownerID)
+    }
     struct DetailEditingClaim: Equatable {
         let id = UUID()
         let observationID: UUID
@@ -736,7 +740,9 @@ final class AppModel {
     }
 
     func canPostponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext) -> Bool {
-        guard task.status == .open,
+        guard task.status == .open, !isSaving, !projectionPending,
+              !showCapture, !showSettings, !showReview, !isDetailEditing,
+              picker == nil, confirmation == nil, widgetDecision == nil,
               let tomorrow = try? displayedContext.planningDay.addingDays(1) else { return false }
         return task.plan.target != .day(tomorrow)
     }

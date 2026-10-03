@@ -73,6 +73,12 @@ jobs:
           python3 scripts/ci-adaptive-ui-results.py measurements \
             --directory ".build/ci-adaptive-ui/$MIRROR_ADAPTIVE_PLATFORM-$MIRROR_UI_APPEARANCE" \
             --platform "$MIRROR_ADAPTIVE_PLATFORM" --appearance "$MIRROR_UI_APPEARANCE" || true
+      - name: 실패한 현재 fixture의 앱 PNG 별도 진단
+        id: failure_images
+        if: ${{ always() && steps.test.outcome == 'failure' && steps.build.outputs.adaptive_build_ready == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        run: bash scripts/ci-adaptive-ui.sh "$MIRROR_ADAPTIVE_PLATFORM" "$MIRROR_UI_APPEARANCE" failure-evidence
       - name: 고정 요약의 현재 실행 소유와 schema 검증
         id: summary
         if: always()
@@ -97,6 +103,15 @@ jobs:
         with:
           name: adaptive-ui-screenshots-${{ matrix.platform }}-${{ matrix.appearance }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .build/ci-adaptive-ui/${{ matrix.platform }}-${{ matrix.appearance }}/review/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: 실패한 현재 fixture의 진단 PNG 보존 · 수용 및 릴리스 증거 아님
+        if: ${{ always() && steps.failure_images.outputs.adaptive_failure_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: adaptive-ui-failure-diagnostic-${{ matrix.platform }}-${{ matrix.appearance }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-adaptive-ui/${{ matrix.platform }}-${{ matrix.appearance }}/failure-review/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
