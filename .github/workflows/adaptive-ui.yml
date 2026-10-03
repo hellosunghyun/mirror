@@ -46,6 +46,13 @@ jobs:
       - name: 사례 전체 결과와 PNG 게이트의 오프라인 회귀
         timeout-minutes: 1
         run: python3 -m unittest discover -s tests -p 'test_adaptive_ui_results.py' -v
+      - name: 실제 공개 SDK의 접근성 감사 선언 확인
+        id: sdk_probe
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          set -o pipefail
+          python3 -I scripts/ci-adaptive-ui-public-sdk.py | python3 -I scripts/ci-adaptive-ui-public-sdk-notice.py
       - name: 선택한 적응형 UI 앱과 runner 빌드
         id: build
         timeout-minutes: 10

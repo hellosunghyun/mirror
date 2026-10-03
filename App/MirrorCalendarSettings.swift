@@ -252,7 +252,7 @@ struct MirrorCalendarView: View {
                 ForEach(deadlines, id: \.taskID) { task in
                     Button { model.selectedTaskID = task.taskID } label: {
                         VStack(alignment: .leading, spacing: 5) {
-                            Text(task.title).foregroundStyle(.primary)
+                            Text(task.title).lineLimit(3).accessibilityLabel(task.title).foregroundStyle(.primary)
                             Text(deadlineLabel(task.deadline, context: context))
                                 .font(.caption).foregroundStyle(.secondary)
                             Text("계획: \(planLabel(task.plan.target))")

@@ -50,6 +50,7 @@ final class MirrorBatchUITests: XCTestCase {
         let originals = try originalTasks(titles, in: app)
         XCTAssertEqual(originals.count, 20)
         try verifyRows(originals, plan: unassigned, in: app)
+        try verifyBulkSelection(originals, in: app)
         try beginSelection(originals, control: nil, in: app)
         try verifyPicker(originals, in: app)
         try activate("plan.tomorrow", surface: .planner, in: app)
@@ -140,6 +141,51 @@ final class MirrorBatchUITests: XCTestCase {
             XCTAssertEqual(row.label, task.title, "원문 제목을 보존한다.")
             try waitValue(plan, element: row)
             XCTAssertEqual(textValue(row), plan, "날짜 배치만 바뀌며 미완료 상태를 유지한다.")
+        }
+    }
+
+    private func verifyBulkSelection(_ originals: [OriginalTask], in app: XCUIApplication) throws {
+        XCTAssertFalse(app.buttons.matching(identifier: "library.selectAll").firstMatch.exists)
+        try activate("library.selectToggle", surface: .library, in: app)
+        let bulk = try reachable(app.buttons.matching(identifier: "library.selectAll"), surface: .library,
+                                 missingTowardTop: true, in: app)
+        XCTAssertEqual(bulk.label, "모두 선택, 현재 목록")
+        XCTAssertEqual(textValue(bulk), "선택한 0개, 대상 20개")
+        try assertMobileTarget(bulk)
+        performActivation(bulk)
+        try waitValue("선택한 20개, 대상 20개", element: bulk)
+        XCTAssertEqual(bulk.label, "선택 해제, 현재 목록")
+        let batch = try reachable(app.buttons.matching(identifier: "library.batchPlan"), surface: .library,
+                                  missingTowardTop: true, in: app)
+        XCTAssertEqual(batch.label, "선택한 20개 날짜 배치")
+        XCTAssertTrue(batch.isEnabled)
+        try verifySelectionState(originals, value: "선택됨", in: app)
+        try verifyRows(originals, plan: unassigned, in: app)
+
+        let clear = try reachable(app.buttons.matching(identifier: "library.selectAll"), surface: .library,
+                                  missingTowardTop: true, in: app)
+        XCTAssertEqual(clear.label, "선택 해제, 현재 목록")
+        try assertMobileTarget(clear)
+        performActivation(clear)
+        try waitValue("선택한 0개, 대상 20개", element: clear)
+        XCTAssertEqual(clear.label, "모두 선택, 현재 목록")
+        let clearedBatch = try unique(app.buttons.matching(identifier: "library.batchPlan"))
+        XCTAssertEqual(clearedBatch.label, "선택한 0개 날짜 배치")
+        XCTAssertFalse(clearedBatch.isEnabled)
+        try verifySelectionState(originals, value: "선택 안 됨", in: app)
+        try verifyRows(originals, plan: unassigned, in: app)
+        try activate("library.selectToggle", surface: .library, in: app)
+        XCTAssertFalse(app.buttons.matching(identifier: "library.selectAll").firstMatch.exists)
+    }
+
+    private func verifySelectionState(_ originals: [OriginalTask], value: String, in app: XCUIApplication) throws {
+        for task in originals {
+            let identifier = "task.select.\(task.uuid)"
+            let choice = try reachable(app.buttons.matching(identifier: identifier), surface: .library, in: app)
+            XCTAssertEqual(choice.identifier, identifier)
+            XCTAssertEqual(choice.label, "\(task.title), 배치 대상 선택")
+            try waitValue(value, element: choice)
+            XCTAssertEqual(textValue(choice), value)
         }
     }
 

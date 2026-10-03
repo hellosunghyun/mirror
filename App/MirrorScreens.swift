@@ -47,7 +47,7 @@ struct MirrorTodayView: View {
                 Section("실제 마감 안내 · 계획과 별개") {
                     ForEach(model.deadlines, id: \.taskID) { task in
                         Button { model.selectedTaskID = task.taskID } label: {
-                            Label { VStack(alignment: .leading) { Text(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
+                            Label { VStack(alignment: .leading) { Text(task.title).lineLimit(3).accessibilityLabel(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
                         }.buttonStyle(.plain).padding(.vertical, 4)
                     }
                 }
@@ -220,12 +220,12 @@ struct MirrorCaptureView: View {
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
-                    DisclosureGroup("메모·링크·날짜", isExpanded: $more) {
+                    DisclosureGroup("날짜·메모·링크", isExpanded: $more) {
                         VStack(alignment: .leading, spacing: 14) {
-                            TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
+                            capturePlanChoices
+                            TextField("메모", text: $note, axis: .vertical).lineLimit(1...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
                             TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
                             Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(.secondary)
-                            capturePlanChoices
                         }.textFieldStyle(.roundedBorder).padding(.top, 12)
                     }
                     .accessibilityIdentifier("capture.more")
@@ -492,7 +492,11 @@ struct MirrorLibraryView: View {
     private var searchesWholeLibrary: Bool { !model.search.isEmpty && filter == .inbox }
     var body: some View {
         @Bindable var model = model
-        let selectedIDs = model.selectedTaskIDs.intersection(selectableTaskIDs)
+        let eligibleTaskIDs = filtered.filter { $0.status == .open }.map(\.taskID)
+        let selectedIDs = model.selectedTaskIDs.intersection(Set(eligibleTaskIDs))
+        let bulkTaskIDs = Set(eligibleTaskIDs.prefix(20))
+        let bulkSelected = !bulkTaskIDs.isEmpty && selectedIDs == bulkTaskIDs
+        let bulkLabel = bulkSelected ? "선택 해제" : eligibleTaskIDs.count > 20 ? "앞 20개 선택" : "모두 선택"
         List {
             Section {
                 VStack(alignment: .leading, spacing: 12) {
@@ -526,12 +530,25 @@ struct MirrorLibraryView: View {
                             .accessibilityIdentifier("library.searchScope")
                     }
                     if selecting {
-                        Text("화면에 보이는 일만, 최대 20개까지 선택해요.")
+                        Text("현재 목록의 미완료 작업만, 최대 20개까지 선택해요.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Button("선택한 \(selectedIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(selectedIDs)) }
-                            .buttonStyle(.bordered).frame(minHeight: 44)
-                            .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
-                            .accessibilityIdentifier("library.batchPlan")
+                        MirrorActionGroup {
+                            if !bulkTaskIDs.isEmpty {
+                                Button(bulkLabel) {
+                                    if bulkSelected { model.selectedTaskIDs.removeAll() }
+                                    else { model.selectedTaskIDs = bulkTaskIDs }
+                                }
+                                    .buttonStyle(.borderless).frame(minHeight: 44)
+                                    .accessibilityLabel("\(bulkLabel), 현재 목록")
+                                    .accessibilityValue("선택한 \(selectedIDs.count)개, 대상 \(bulkTaskIDs.count)개")
+                                    .accessibilityHint("검색과 목록에 표시된 미완료 작업만 선택해요.")
+                                    .accessibilityIdentifier("library.selectAll")
+                            }
+                            Button("선택한 \(selectedIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(selectedIDs)) }
+                                .buttonStyle(.bordered).frame(minHeight: 44)
+                                .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
+                                .accessibilityIdentifier("library.batchPlan")
+                        }
                     }
                 }.padding(.vertical, 4)
             }
@@ -872,6 +889,23 @@ struct MirrorPlanPicker: View {
     private var planner: some View {
         NavigationStack {
             Form {
+                if request.week == nil, usesQuickChoices {
+                    Section("빠르게 정하기") {
+                        MirrorActionGroup {
+                            Button { choose(.day(request.displayedContext.planningDay)) } label: {
+                                Text("오늘").frame(maxWidth: .infinity, minHeight: 44)
+                            }
+                                .accessibilityIdentifier("plan.today")
+                            if let tomorrow = try? request.displayedContext.planningDay.addingDays(1) {
+                                Button { choose(.day(tomorrow)) } label: {
+                                    Text("내일").frame(maxWidth: .infinity, minHeight: 44)
+                                }
+                                    .accessibilityIdentifier("plan.tomorrow")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
                 Section {
                     if request.taskIDs.count > 1 {
                         DisclosureGroup("선택한 작업 \(request.taskIDs.count)개", isExpanded: $showTaskTitles) {
@@ -895,23 +929,6 @@ struct MirrorPlanPicker: View {
                             .accessibilityIdentifier("plan.weekOnly")
                     }
                 } else {
-                    if usesQuickChoices {
-                        Section("빠르게 정하기") {
-                            MirrorActionGroup {
-                                Button { choose(.day(request.displayedContext.planningDay)) } label: {
-                                    Text("오늘").frame(maxWidth: .infinity, minHeight: 44)
-                                }
-                                    .accessibilityIdentifier("plan.today")
-                                if let tomorrow = try? request.displayedContext.planningDay.addingDays(1) {
-                                    Button { choose(.day(tomorrow)) } label: {
-                                        Text("내일").frame(maxWidth: .infinity, minHeight: 44)
-                                    }
-                                        .accessibilityIdentifier("plan.tomorrow")
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                    }
                     Section {
                         DisclosureGroup("다른 날짜", isExpanded: $showDates) {
                             Toggle("선택한 주만 정하기", isOn: $useWeek)
@@ -1092,6 +1109,7 @@ struct MirrorMonthGrid: View {
 @MainActor
 struct MirrorTaskDetail: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let task: TaskProjection
     @State private var title = ""
     @State private var note = ""
@@ -1103,14 +1121,14 @@ struct MirrorTaskDetail: View {
     @State private var showNotes = false
     private var actionMaxWidth: CGFloat {
         #if os(macOS)
-        return 200
+        return dynamicTypeSize.isAccessibilitySize ? .infinity : 200
         #else
         return .infinity
         #endif
     }
     private var actionMinHeight: CGFloat {
         #if os(macOS)
-        return 20
+        return dynamicTypeSize.isAccessibilitySize ? 44 : 20
         #else
         return 32
         #endif
@@ -1275,7 +1293,9 @@ struct MirrorTaskDetail: View {
                     }
                     .buttonStyle(.borderedProminent).controlSize(.regular)
                     #if os(macOS)
-                    .frame(maxWidth: actionMaxWidth, minHeight: 32, maxHeight: 44, alignment: .leading)
+                    .frame(maxWidth: actionMaxWidth,
+                           minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 32,
+                           maxHeight: dynamicTypeSize.isAccessibilitySize ? nil : 44, alignment: .leading)
                     #else
                     .frame(minHeight: 44)
                     #endif
@@ -1303,7 +1323,9 @@ struct MirrorTaskDetail: View {
                         }
                         .buttonStyle(.borderedProminent).controlSize(.regular)
                         #if os(macOS)
-                        .frame(maxWidth: actionMaxWidth, minHeight: 32, maxHeight: 44, alignment: .leading)
+                        .frame(maxWidth: actionMaxWidth,
+                               minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 32,
+                               maxHeight: dynamicTypeSize.isAccessibilitySize ? nil : 44, alignment: .leading)
                         #else
                         .frame(minHeight: 44)
                         #endif

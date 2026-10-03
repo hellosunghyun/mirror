@@ -164,7 +164,7 @@ class BatchResultGateTests(unittest.TestCase):
 
 
     def build_products_fixture(self, directory, run_count=2, bundle_count=2):
-        directory = Path(directory)
+        directory = Path(directory).resolve()
         products = directory / 'DerivedData/Build/Products'
         products.mkdir(parents=True)
         def bundle(path, executable):
@@ -180,6 +180,7 @@ class BatchResultGateTests(unittest.TestCase):
 
     def test_build_receipt_records_all_bounded_native_product_copies(self):
         with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory).resolve()
             self.build_products_fixture(directory)
             context = {**helper.base_context(EXPECTED), 'destination': 'platform=iOS Simulator,id=00000000-0000-0000-0000-000000000001'}
             with mock.patch.object(helper, 'context_for', return_value=context):
@@ -195,6 +196,7 @@ class BatchResultGateTests(unittest.TestCase):
     def test_build_receipt_rejects_zero_and_seventeen_native_products(self):
         for runs, bundles in ((0, 1), (1, 0), (17, 1), (1, 17)):
             with self.subTest(runs=runs, bundles=bundles), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory).resolve()
                 self.build_products_fixture(directory, runs, bundles)
                 context = {**helper.base_context(EXPECTED), 'destination': 'platform=iOS Simulator,id=00000000-0000-0000-0000-000000000001'}
                 with mock.patch.object(helper, 'context_for', return_value=context), self.assertRaises(helper.BatchError):
@@ -203,7 +205,7 @@ class BatchResultGateTests(unittest.TestCase):
     def test_changed_native_product_or_current_receipt_is_rejected(self):
         for changed in ('app', 'bundle', 'run', 'receipt'):
             with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
-                directory = Path(temporary)
+                directory = Path(temporary).resolve()
                 products = self.build_products_fixture(directory)
                 context = {**helper.base_context(EXPECTED), 'destination': 'platform=iOS Simulator,id=00000000-0000-0000-0000-000000000001'}
                 with mock.patch.object(helper, 'context_for', return_value=context):
