@@ -135,6 +135,7 @@ private struct MirrorCalendarDropTarget: ViewModifier {
 struct MirrorCalendarView: View {
     var compact = false
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedDate = Date()
     @State private var weekly = false
@@ -267,7 +268,7 @@ struct MirrorCalendarView: View {
                 Label("이 날의 실제 마감", systemImage: "flag")
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 ForEach(deadlines, id: \.taskID) { task in
-                    Button { model.selectedTaskID = task.taskID } label: {
+                    Button { if let selectTask { selectTask(task.taskID) } else { model.selectedTaskID = task.taskID } } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(task.title).lineLimit(3).accessibilityLabel(task.title).foregroundStyle(.primary)
                             Text(deadlineLabel(task.deadline, context: context))

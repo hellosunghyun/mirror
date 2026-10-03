@@ -481,6 +481,10 @@ final class MirrorUITests: XCTestCase {
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
         try requireNoElement("review.finish", in: app)
+        #if os(macOS)
+        let selectionControl = "UI other task leaves dirty title unchanged"
+        try capture(selectionControl, in: app)
+        #endif
         try interact(with: requireRow(original, in: app), in: app)
 
         try activate("detail.edit", in: app)
@@ -495,6 +499,13 @@ final class MirrorUITests: XCTestCase {
         try showLibrary(in: app)
         XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
                        "빠른 입력을 닫고 목록을 이동해도 미저장 상세 편집을 잃지 않는다.")
+        try interact(with: requireRow(selectionControl, in: app), in: app)
+        XCTAssertEqual(displayedText(of: try requireElement("detail.discardEdit", in: app, preferButtons: true)), "버리고 다른 일 열기",
+                       "다른 작업을 누르면 현재 초안을 버릴지 명시적으로 확인한다.")
+        try activate("detail.keepEditing", in: app)
+        try requireNoElement("detail.keepEditing", in: app)
+        XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
+                       "다른 작업으로 이동을 취소하면 현재 상세의 제목 초안 원문을 그대로 유지한다.")
         try showToday(in: app)
         let reviewWhileEditing = try requireElement("today.review", in: app, preferButtons: true)
         XCTAssertFalse(reviewWhileEditing.isEnabled, "미저장 상세 편집 중에는 정리로 이동하지 않는다.")

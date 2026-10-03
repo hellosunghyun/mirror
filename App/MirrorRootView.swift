@@ -16,6 +16,7 @@ struct MirrorRootView: View {
     @State private var adjacentCalendarVisible = false
     @State private var detailCloseRequestedID: UUID?
     @State private var detailDraftTaskID: UUID?
+    @State private var detailSelectionRequested: MirrorTaskSelectionRequest?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -57,11 +58,12 @@ struct MirrorRootView: View {
         .inspector(isPresented: taskInspectorPresentation) {
             NavigationStack {
                 if let task = model.selectedTask {
-                    MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID)
+                    MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID, selectionRequested: $detailSelectionRequested)
                 }
             }
             .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
         }
+        .environment(\.mirrorTaskSelection, { id in requestTaskSelection(id) })
         .tint(MirrorPalette.accent)
         .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
         .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
@@ -396,6 +398,15 @@ struct MirrorRootView: View {
     private func selectDestination(_ destination: MirrorDestination) {
         if destination != model.destination && !model.isDetailEditing { model.selectedTaskID = nil }
         model.destination = destination
+    }
+    private func requestTaskSelection(_ id: UUID) {
+        guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
+        if let owner = model.selectedTask, detailDraftTaskID == owner.taskID {
+            guard id != owner.taskID, !model.projectionPending,
+                  target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
+            detailSelectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
+                                                                  workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch)
+        } else { model.selectedTaskID = id }
     }
     private var basePicker: Binding<PlanPickerRequest?> {
         Binding(get: { !model.showReview && model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })

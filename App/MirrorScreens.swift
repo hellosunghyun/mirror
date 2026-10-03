@@ -3,9 +3,29 @@ import MirrorDomain
 import SwiftUI
 import UniformTypeIdentifiers
 
+struct MirrorTaskSelectionRequest: Equatable, Sendable {
+    let id = UUID()
+    let ownerID: UUID
+    let destinationID: UUID
+    let workspaceKey: String
+    let workspaceEpoch: String
+}
+
+private struct MirrorTaskSelectionKey: EnvironmentKey {
+    static let defaultValue: (@MainActor @Sendable (UUID) -> Void)? = nil
+}
+
+extension EnvironmentValues {
+    var mirrorTaskSelection: (@MainActor @Sendable (UUID) -> Void)? {
+        get { self[MirrorTaskSelectionKey.self] }
+        set { self[MirrorTaskSelectionKey.self] = newValue }
+    }
+}
+
 @MainActor
 struct MirrorTodayView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorTaskSelection) private var selectTask
     @State private var showCompleted = false
     @State private var showReviewSummary = false
     @State private var showMoreDeadlines = false
@@ -116,7 +136,7 @@ struct MirrorTodayView: View {
         }
     }
     private func deadlineRow(_ task: TaskProjection) -> some View {
-        Button { model.selectedTaskID = task.taskID } label: {
+        Button { if let selectTask { selectTask(task.taskID) } else { model.selectedTaskID = task.taskID } } label: {
             Label { VStack(alignment: .leading) { Text(task.title).lineLimit(3).accessibilityLabel(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
         }.buttonStyle(.plain).padding(.vertical, 4)
     }
@@ -137,6 +157,7 @@ struct MirrorTodayView: View {
 @MainActor
 struct MirrorTaskRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.mirrorCalendarDropAvailable) private var calendarDropAvailable
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let task: TaskProjection
@@ -201,6 +222,7 @@ struct MirrorTaskRow: View {
     }
     private func openDetail() {
         if let onOpen { onOpen() }
+        else if let selectTask { selectTask(task.taskID) }
         else { model.selectedTaskID = task.taskID }
     }
 }
@@ -493,6 +515,7 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
 @MainActor
 struct MirrorLibraryView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var filter: LibraryFilter = .inbox
     @State private var selecting = false
@@ -717,7 +740,8 @@ struct MirrorLibraryView: View {
     private func openDetail(_ task: TaskProjection) {
         searchFocused = false
         model.isTextEditing = false
-        model.selectedTaskID = task.taskID
+        if let selectTask { selectTask(task.taskID) }
+        else { model.selectedTaskID = task.taskID }
     }
 }
 
@@ -731,6 +755,7 @@ struct MirrorReviewView: View {
     @State private var exposureID = UUID()
     @State private var detailCloseRequestedID: UUID?
     @State private var detailDraftTaskID: UUID?
+    @State private var detailSelectionRequested: MirrorTaskSelectionRequest?
 
     var body: some View {
         NavigationStack {
@@ -757,7 +782,7 @@ struct MirrorReviewView: View {
                                         .font(.title3.weight(.semibold))
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .id(task.taskID)
-                                    Button { model.selectedTaskID = task.taskID } label: {
+                                    Button { requestTaskSelection(task.taskID) } label: {
                                         Label("작업 상세", systemImage: "info.circle")
                                             .labelStyle(.iconOnly)
                                             .font(.title3)
@@ -822,11 +847,12 @@ struct MirrorReviewView: View {
                 else { model.selectedTaskID = nil }
             })) { detail in
                 NavigationStack {
-                    if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID) }
+                    if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID, selectionRequested: $detailSelectionRequested) }
                 }
             }
             .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil && model.selectedTaskID == nil))
         }
+        .environment(\.mirrorTaskSelection, { id in requestTaskSelection(id) })
         .tint(MirrorPalette.accent)
         .disabled(model.isSaving)
         .frame(minWidth: 300, idealWidth: 580, minHeight: 460)
@@ -837,6 +863,15 @@ struct MirrorReviewView: View {
         .onDisappear { model.setReviewVisible(exposureID, visible: false) }
     }
 
+    private func requestTaskSelection(_ id: UUID) {
+        guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
+        if let owner = model.selectedTask, detailDraftTaskID == owner.taskID {
+            guard id != owner.taskID, !model.projectionPending,
+                  target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
+            detailSelectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
+                                                                  workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch)
+        } else { model.selectedTaskID = id }
+    }
     @ViewBuilder private func immediateChoices(_ destinations: DateDestinations, card: ReviewCard, session: AppReviewSession) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(spacing: 10) {
@@ -1250,6 +1285,8 @@ struct MirrorTaskDetail: View {
     let task: TaskProjection
     @Binding private var closeRequestedID: UUID?
     @Binding private var draftTaskID: UUID?
+    @Binding private var selectionRequested: MirrorTaskSelectionRequest?
+    @State private var discardSelectionRequest: MirrorTaskSelectionRequest?
     @State private var discardRequestedID: UUID?
     @State private var showDiscardConfirmation = false
     @State private var title = ""
@@ -1260,8 +1297,10 @@ struct MirrorTaskDetail: View {
     @State private var showDeadline = false
     @State private var showHistory = false
     @State private var showNotes = false
-    init(task: TaskProjection, closeRequestedID: Binding<UUID?> = .constant(nil), draftTaskID: Binding<UUID?> = .constant(nil)) {
+    init(task: TaskProjection, closeRequestedID: Binding<UUID?> = .constant(nil), draftTaskID: Binding<UUID?> = .constant(nil),
+         selectionRequested: Binding<MirrorTaskSelectionRequest?> = .constant(nil)) {
         self.task = task; self._closeRequestedID = closeRequestedID; self._draftTaskID = draftTaskID
+        self._selectionRequested = selectionRequested
     }
     private var hasUnsavedChanges: Bool {
         guard editing else { return false }
@@ -1273,9 +1312,19 @@ struct MirrorTaskDetail: View {
               !editing || editingSnapshot?.taskID == task.taskID else { return }
         if hasUnsavedChanges {
             guard !model.projectionPending else { return }
+            discardSelectionRequest = nil
+            if selectionRequested?.ownerID == task.taskID { selectionRequested = nil }
             discardRequestedID = task.taskID; showDiscardConfirmation = true
         }
         else { model.selectedTaskID = nil }
+    }
+    private func selectionIsCurrent(_ request: MirrorTaskSelectionRequest) -> Bool {
+        selectionRequested == request && request.ownerID == task.taskID && model.selectedTaskID == task.taskID
+            && request.workspaceKey == task.workspaceKey && request.workspaceEpoch == task.workspaceEpoch
+            && (!editing || (editingSnapshot?.taskID == task.taskID
+                && editingSnapshot?.workspaceKey == request.workspaceKey && editingSnapshot?.workspaceEpoch == request.workspaceEpoch))
+            && model.tasks.contains { $0.taskID == request.destinationID
+                && $0.workspaceKey == request.workspaceKey && $0.workspaceEpoch == request.workspaceEpoch }
     }
     private var actionMaxWidth: CGFloat {
         #if os(macOS)
@@ -1521,13 +1570,32 @@ struct MirrorTaskDetail: View {
             guard requested == task.taskID else { return }
             requestClose()
         }
-        .alert("편집한 내용을 버리고 닫을까요?", isPresented: $showDiscardConfirmation) {
-            Button("버리고 닫기", role: .destructive) {
+        .onChange(of: selectionRequested) { _, request in
+            guard let request else { return }
+            guard selectionIsCurrent(request), !model.isSaving, !model.projectionPending,
+                  !editing || editingSnapshot?.taskID == task.taskID else {
+                if selectionRequested?.id == request.id { selectionRequested = nil }
+                return
+            }
+            if hasUnsavedChanges {
+                discardRequestedID = task.taskID; discardSelectionRequest = request; showDiscardConfirmation = true
+            } else { selectionRequested = nil; model.selectedTaskID = request.destinationID }
+        }
+        .alert(discardSelectionRequest == nil ? "편집한 내용을 버리고 닫을까요?" : "편집한 내용을 버리고 다른 일을 열까요?", isPresented: $showDiscardConfirmation) {
+            Button(discardSelectionRequest == nil ? "버리고 닫기" : "버리고 다른 일 열기", role: .destructive) {
                 guard discardRequestedID == task.taskID, model.selectedTaskID == task.taskID,
                       editingSnapshot?.taskID == task.taskID, !model.isSaving, !model.projectionPending else { return }
-                discardRequestedID = nil; model.selectedTaskID = nil
+                if let request = discardSelectionRequest {
+                    guard selectionRequested == request, selectionIsCurrent(request) else { return }
+                    editing = false; editingSnapshot = nil; title = ""; note = ""; link = ""
+                    discardRequestedID = nil; discardSelectionRequest = nil; selectionRequested = nil
+                    model.selectedTaskID = request.destinationID
+                } else { discardRequestedID = nil; model.selectedTaskID = nil }
             }.accessibilityIdentifier("detail.discardEdit")
-            Button("계속 편집", role: .cancel) { discardRequestedID = nil }
+            Button("계속 편집", role: .cancel) {
+                if selectionRequested == discardSelectionRequest { selectionRequested = nil }
+                discardRequestedID = nil; discardSelectionRequest = nil
+            }
                 .accessibilityIdentifier("detail.keepEditing")
         }
         .disabled(model.isSaving)
@@ -1539,8 +1607,11 @@ struct MirrorTaskDetail: View {
             model.isDetailEditing = false; model.isTextEditing = false
             if draftTaskID == task.taskID { draftTaskID = nil }
             if closeRequestedID == task.taskID { closeRequestedID = nil }
+            if selectionRequested?.ownerID == task.taskID { selectionRequested = nil }
         }
-        .onChange(of: task.taskID) { _, _ in
+        .onChange(of: task.taskID) { oldID, _ in
+            if selectionRequested?.ownerID == oldID { selectionRequested = nil }
+            discardSelectionRequest = nil
             showNotes = false; showHistory = false; discardRequestedID = nil; showDiscardConfirmation = false; closeRequestedID = nil
             draftTaskID = hasUnsavedChanges ? task.taskID : nil
         }
