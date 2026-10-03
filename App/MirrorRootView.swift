@@ -108,6 +108,9 @@ struct MirrorRootView: View {
                                 } icon: {
                                     Image(systemName: destination.symbol).foregroundStyle(MirrorPalette.accent)
                                 }
+                                    #if os(iOS)
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    #endif
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .contentShape(Rectangle())
                             }

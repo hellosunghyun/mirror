@@ -340,6 +340,14 @@ final class MirrorUITests: XCTestCase {
         recordTomorrowPhase(.detailScreenshotRecorded)
         try activate("detail.close", in: app)
         recordTomorrowPhase(.detailClosed)
+        _ = try requireElement("library.clearSearch", in: app, preferButtons: true)
+        XCTAssertEqual(app.buttons.matching(identifier: "library.clearSearch").count, 1,
+                       "검색어 지우기는 고유한 실제 Button이어야 한다.")
+        try activate("library.clearSearch", in: app)
+        try waitForValue("", element: search)
+        XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "정하지 않은 일",
+                       "검색어를 지우면 기존 날짜 미정 목록으로 돌아간다.")
+        XCTAssertFalse(taskRow(title, in: app).exists, "검색어 지우기는 미래 계획을 날짜 미정 목록에 포함하지 않는다.")
         try showToday(in: app)
         XCTAssertFalse(taskRow(title, in: app).exists, "검색은 미래 계획을 Today로 바꾸지 않는다.")
         recordTomorrowPhase(.todayRechecked)
@@ -1497,6 +1505,11 @@ final class MirrorUITests: XCTestCase {
     private func requireElement(_ identifier: String, in app: XCUIApplication, timeout: TimeInterval = 15,
                                 preferButtons: Bool = false,
                                 file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+        #if os(macOS)
+        if identifier == "capture.title" {
+            return try requireMacCaptureTitle(in: app, timeout: timeout, file: file, line: line)
+        }
+        #endif
         guard app.state != .notRunning else {
             printFailurePrefix("앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다: \(identifier)")
             XCTFail("앱 프로세스가 종료되어 필수 UI 요소를 조회할 수 없다: \(identifier). appState=\(app.state.rawValue)", file: file, line: line)
@@ -1510,6 +1523,72 @@ final class MirrorUITests: XCTestCase {
         }
         return found
     }
+
+    #if os(macOS)
+    // 실제 입력 owner의 native 역할만 받는다. snapshot 오류의 원인이나 해결을 확정하지 않는다.
+    @MainActor
+    private func requireMacCaptureTitle(in app: XCUIApplication, timeout: TimeInterval = 15,
+                                        file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+        let deadline = Date().addingTimeInterval(min(15, max(0, timeout)))
+        let closeQuery = app.buttons.matching(identifier: "capture.close")
+        let saveQuery = app.buttons.matching(identifier: "capture.save")
+        func hasArea(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        for attempt in 0..<12 {
+            guard app.state == .runningForeground, Date() < deadline else { break }
+            let closeCount = closeQuery.count
+            let saveCount = saveQuery.count
+            guard closeCount <= 1, saveCount <= 1 else { break }
+            if closeCount == 1, saveCount == 1 {
+                let windows = app.windows.containing(.button, identifier: "capture.close")
+                    .containing(.button, identifier: "capture.save")
+                let windowCount = windows.count
+                guard windowCount <= 1 else { break }
+                if windowCount == 1 {
+                    let window = windows.element(boundBy: 0)
+                    let sheets = window.sheets.containing(.button, identifier: "capture.close")
+                        .containing(.button, identifier: "capture.save")
+                    let sheetCount = sheets.count
+                    guard sheetCount <= 1 else { break }
+                    let owner = sheetCount == 1 ? sheets.element(boundBy: 0) : window
+                    let ownerCloseCount = owner.buttons.matching(identifier: "capture.close").count
+                    let ownerSaveCount = owner.buttons.matching(identifier: "capture.save").count
+                    guard ownerCloseCount <= 1, ownerSaveCount <= 1 else { break }
+                    if ownerCloseCount == 1, ownerSaveCount == 1 {
+                        let fields = owner.textFields.matching(identifier: "capture.title")
+                        let textViews = owner.textViews.matching(identifier: "capture.title")
+                        let fieldCount = fields.count
+                        let textViewCount = textViews.count
+                        guard fieldCount + textViewCount <= 1 else { break }
+                        if fieldCount + textViewCount == 1 {
+                            let field = fieldCount == 1 ? fields.element(boundBy: 0) : textViews.element(boundBy: 0)
+                            if window.exists, owner.exists, field.exists {
+                                let windowFrame = window.frame
+                                let ownerFrame = owner.frame
+                                let fieldFrame = field.frame
+                                if hasArea(windowFrame), hasArea(ownerFrame), hasArea(fieldFrame),
+                                   windowFrame.contains(ownerFrame), windowFrame.contains(fieldFrame),
+                                   ownerFrame.contains(fieldFrame),
+                                   field.elementType == .textField || field.elementType == .textView,
+                                   field.isEnabled, field.isHittable {
+                                    guard app.state == .runningForeground, Date() < deadline else { break }
+                                    return field
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            guard remaining > 0 else { break }
+            RunLoop.current.run(until: min(Date().addingTimeInterval(remaining / Double(12 - attempt)), deadline))
+        }
+        XCTFail("macCaptureTitleNativeOwnerContractFailedWithin15SecondsAnd12Checks", file: file, line: line)
+        throw UIHarnessError.missingElement("capture.title")
+    }
+    #endif
 
     @MainActor
     private func requireNoElement(_ identifier: String, in app: XCUIApplication) throws {

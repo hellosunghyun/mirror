@@ -362,6 +362,125 @@ class BatchResultGateTests(unittest.TestCase):
             self.assertEqual(empty['locations'], [])
             self.assertEqual(empty['locationCount'], 0)
 
+    def mobile_target_fixture(self, source_root, payload, bundle=BUNDLE, case=None, line=1, column=1, source=None):
+        case = helper.CASES[0] if case is None else case
+        source = helper.SOURCE if source is None else source
+        position = str(line) + (':' + str(column) if column is not None else '')
+        return str(source_root / source) + ':' + position + ': error: -[' + bundle + '.' + helper.CLASS + ' ' + case + '] : ' + payload
+
+    def mobile_source_fixture(self, source_root, axes):
+        source = source_root / helper.SOURCE
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('\n'.join('XCTAssertGreaterThanOrEqual(element.frame.' + axis
+                                  + ', 44, "Batch UI mobile target: ' + axis + ' \\(target)")' for axis in axes) + '\n')
+        return source
+
+    def test_mobile_target_diagnostics_accept_only_owned_actual_44pt_source_and_finite_controls(self):
+        controls = ('captureOpen', 'captureSave', 'captureClose', 'librarySelectToggle', 'librarySelectAll',
+                    'libraryBatchPlan', 'planToday', 'planTomorrow', 'planCancel', 'destinationToday',
+                    'destinationCalendar', 'destinationLibrary', 'taskSelection', 'other')
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.mobile_source_fixture(source_root, ('width', 'height'))
+            for bundle in ('MirrorIOSBatchUITests', 'MirrorMacBatchUITests'):
+                for case in helper.CASES:
+                    for line, axis in enumerate(('width', 'height'), 1):
+                        for control in controls:
+                            with self.subTest(bundle=bundle, case=case, axis=axis, control=control):
+                                payload = 'XCTAssertGreaterThanOrEqual failed: (37.125) < (44.0) - Batch UI mobile target: ' + axis + ' ' + control
+                                value = self.mobile_target_fixture(source_root, payload, bundle=bundle, case=case, line=line)
+                                reports = helper.mobile_target_failure_locations(value, bundle, source_root)
+                                self.assertEqual(reports, [{'scope': 'stdoutOnly', 'method': case, 'sourceFile': helper.SOURCE,
+                                                            'line': line, 'column': 1, 'axis': axis, 'targetControl': control}])
+                                self.assertNotIn('37.125', json.dumps(reports))
+                                self.assertNotIn(str(source_root), json.dumps(reports))
+            payload = 'XCTAssertGreaterThanOrEqual failed - Batch UI mobile target: width captureOpen'
+            value = self.mobile_target_fixture(source_root, payload, column=None)
+            self.assertNotIn('column', helper.mobile_target_failure_locations(value, BUNDLE, source_root)[0])
+
+    def test_mobile_target_diagnostics_reject_wrong_source_predicates_ownership_bounds_and_private_codes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            source = self.mobile_source_fixture(source_root, ('width', 'height'))
+            payload = 'XCTAssertGreaterThanOrEqual failed: SYNTHETIC_PRIVATE_VALUE - Batch UI mobile target: width captureOpen'
+            valid = self.mobile_target_fixture(source_root, payload)
+            invalid = (
+                self.mobile_target_fixture(source_root, payload, bundle='OtherUITests'),
+                self.mobile_target_fixture(source_root, payload, bundle='MirrorMacBatchUITests'),
+                self.mobile_target_fixture(source_root, payload, case='testUnexpected'),
+                valid.replace('.' + helper.CLASS + ' ', '.OtherTests '),
+                self.mobile_target_fixture(source_root, payload, source='Tests/Other.swift'),
+                self.mobile_target_fixture(source_root, payload, source='../' + helper.SOURCE),
+                self.mobile_target_fixture(source_root, payload, line=0),
+                self.mobile_target_fixture(source_root, payload, line=3),
+                self.mobile_target_fixture(source_root, payload, column=0),
+                self.mobile_target_fixture(source_root, payload, column=99999),
+                self.mobile_target_fixture(source_root, payload, line=2),
+                valid.replace('XCTAssertGreaterThanOrEqual failed', 'XCTAssertEqual failed'),
+                valid.replace('captureOpen', 'SYNTHETIC_PRIVATE_VALUE'),
+                valid.replace('captureOpen', 'task.select.11111111-2222-3333-4444-555555555555'),
+                valid + ' SYNTHETIC_PRIVATE_VALUE',
+                valid.replace('width captureOpen', 'diagonal captureOpen'),
+                valid.replace('Batch UI mobile target:', 'Other marker:'),
+            )
+            for value in invalid:
+                self.assertEqual(helper.mobile_target_failure_locations(value, BUNDLE, source_root), [])
+            original = source.read_text()
+            for changed in (original.replace(', 44,', ', 43,'), original.replace('XCTAssertGreaterThanOrEqual(', 'XCTAssertEqual('),
+                            original.replace('element.frame.width', 'element.frame.height'), original.replace('\\(target)', 'private')):
+                source.write_text(changed)
+                self.assertEqual(helper.mobile_target_failure_locations(valid, BUNDLE, source_root), [])
+            source.write_text(original)
+            with mock.patch.object(helper.SUPPORT, 'read_regular', side_effect=OSError('SYNTHETIC_PRIVATE_VALUE')):
+                self.assertEqual(helper.mobile_target_failure_locations(valid, BUNDLE, source_root), [])
+            source.unlink()
+            source.symlink_to(ROOT / helper.SOURCE)
+            self.assertEqual(helper.mobile_target_failure_locations(valid, BUNDLE, source_root), [])
+
+    def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.mobile_source_fixture(source_root, ('width',) * 20)
+            payload = 'XCTAssertGreaterThanOrEqual failed: SYNTHETIC_PRIVATE_TITLE 37.125 11111111-2222-3333-4444-555555555555 /private/synthetic - Batch UI mobile target: width taskSelection'
+            rows = [self.mobile_target_fixture(source_root, payload, line=line) for line in range(1, 21)]
+            reports = helper.mobile_target_failure_locations('\n'.join(row for row in rows for _ in (0, 1)), BUNDLE, source_root)
+            self.assertEqual(len(reports), 12)
+            self.assertEqual([report['line'] for report in reports], list(range(1, 13)))
+            self.assertEqual(len(helper.mobile_target_failure_locations(rows[0] + '\n' + rows[0].replace('37.125', '38.875'), BUNDLE, source_root)), 1)
+            with self.assertRaises(helper.BatchError):
+                helper.mobile_target_failure_locations(None, BUNDLE, source_root)
+            with mock.patch.object(helper, 'MAX_LOG', 8), self.assertRaises(helper.BatchError):
+                helper.mobile_target_failure_locations(rows[0], BUNDLE, source_root)
+        native_source = (ROOT / helper.SOURCE).read_text().splitlines()
+        actual_line = next(index for index, text in enumerate(native_source, 1)
+                           if text.strip() == 'XCTAssertGreaterThanOrEqual(element.frame.width, 44, "Batch UI mobile target: width \\(target)")')
+        value = self.mobile_target_fixture(ROOT, payload, line=actual_line)
+        actual = helper.mobile_target_failure_locations(value, BUNDLE)
+        self.assertEqual(len(actual), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            (directory / 'test.log').write_text(value)
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'test')
+            messages = [call.args[0] for call in printed.call_args_list]
+            self.assertEqual(len(messages), 3)
+            self.assertEqual(messages[0], '::notice::Batch UI source diagnostics: ' + json.dumps(
+                {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': helper.failure_locations(value, BUNDLE)}, sort_keys=True))
+            self.assertEqual(messages[1], '::notice::Batch UI query failure diagnostics: ' + json.dumps(
+                {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': [], 'locationCount': 0}, sort_keys=True))
+            prefix = '::notice::Batch UI mobile target diagnostics: '
+            report = json.loads(messages[2][len(prefix):])
+            self.assertEqual(report, {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': actual, 'locationCount': 1})
+            self.assertEqual(set(report), set(EXPECTED) | {'phase', 'scope', 'locations', 'locationCount'})
+            for private in ('SYNTHETIC_PRIVATE_TITLE', '37.125', '11111111-2222-3333-4444-555555555555', '/private/synthetic', str(ROOT)):
+                self.assertNotIn(private, '\n'.join(messages))
+            (directory / 'build.log').write_text('SYNTHETIC_PRIVATE_TITLE')
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), \
+                    mock.patch.object(helper.SUPPORT, 'compiler_diagnostics', return_value=[]), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'build')
+            self.assertEqual(len(printed.call_args_list), 1)
+
+
 
 if __name__ == '__main__':
     unittest.main()

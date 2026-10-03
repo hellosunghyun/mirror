@@ -75,12 +75,16 @@ final class MirrorBatchUITests: XCTestCase {
     private func captureConsecutively(_ titles: [String], in app: XCUIApplication) throws {
         try activate("capture.open", in: app)
         for title in titles {
+            #if os(macOS)
+            let field = try requireMacCaptureTitle(in: app)
+            #else
             let fields = app.textFields.matching(identifier: "capture.title")
             let textViews = app.textViews.matching(identifier: "capture.title")
             let query = fields.firstMatch.exists ? fields
                 : textViews.firstMatch.exists ? textViews
                 : app.descendants(matching: .any).matching(identifier: "capture.title")
             let field = try unique(query)
+            #endif
             try waitValue("", element: field)
             try assertReachable(field, in: app)
             performActivation(field)
@@ -99,6 +103,71 @@ final class MirrorBatchUITests: XCTestCase {
         try activate("capture.close", in: app)
         try gone("capture.title", in: app)
     }
+
+    #if os(macOS)
+    // 실제 입력 owner의 native 역할만 받는다. snapshot 오류의 원인이나 해결을 확정하지 않는다.
+    private func requireMacCaptureTitle(in app: XCUIApplication, timeout: TimeInterval = 15,
+                                        file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
+        let deadline = Date().addingTimeInterval(min(15, max(0, timeout)))
+        let closeQuery = app.buttons.matching(identifier: "capture.close")
+        let saveQuery = app.buttons.matching(identifier: "capture.save")
+        func hasArea(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        for attempt in 0..<12 {
+            guard app.state == .runningForeground, Date() < deadline else { break }
+            let closeCount = closeQuery.count
+            let saveCount = saveQuery.count
+            guard closeCount <= 1, saveCount <= 1 else { break }
+            if closeCount == 1, saveCount == 1 {
+                let windows = app.windows.containing(.button, identifier: "capture.close")
+                    .containing(.button, identifier: "capture.save")
+                let windowCount = windows.count
+                guard windowCount <= 1 else { break }
+                if windowCount == 1 {
+                    let window = windows.element(boundBy: 0)
+                    let sheets = window.sheets.containing(.button, identifier: "capture.close")
+                        .containing(.button, identifier: "capture.save")
+                    let sheetCount = sheets.count
+                    guard sheetCount <= 1 else { break }
+                    let owner = sheetCount == 1 ? sheets.element(boundBy: 0) : window
+                    let ownerCloseCount = owner.buttons.matching(identifier: "capture.close").count
+                    let ownerSaveCount = owner.buttons.matching(identifier: "capture.save").count
+                    guard ownerCloseCount <= 1, ownerSaveCount <= 1 else { break }
+                    if ownerCloseCount == 1, ownerSaveCount == 1 {
+                        let fields = owner.textFields.matching(identifier: "capture.title")
+                        let textViews = owner.textViews.matching(identifier: "capture.title")
+                        let fieldCount = fields.count
+                        let textViewCount = textViews.count
+                        guard fieldCount + textViewCount <= 1 else { break }
+                        if fieldCount + textViewCount == 1 {
+                            let field = fieldCount == 1 ? fields.element(boundBy: 0) : textViews.element(boundBy: 0)
+                            if window.exists, owner.exists, field.exists {
+                                let windowFrame = window.frame
+                                let ownerFrame = owner.frame
+                                let fieldFrame = field.frame
+                                if hasArea(windowFrame), hasArea(ownerFrame), hasArea(fieldFrame),
+                                   windowFrame.contains(ownerFrame), windowFrame.contains(fieldFrame),
+                                   ownerFrame.contains(fieldFrame),
+                                   field.elementType == .textField || field.elementType == .textView,
+                                   field.isEnabled, field.isHittable {
+                                    guard app.state == .runningForeground, Date() < deadline else { break }
+                                    return field
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            guard remaining > 0 else { break }
+            RunLoop.current.run(until: min(Date().addingTimeInterval(remaining / Double(12 - attempt)), deadline))
+        }
+        XCTFail("macCaptureTitleNativeOwnerContractFailedWithin15SecondsAnd12Checks", file: file, line: line)
+        throw HarnessFailure.unreachable
+    }
+    #endif
 
     private func showLibrary(search: String, in app: XCUIApplication) throws {
         let tabs = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", "보관함"))
@@ -159,8 +228,7 @@ final class MirrorBatchUITests: XCTestCase {
         performActivation(bulk)
         try waitValue("선택한 20개, 대상 20개", element: bulk)
         XCTAssertEqual(bulk.label, "선택 해제, 현재 목록")
-        let batch = try reachable(app.buttons.matching(identifier: "library.batchPlan"), surface: .library,
-                                  missingTowardTop: true, in: app)
+        let batch = try reachableBatchFooter(in: app)
         XCTAssertEqual(batch.label, "선택한 20개 날짜 배치")
         XCTAssertTrue(batch.isEnabled)
         try verifySelectionState(originals, value: "선택됨", in: app)
@@ -209,8 +277,7 @@ final class MirrorBatchUITests: XCTestCase {
             XCTAssertEqual(choice.label, "\(control.title), 배치 대상 선택")
             XCTAssertEqual(textValue(choice), "선택 안 됨")
         }
-        let batch = try reachable(app.buttons.matching(identifier: "library.batchPlan"), surface: .library,
-                                  missingTowardTop: true, in: app)
+        let batch = try reachableBatchFooter(in: app)
         XCTAssertEqual(batch.label, "선택한 \(selected.count)개 날짜 배치")
         XCTAssertTrue(batch.isEnabled)
         try assertMobileTarget(batch)
@@ -219,7 +286,7 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {
-        try activate("library.batchPlan", surface: .library, in: app)
+        performActivation(try reachableBatchFooter(in: app))
         _ = try unique(app.buttons.matching(identifier: "plan.cancel"))
         let disclosure = try plannerDisclosure(in: app)
         XCTAssertEqual(disclosure.label, "선택한 작업 \(selected.count)개")
@@ -254,6 +321,42 @@ final class MirrorBatchUITests: XCTestCase {
         #endif
         return try reachable(app.buttons.matching(identifier: "plan.tasksDisclosure"), surface: .planner,
                              missingTowardTop: true, in: app)
+    }
+
+    private func reachableBatchFooter(in app: XCUIApplication) throws -> XCUIElement {
+        let deadline = Date().addingTimeInterval(15)
+        let footerQuery = app.descendants(matching: .any).matching(identifier: "library.batchFooter")
+        let buttonQuery = app.buttons.matching(identifier: "library.batchPlan")
+        for attempt in 0..<12 {
+            XCTAssertEqual(app.state, .runningForeground)
+            guard Date() < deadline else { break }
+            _ = footerQuery.firstMatch.waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow))
+            _ = buttonQuery.firstMatch.waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow))
+            guard Date() < deadline else { break }
+            if footerQuery.firstMatch.exists, buttonQuery.firstMatch.exists {
+                let footer = try unique(footerQuery, timeout: 0)
+                let button = try unique(buttonQuery, timeout: 0)
+                _ = try unique(footer.buttons.matching(identifier: "library.batchPlan"), timeout: 0)
+                let footerFrame = footer.frame
+                let buttonFrame = button.frame
+                let windows = app.windows.containing(NSPredicate(format: "identifier == %@", "library.batchFooter"))
+                    .containing(NSPredicate(format: "identifier == %@", "library.batchPlan"))
+                    .allElementsBoundByAccessibilityElement.filter {
+                        $0.exists && hasArea($0.frame) && $0.frame.contains(footerFrame) && $0.frame.contains(buttonFrame)
+                    }
+                if Date() < deadline, hasArea(footerFrame), hasArea(buttonFrame), windows.count == 1,
+                   footerFrame.contains(buttonFrame), button.isEnabled, button.isHittable {
+                    try assertMobileTarget(button)
+                    guard Date() < deadline else { break }
+                    return button
+                }
+            }
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            guard remaining > 0 else { break }
+            RunLoop.current.run(until: min(Date().addingTimeInterval(remaining / Double(12 - attempt)), deadline))
+        }
+        XCTFail("batchFooterIsNotReachableWithin15SecondsAnd12Checks")
+        throw HarnessFailure.unreachable
     }
 
     private func activate(_ identifier: String, surface: Surface = .none, in app: XCUIApplication) throws {
@@ -357,10 +460,34 @@ final class MirrorBatchUITests: XCTestCase {
         XCTAssertTrue(window.frame.contains(frame))
     }
 
+    private func mobileTargetCode(_ identifier: String) -> String {
+        switch identifier {
+        case "capture.open": return "captureOpen"
+        case "capture.save": return "captureSave"
+        case "capture.close": return "captureClose"
+        case "library.selectToggle": return "librarySelectToggle"
+        case "library.selectAll": return "librarySelectAll"
+        case "library.batchPlan": return "libraryBatchPlan"
+        case "plan.today": return "planToday"
+        case "plan.tomorrow": return "planTomorrow"
+        case "plan.cancel": return "planCancel"
+        case "destination.today": return "destinationToday"
+        case "destination.calendar": return "destinationCalendar"
+        case "destination.library": return "destinationLibrary"
+        default:
+            let prefix = "task.select."
+            guard identifier.hasPrefix(prefix) else { return "other" }
+            let suffix = String(identifier.dropFirst(prefix.count))
+            guard let uuid = UUID(uuidString: suffix), uuid.uuidString.lowercased() == suffix.lowercased() else { return "other" }
+            return "taskSelection"
+        }
+    }
+
     private func assertMobileTarget(_ element: XCUIElement) throws {
         #if os(iOS)
-        XCTAssertGreaterThanOrEqual(element.frame.width, 44)
-        XCTAssertGreaterThanOrEqual(element.frame.height, 44)
+        let target = mobileTargetCode(element.identifier)
+        XCTAssertGreaterThanOrEqual(element.frame.width, 44, "Batch UI mobile target: width \(target)")
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44, "Batch UI mobile target: height \(target)")
         #endif
     }
 

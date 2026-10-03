@@ -112,6 +112,7 @@ struct MirrorMenuBarContent: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("일단 넣고, 나중에 정하세요").font(.headline)
             TextField("할 일 제목", text: $title, axis: .vertical).focused($focused)
+                .lineLimit(1...4)
                 .disabled(model.isSaving || model.projectionPending)
                 .accessibilityIdentifier("menuBar.title")
             Button("보관함에 넣기") {

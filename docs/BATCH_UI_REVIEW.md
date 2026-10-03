@@ -36,3 +36,18 @@
 이는 작성한 실제 UI 수용 경로이며 실행 결과가 아니다. 앞20개 선택의 >20개 경계와 빈 목록 버튼 숨김은 현재 후보의 정적 소스로 확인했으며 이 두 경계의 실제 native UI 사례를 추가하지 않았다. 추가 조작의 실제 시간·SDK 접근성 역할·범위·선택 상태는 새 소스를 포함한 동일 SHA의 iPhone/iPad/Mac Actions에서 확인해야 한다.
 
 Batch query 실패 진단은 기존 source notice와 별도의 `Batch UI query failure diagnostics: ` notice로 남긴다. 동일 run 문맥과 정확한 batch bundle·class·두 method, 현재 Swift 소스의 실제 행·열을 먼저 검증한 뒤, 기존 assertion 분류가 `unclassified`인 payload의 고정된 시작 문구만 일곱 query 종류 또는 `unknown`으로 정제한다. 중복을 제거한 최대12개 위치와 수만 출력하며 제목·UUID·원문·비공개 경로는 출력하지 않는다. 시작 문구 지원은 합성 회귀로 작성한 진단 계약이고 실제 실패 원인을 확정하지 않는다. 기존15개 회귀와 typed2·실패0·skip0, outcome·receipt·수용 게이트를 보존하며 추가 회귀와 실제 SDK 분류 결과는 Actions에서 검증한다.
+
+## 하단 날짜 버튼과 Mac 입력의 후속 검증
+
+하단 날짜 버튼은 목록의 스크롤 내용과 별도인 안전 영역에 있다. 따라서 활성 날짜 버튼의 기존 세 조작 경로는 실제 `library.batchFooter` 그룹 안의 고유 native Button, 두 요소를 함께 소유하는 실제 창, 유한한 양수 frame·전체 포함·enabled/hittable·iOS44pt를 검사한다. 고정 footer를 목록 스크롤 viewport 안에 포함시키는 조건은 사용하지 않는다. 원래 선택 수·명령·비활성 상태·receipt와 모든 기존 assertion·대기를 보존하며, 최대15초/12회 확인과 전면 앱 assertion 하나를 더해 authored53개다. source 계약 보완이며 실제 AX 그룹과 footer geometry의 수용은 미검증이다.
+
+`831df7c` 일괄4의 Mac 두 사례는 작성 칸의 `firstMatch.exists` 위치L80에서 `failedToGetMatchingSnapshot`으로 실패했다. iPad 두 사례는 L362의 기존 너비44pt 검사에서 실패했다. 실제 native 입력 역할, iPad 실패 버튼·측정 너비·실패 원인은 미확정이며 typed 실행 수는 수용하지 못했다. 후속 Mac 작성 칸 helper는 고유 닫기·저장 Button을 함께 포함하는 창을 찾고, 그 창의 실제 입력 시트가 있으면 같은 시트 안에서 TextField/TextView 합계1개를 요구한다. 실제 frame·창과 owner 포함·전면·enabled/hittable·15초/12회 확인을 유지하고 다른 요소의 조회와 iOS 기존 입력 경로는 보존한다. footer와 Mac 종료 실패 조건을 합쳐 authored53 assertions·8 XCTFail·두 사례·PNG0이며 실제 통과 수를 뜻하지 않는다.
+
+같은 일괄4의 iPhone도 SDK 빌드 성공 뒤 UI 단계 실패로 종료했고 세 플랫폼 전체 run은 자연 실패로 종료했다. iPhone에서 알려진 source/query 진단과 typed 수는 수용하지 못했다. UI 단계의 약20분 실행 시간만으로 timeout 원인을 확정하지 않는다. 종료된 실행의 추가 진단 읽기와 재시작은 하지 않으며 후속 소스는 별도 실행에서 검증한다.
+
+
+44pt 모바일 target 진단은 기존 width·height ≥44 assertion의 조건·호출 수를 그대로 두고 고정 axis와 control code만 메시지에 붙인다. capture·목록 선택·footer batch·계획 날짜·화면 이동은 고정 code, 정확한 UUID 형식의 task.select 대상은 taskSelection, 나머지는 other로 축약한다. 원 identifier·UUID·제목·측정값을 공개 notice에 넣지 않는다.
+
+별도 Batch UI mobile target diagnostics notice는 현재 실행의 다섯 문맥, 정확한 두 method·bundle/class·canonical Swift 파일·실제 행/열, 그리고 해당 행이 메시지의 axis와 일치하는 실제 ≥44 source assertion인지 확인한 뒤 고정 axis/control와 최대12개 중복 제거 위치·수만 남긴다. 기존 source/query notices·typed2·실패0·skip0·outcome·receipt·시간 제한과 원21 결과 회귀를 보존하고 privacy·소유/소스/실제 bounds·행 조건·notice·dedup 회귀3개를 작성했다. 이는 authored 계약이며 실제 target·크기·실패 원인이나 native 통과를 확인했다는 뜻이 아니다. 추가 identifier 조회의 실제 시간과 SDK 동작은 새 동일 SHA의 GitHub Actions에서 확인해야 한다.
+
+모바일 notice는 승인된 실제 source-bound 위치가 있을 때만 추가하여 기존 query/빈 진단 notice 수와 원21 회귀를 그대로 유지한다. assertMobileTarget 함수와 모든 호출을 유지하며 iOS에서 element.identifier property를 정확 한 번 읽는다. matching/count/snapshot API를 추가하지 않지만 이 property의 native AX 비용과 실제 시간은 미검증이다.

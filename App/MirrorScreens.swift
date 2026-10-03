@@ -124,11 +124,15 @@ struct MirrorTodayView: View {
 struct MirrorTaskRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.mirrorCalendarDropAvailable) private var calendarDropAvailable
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let task: TaskProjection
     var onOpen: (() -> Void)? = nil
     var body: some View {
         let displayedContext = model.context
-        HStack(spacing: 8) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 8))
+        layout {
             TaskRow(task.title, status: Binding(get: { task.status == .completed ? .completed : .open }, set: { value in
                 if value != .snoozed { Task { await model.setCompleted(task, completed: value == .completed) } }
             }), due: planLabel(task.plan.target), style: rowStyle, onTap: openDetail, snoozeLabel: "내일로 미루기",
@@ -519,6 +523,16 @@ struct MirrorLibraryView: View {
                         TextField(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색", text: $model.search)
                             .textFieldStyle(.plain).focused($searchFocused).accessibilityIdentifier("library.search")
                             .onSubmit { searchFocused = false; model.isTextEditing = false }
+                        if !model.search.isEmpty {
+                            Button { model.search = "" } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("검색어 지우기")
+                                .accessibilityIdentifier("library.clearSearch")
+                        }
                     }
                     .padding(10).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
                     MirrorActionGroup {
@@ -529,9 +543,14 @@ struct MirrorLibraryView: View {
                         }.pickerStyle(.menu).labelsHidden()
                             .accessibilityLabel(searchesWholeLibrary ? "검색 범위, 전체" : "목록")
                             .frame(minHeight: 44)
-                        Button(selecting ? "선택 마치기" : "선택") {
+                        Button {
                             model.selectedTaskIDs.removeAll()
                             selecting.toggle()
+                        } label: {
+                            Text(selecting ? "선택 마치기" : "선택")
+                                #if os(iOS)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                #endif
                         }
                             .buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
                             .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
@@ -548,9 +567,14 @@ struct MirrorLibraryView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         MirrorActionGroup {
                             if !bulkTaskIDs.isEmpty {
-                                Button(bulkLabel) {
+                                Button {
                                     if bulkSelected { model.selectedTaskIDs.removeAll() }
                                     else { model.selectedTaskIDs = bulkTaskIDs }
+                                } label: {
+                                    Text(bulkLabel)
+                                        #if os(iOS)
+                                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                        #endif
                                 }
                                     .buttonStyle(.borderless).frame(minHeight: 44)
                                     .accessibilityLabel("\(bulkLabel), 현재 목록")
@@ -570,7 +594,12 @@ struct MirrorLibraryView: View {
                         if selecting, task.status == .open {
                             Button {
                                 toggleSelection(task)
-                            } label: { Image(systemName: model.selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square") }
+                            } label: {
+                                Image(systemName: model.selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square")
+                                    #if os(iOS)
+                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                    #endif
+                            }
                                 .buttonStyle(.plain).frame(minWidth: 44, minHeight: 44)
                                 .accessibilityLabel("\(task.title), 배치 대상 선택")
                                 .accessibilityValue(model.selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")
@@ -598,23 +627,27 @@ struct MirrorLibraryView: View {
         .accessibilityIdentifier("library.list")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if selecting {
-                Button { model.makePicker(taskIDs: eligibleTaskIDs.filter(selectedIDs.contains)) } label: {
-                    Text("선택한 \(selectedIDs.count)개 날짜 배치")
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(minWidth: 44, maxWidth: .infinity, minHeight: 44)
-                        .contentShape(Rectangle())
+                VStack(spacing: 0) {
+                    Button { model.makePicker(taskIDs: eligibleTaskIDs.filter(selectedIDs.contains)) } label: {
+                        Text("선택한 \(selectedIDs.count)개 날짜 배치")
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(minWidth: 44, maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
+                    .accessibilityIdentifier("library.batchPlan")
+                    #if os(macOS)
+                    .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 560 : 320)
+                    #else
+                    .frame(maxWidth: 560)
+                    #endif
+                    .padding(.horizontal, 20).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(MirrorPalette.surface)
                 }
-                .buttonStyle(.bordered)
-                .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
-                .accessibilityIdentifier("library.batchPlan")
-                #if os(macOS)
-                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 560 : 320)
-                #else
-                .frame(maxWidth: 560)
-                #endif
-                .padding(.horizontal, 20).padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(MirrorPalette.surface)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("library.batchFooter")
             }
         }
         .onChange(of: selectableTaskIDs) { _, visibleIDs in
@@ -1005,7 +1038,17 @@ struct MirrorPlanPicker: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() }.accessibilityIdentifier("plan.cancel") } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: {
+                        Text("취소")
+                            #if os(iOS)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            #endif
+                    }
+                    .accessibilityIdentifier("plan.cancel")
+                }
+            }
             .disabled(model.isSaving)
             .onAppear {
                 showDates = !usesQuickChoices
