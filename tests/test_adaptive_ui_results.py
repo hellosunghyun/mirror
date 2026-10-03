@@ -1214,5 +1214,213 @@ class PublicSDKNoticeBoundsTests(unittest.TestCase):
                 self.assertLessEqual(len(returned_lines), 9)
 
 
+class PublicSDKContractContextTests(unittest.TestCase):
+    # 기존 fixture helper만 재사용하며 원 다섯 사례를 중복 발견하는 상속은 하지 않는다.
+    excerpt = PublicSDKNoticeBoundsTests.excerpt
+    record = PublicSDKNoticeBoundsTests.record
+    run_notice = PublicSDKNoticeBoundsTests.run_notice
+
+    def contract_reports(self, notices):
+        topics = ('auditType', 'element', 'handler')
+        prefixes = {topic: '::notice::Public SDK audit ' + topic + ' context: ' for topic in topics}
+        self.assertEqual(sdk_notice.CONTRACT_TOPICS, topics)
+        self.assertEqual(sdk_notice.CONTRACT_PREFIXES, prefixes)
+        self.assertEqual(sdk_notice.MAX_COMBINED_NOTICE, 4 * 3800)
+        self.assertEqual(len(notices), 4)
+        self.assertTrue(notices[0].startswith(sdk_notice.PREFIX))
+        self.assertLessEqual(sum(len(notice.encode('ascii')) + 1 for notice in notices), 15200)
+        reports = {}
+        for topic, notice in zip(topics, notices[1:]):
+            prefix = prefixes[topic]
+            self.assertTrue(notice.startswith(prefix))
+            self.assertLessEqual(len(notice.encode('ascii')) + 1, 3800)
+            self.assertNotIn('\r', notice)
+            self.assertNotIn('\n', notice)
+            body = notice[len(prefix):].replace('%0D', '\r').replace('%0A', '\n').replace('%25', '%')
+            report = json.loads(body)
+            self.assertEqual(set(report), {'schemaVersion', 'sourceSHA', 'runID', 'attempt', 'status', 'files'})
+            self.assertIs(type(report['schemaVersion']), int)
+            self.assertEqual(report['schemaVersion'], 1)
+            self.assertEqual((report['sourceSHA'], report['runID'], report['attempt']), ('a' * 40, '1', '1'))
+            self.assertIn(report['status'], ('observedContext', 'unknown'))
+            self.assertTrue(sdk_notice.valid_files(report['files']))
+            if report['status'] == 'unknown':
+                self.assertEqual(report['files'], [])
+            else:
+                self.assertTrue(report['files'])
+            reports[topic] = report
+        return reports
+
+
+    def test_contract_notices_are_opt_in_and_preserve_the_legacy_notice_exactly(self):
+
+
+        # 합성 reference의 원공지 수용은 실제 API 증거가 아니다.
+        value = {'status': 'found', 'files': [self.record(self.excerpt(17,
+                 'public ' + ' '.join(sdk_notice.SYMBOLS) + ' // synthetic references only'))]}
+        legacy_code, legacy = self.run_notice(value)
+        enabled_code, enabled = self.run_notice({**value, 'auditContractContext': True})
+        self.assertEqual((legacy_code, len(legacy)), (0, 1))
+        self.assertEqual(enabled_code, 0)
+        self.assertEqual(enabled[0], legacy[0])
+        reports = self.contract_reports(enabled)
+        self.assertEqual([reports[topic]['status'] for topic in ('auditType', 'element', 'handler')],
+                         ['unknown', 'unknown', 'unknown'])
+        self.assertNotIn('auditContractContext', PublicSDKNoticeBoundsTests.decoded_report(self, enabled[0]))
+
+    def test_synthetic_swift_and_objc_owner_members_and_handler_comments_keep_actual_whole_lines(self):
+
+
+        def actual_lines(report, sources, digests):
+            returned = []
+            for record in report['files']:
+                self.assertEqual(record['sha256'], digests[record['file']])
+                for excerpt in record['excerpts']:
+                    first = excerpt['firstLine'] - 1
+                    lines = excerpt['text'].splitlines()
+                    self.assertEqual(lines, sources[record['file']][first:first + len(lines)])
+                    self.assertEqual(excerpt['symbols'], [symbol for symbol in sdk_notice.SYMBOLS
+                                                          if symbol in excerpt['text']])
+                    returned.extend(lines)
+            return returned
+
+
+        from hashlib import sha256
+        swift_handler = ['/// Synthetic handler context % \\ " 한글; Bool meaning is not asserted.',
+                         '@MainActor public func performAccessibilityAudit(',
+                         '    for auditTypes: XCUIAccessibilityAuditType = .all,',
+                         '    _ issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)? = nil',
+                         ') throws']
+        objc_handler = ['/** Synthetic handler context % \\ " 한글; BOOL meaning is not asserted. */',
+                        '- (void)syntheticPublicAuditSelector:(XCUIAccessibilityAuditType)auditTypes',
+                        '                    withIssueHandler:(BOOL (^)(XCUIAccessibilityAuditIssue *issue))issueHandler',
+                        '                    NS_SWIFT_NAME(performAccessibilityAudit(for:_:));']
+        variants = [('SyntheticIssueClass.swiftinterface', 'public class XCUIAccessibilityAuditIssue : NSObject {',
+                     '    public var auditType: XCUIAccessibilityAuditType { get }',
+                     '    public var element: XCUIElement? { get }', '}', swift_handler),
+                    ('SyntheticIssueStruct.swiftinterface', 'public struct XCUIAccessibilityAuditIssue {',
+                     '    public var auditType: XCUIAccessibilityAuditType { get }',
+                     '    public var element: XCUIElement? { get }', '}', swift_handler),
+                    ('SyntheticIssue.h', '@interface XCUIAccessibilityAuditIssue : NSObject',
+                     '@property (nonatomic, readonly) XCUIAccessibilityAuditType auditType;',
+                     '@property (nullable, nonatomic, readonly) XCUIElement *element;', '@end', objc_handler)]
+        for name, owner, audit_type, element, end, handler in variants:
+            with self.subTest(syntheticPublicFile=name):
+                first = 41
+                excerpt_lines = [' * synthetic public comment continuation', ' */', owner, '// synthetic owner context', audit_type, element, end, ''] + handler
+                whole = ['// synthetic preceding line'] * (first - 1) + excerpt_lines
+                digest = sha256(('\n'.join(whole) + '\n').encode('utf-8')).hexdigest()
+                record = {**self.record(self.excerpt(first, '\r\n'.join(excerpt_lines)), name=name), 'sha256': digest}
+                value = {'status': 'found', 'files': [record], 'auditContractContext': True}
+                code, notices = self.run_notice(value)
+                self.assertEqual(code, 0)
+                reports = self.contract_reports(notices)
+                for topic, target in (('auditType', audit_type), ('element', element)):
+                    self.assertEqual(reports[topic]['status'], 'observedContext')
+                    lines = actual_lines(reports[topic], {name: whole}, {name: digest})
+                    self.assertIn(owner, lines)
+                    self.assertIn(target, lines)
+                self.assertEqual(reports['handler']['status'], 'observedContext')
+                lines = actual_lines(reports['handler'], {name: whole}, {name: digest})
+                for actual in handler:
+                    self.assertIn(actual, lines)
+                # 합성 source 발췌이며 Bool 해석이나 실제 API 존재를 판정하지 않는다.
+                for report in reports.values():
+                    self.assertNotIn('handlerReturnsTrueMeans', report)
+                    self.assertNotIn('handlerReturnsFalseMeans', report)
+                    self.assertNotIn('apiAvailable', report)
+
+    def test_unrelated_commented_missing_and_unfittable_contracts_stay_unknown(self):
+
+
+        unrelated = '\n'.join(['public class UnrelatedPublicIssue {',
+                     '    public var auditType: XCUIAccessibilityAuditType { get }',
+                     '    public var element: XCUIElement? { get }', '}',
+                     '// XCUIAccessibilityAuditIssue is only a synthetic reference here.',
+                     '// public func performAccessibilityAudit(_ issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)?)',
+                     '// ' + PRIVATE])
+        missing = '\n'.join(['public class XCUIAccessibilityAuditIssue : NSObject {', '}',
+                   'public struct XCUIAccessibilityAuditType : OptionSet { }',
+                   '// performAccessibilityAudit is a synthetic reference, without a declaration.'])
+        oversized = '\n'.join(['public class XCUIAccessibilityAuditIssue : NSObject {',
+                     '    public var auditType: XCUIAccessibilityAuditType { get } // ' + '\0' * 800,
+                     '    public var element: XCUIElement? { get } // ' + '\0' * 800, '}',
+                     'public struct XCUIAccessibilityAuditType : OptionSet { }',
+                     'public func performAccessibilityAudit(_ issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)?) throws // ' + '\0' * 800])
+        adjacent_swift = '\n'.join([
+            'public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType) throws',
+            'public func unrelated(issueHandler: XCUIAccessibilityAuditIssue) throws'])
+        interrupted_swift = '\n'.join([
+            'public func performAccessibilityAudit(',
+            '    for types: XCUIAccessibilityAuditType,',
+            'public func unrelated(issueHandler: XCUIAccessibilityAuditIssue) throws'])
+        adjacent_objc = '\n'.join([
+            '- (void)performAccessibilityAudit:(XCUIAccessibilityAuditType)types;',
+            '- (void)unrelatedWithTypes:(XCUIAccessibilityAuditType)types',
+            '    withIssueHandler:(BOOL (^)(XCUIAccessibilityAuditIssue *issue))issueHandler;'])
+        closed_then_parameter = '\n'.join([
+            'public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType) throws',
+            '    issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)?'])
+        attribute_only = ('@Synthetic(issueHandler: XCUIAccessibilityAuditIssue.self) '
+                          'public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType) throws')
+        same_line_swift = ('public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType) throws; '
+                           'public func unrelated(issueHandler: XCUIAccessibilityAuditIssue) throws')
+        same_line_objc = ('- (void)performAccessibilityAudit:(XCUIAccessibilityAuditType)types; '
+                         '- (void)unrelatedWithIssueHandler:(XCUIAccessibilityAuditIssue *)issueHandler;')
+        nested_tuple = ('public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType, '
+                        '_ callback: (issueHandler: XCUIAccessibilityAuditIssue) -> Void) throws')
+        # 인접 선언/닫힌 signature/속성의 이름을 감사 함수의 parameter로 합치지 않는다.
+        for kind, text in (('unrelatedAndCommented', unrelated), ('missing', missing), ('unfittable', oversized),
+                           ('adjacentSwiftDeclaration', adjacent_swift), ('interruptedSwiftSignature', interrupted_swift),
+                           ('adjacentObjectiveCDeclaration', adjacent_objc), ('closedSignatureThenParameter', closed_then_parameter),
+                           ('attributeArgumentOnly', attribute_only), ('sameLineSwiftDeclaration', same_line_swift),
+                           ('sameLineObjectiveCDeclaration', same_line_objc), ('nestedTupleNameOnly', nested_tuple)):
+            with self.subTest(syntheticContext=kind):
+                value = {'status': 'found', 'files': [self.record(self.excerpt(31, text), name='SyntheticContext.swiftinterface')],
+                         'auditContractContext': True}
+                self.assertTrue(sdk_notice.valid_files(value['files']))
+                code, notices = self.run_notice(value)
+                self.assertEqual(code, 0)
+                reports = self.contract_reports(notices)
+                self.assertTrue(all(report['status'] == 'unknown' and report['files'] == []
+                                    for report in reports.values()))
+                for notice in notices[1:]:
+                    self.assertNotIn(PRIVATE, notice)
+                    self.assertNotIn('\\u0000', notice)
+                self.assertEqual(PublicSDKNoticeBoundsTests.decoded_report(self, notices[0])['status'], 'found')
+        no_declaration = {'status': 'found', 'files': [self.record(self.excerpt(1,
+                          'performAccessibilityAudit' + '\0' * 900))], 'auditContractContext': True}
+        self.assertEqual(self.run_notice(no_declaration), (2, []))
+
+    def test_contract_input_is_fully_validated_before_any_notice_and_all_wire_budgets_include_escaping(self):
+
+
+        context = '// synthetic escaping % \\ " 한글 ' + 'x' * 350
+        lines = ['public class XCUIAccessibilityAuditIssue : NSObject {'] + [context] * 4 + [
+                 '    public var auditType: XCUIAccessibilityAuditType { get }',
+                 '    public var element: XCUIElement? { get }', '}', context,
+                 'public func performAccessibilityAudit(_ issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)?) throws']
+        good = self.record(self.excerpt(15, '\r\n'.join(lines)), name='SyntheticEscaping.swiftinterface')
+        value = {'status': 'found', 'files': [good], 'auditContractContext': True}
+        code, notices = self.run_notice(value)
+        self.assertEqual(code, 0)
+        reports = self.contract_reports(notices)
+        self.assertEqual([report['status'] for report in reports.values()], ['observedContext'] * 3)
+        self.assertIn('%25', ''.join(notices[1:]))
+        self.assertIn('\\u', ''.join(notices[1:]))
+        self.assertNotIn('한글', ''.join(notices))
+        self.assertLessEqual(sum(len(notice.encode('ascii')) + 1 for notice in notices), 4 * 3800)
+        bad_flags = [{**value, 'auditContractContext': flag} for flag in (False, 1, 'true')]
+        invalid = bad_flags + [{**value, 'privateExtra': PRIVATE},
+                   {**value, 'files': [good, {**good, 'file': 'PrivateSynthetic.swiftinterface'}]},
+                   {**value, 'files': [good, {**good, 'file': 'SyntheticBadLast.swiftinterface', 'sha256': 'bad'}]}]
+        for bad in invalid:
+            with self.subTest(invalidContractInput=True):
+                self.assertEqual(self.run_notice(bad), (2, []))
+        duplicate = (b'{"status":"notFound","files":[],"auditContractContext":true,'
+                     b'"auditContractContext":true}')
+        self.assertEqual(self.run_notice(raw=duplicate), (2, []))
+        self.assertEqual(self.run_notice(raw=b' ' * (64 * 1024 + 1)), (2, []))
+
 if __name__ == '__main__':
     unittest.main()

@@ -153,7 +153,12 @@ def main():
                     if directory is not None:
                         os.close(directory)
     # notFound는 이 제한된 검색의 미관측이다. SDK/API 존재 여부나 계약을 부정하지 않는다.
-    print(json.dumps({'status': 'found' if records else 'notFound', 'files': records}, ensure_ascii=True))
+    report = {'status': 'found' if records else 'notFound', 'files': records}
+    enabled = {**report, 'auditContractContext': True}
+    # 기존 전체 발췌가 64KiB 경계에 있으면 optional 요청만 생략한다. 원 records/status는 보존한다.
+    if len(json.dumps(enabled, ensure_ascii=True).encode('ascii')) + 1 <= MAX_OUTPUT_BYTES:
+        report = enabled
+    print(json.dumps(report, ensure_ascii=True))
     return 0
 
 

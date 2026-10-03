@@ -169,6 +169,198 @@ def compact_notice(report):
     return encoded_notice({**report, 'files': selected_files(report['files'], selected)})
 
 
+CONTRACT_TOPICS = ('auditType', 'element', 'handler')
+CONTRACT_PREFIXES = {topic: '::notice::Public SDK audit ' + topic + ' context: '
+                     for topic in CONTRACT_TOPICS}
+MAX_COMBINED_NOTICE = 4 * MAX_NOTICE
+CONTRACT_DECLARATION_START = re.compile(
+    r'^\s*(?:[-+]\s*\(|@(?:interface|protocol|property|end|class|implementation)\b|typedef\b|'
+    r'(?:(?:@[A-Za-z_][A-Za-z0-9_:]*(?:\([^)]*\))?|public|open|private|fileprivate|internal|package|final|'
+    r'indirect|nonisolated|static|override|required|convenience|mutating|nonmutating|class)\s+)*'
+    r'(?:func|var|let|class|struct|enum|protocol|typealias|extension|init|deinit|subscript|associatedtype)\b)')
+
+
+def contract_code_lines(text):
+    # 문맥 내부 주석/문자열의 예시를 선언으로 분류하지 않는다. 불완전 문자열은 미관측으로 남긴다.
+    first_open, first_close = text.find('/*'), text.find('*/')
+    # CONTEXT 경계가 공개 block comment 중간에서 시작하면 그 닫힘 앞을 선언으로 세지 않는다.
+    result, depth = [], int(first_close >= 0 and (first_open < 0 or first_close < first_open))
+    for line in text.splitlines():
+        code, index = '', 0
+        while index < len(line):
+            if line.startswith('/*', index):
+                depth += 1
+                index += 2
+            elif line.startswith('*/', index):
+                if depth == 0:
+                    return None
+                depth -= 1
+                index += 2
+            elif depth:
+                index += 1
+            elif line.startswith('//', index):
+                break
+            elif line[index] in ('"', "'"):
+                quote, index = line[index], index + 1
+                while index < len(line) and line[index] != quote:
+                    index += 2 if line[index] == '\\' else 1
+                if index >= len(line):
+                    return None
+                code += ' '
+                index += 1
+            else:
+                code += line[index]
+                index += 1
+        result.append(code)
+    return result
+
+
+def contract_candidates(files, topic):
+    # 같은 실제 발췌의 선언 소유 범위만 사용한다. 줄을 다시 쓰거나 떨어진 소유자를 붙이지 않는다.
+    for fi, record in enumerate(files):
+        for ei, excerpt in enumerate(record['excerpts']):
+            lines = excerpt['text'].splitlines()
+            codes = contract_code_lines(excerpt['text'])
+            if codes is None:
+                continue
+            owner, owner_kind, depth = None, None, 0
+            for index, code in enumerate(codes):
+                if topic == 'handler':
+                    direct = 'performAccessibilityAudit' in declared_symbols(code)
+                    objc = bool(re.match(r'^\s*[-+]\s*\([^)]*\)', code))
+                    if not direct and not objc:
+                        continue
+                    end, named, handler, signature_depth = None, direct, False, 0
+                    for follow in range(index, min(len(lines), index + 13)):
+                        if ('{' in codes[follow] or '}' in codes[follow]
+                                or (follow > index and CONTRACT_DECLARATION_START.match(codes[follow]))):
+                            break
+                        signature = codes[follow]
+                        if not objc and follow == index:
+                            start = re.search(r'\bfunc\s+performAccessibilityAudit\b', signature)
+                            signature = signature[start.end():] if start is not None else ''
+                            opening = signature.find('(')
+                            if opening < 0:
+                                break
+                            signature = signature[opening:]
+                        before_depth, closed = signature_depth, False
+                        if objc:
+                            closed = ';' in signature
+                            signature = signature.split(';', 1)[0]
+                            signature_depth += signature.count('(') - signature.count(')')
+                        else:
+                            for offset, character in enumerate(signature):
+                                signature_depth += int(character == '(') - int(character == ')')
+                                if signature_depth <= 0:
+                                    signature, closed = signature[:offset + 1], True
+                                    break
+                        named = named or bool(re.search(r'\bNS_SWIFT_NAME\s*\(\s*performAccessibilityAudit\b', signature))
+                        for parameter in re.finditer(r'\b(?:issueHandler|withIssueHandler)\s*:', signature):
+                            prefix = signature[:parameter.start()]
+                            parameter_depth = before_depth + prefix.count('(') - prefix.count(')')
+                            if parameter_depth == (0 if objc else 1):
+                                handler = True
+                        if named and handler:
+                            end = follow
+                            break
+                        # 같은 행의 뒤 선언/중첩 tuple 이름도 현재 signature의 parameter로 합치지 않는다.
+                        if closed:
+                            break
+                    if end is None:
+                        continue
+                    optional = []
+                    for before in range(index - 1, max(-1, index - 13), -1):
+                        if codes[before].strip() and not re.match(r'^\s*@(?!interface\b|protocol\b|end\b|class\b|property\b|implementation\b)[A-Za-z_]', codes[before]):
+                            break
+                        optional.append(before)
+                    for after in range(end + 1, min(len(lines), end + 13)):
+                        if CONTRACT_DECLARATION_START.match(codes[after]) or codes[after].strip() in ('}', '@end'):
+                            break
+                        optional.append(after)
+                    yield {(fi, ei, line) for line in range(index, end + 1)}, [(fi, ei, line) for line in optional]
+                    continue
+                if 'XCUIAccessibilityAuditIssue' in declared_symbols(code):
+                    if re.search(r'\b(?:class|struct)\s+XCUIAccessibilityAuditIssue\b', code) and '{' in code:
+                        owner, owner_kind = index, 'swift'
+                        depth = code.count('{') - code.count('}')
+                    elif re.match(r'^\s*@interface\s+XCUIAccessibilityAuditIssue\b', code):
+                        owner, owner_kind, depth = index, 'objc', 1
+                    else:
+                        owner, owner_kind, depth = None, None, 0
+                    continue
+                if owner is None:
+                    continue
+                if (code.strip() == '@end' or re.match(r'^\s*@(?:interface|protocol)\b', code)
+                        or re.search(r'^\s*(?:(?:public|open|final)\s+)*(?:class|struct|enum|protocol|extension)\b', code)):
+                    owner, owner_kind, depth = None, None, 0
+                    continue
+                swift_property = r'^\s*(?:(?:@[A-Za-z_][A-Za-z0-9_:]*(?:\([^)]*\))?)\s+)*(?:public|open)\s+(?:(?:final|override|nonisolated|weak|unowned)\s+)*var\s+' + topic + r'\s*:'
+                objc_property = r'^\s*@property\s*(?:\([^)]*\))?\s+[^;{}]*\b' + topic + r'\s*;'
+                if depth == 1 and re.match(swift_property if owner_kind == 'swift' else objc_property, code):
+                    optional = []
+                    for after in range(index + 1, min(len(lines), index + 13)):
+                        if re.match(r'^\s*@(?:end|interface|protocol)\b', codes[after]):
+                            break
+                        optional.append(after)
+                        if codes[after].strip() == '}':
+                            break
+                    for before in range(owner - 1, max(-1, owner - 13), -1):
+                        if codes[before].strip() and not re.match(r'^\s*@(?!interface\b|protocol\b|end\b|class\b|property\b|implementation\b)[A-Za-z_]', codes[before]):
+                            break
+                        optional.append(before)
+                    yield {(fi, ei, line) for line in range(owner, index + 1)}, [(fi, ei, line) for line in optional]
+                if owner_kind == 'swift':
+                    depth += code.count('{') - code.count('}')
+                    if depth <= 0:
+                        owner, owner_kind, depth = None, None, 0
+
+
+def encoded_contract_notice(report, topic):
+    # outer six fields와 원래 공개 file/excerpt 스키마를 유지한다. found 계약 판정은 하지 않는다.
+    if (set(report) != {'schemaVersion', 'sourceSHA', 'runID', 'attempt', 'status', 'files'}
+            or report['status'] not in ('observedContext', 'unknown')
+            or (report['status'] == 'observedContext') != bool(report['files'])
+            or not valid_files(report['files'])):
+        return None
+    message = json.dumps(report, ensure_ascii=True, separators=(',', ':'))
+    escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    notice = CONTRACT_PREFIXES[topic] + escaped
+    return notice if len(notice.encode('ascii')) + 1 <= MAX_NOTICE else None
+
+
+def contract_notices(report):
+    notices = []
+    for topic in CONTRACT_TOPICS:
+        chosen = None
+        for selected, optional in contract_candidates(report['files'], topic):
+            candidate = {**report, 'status': 'observedContext',
+                         'files': selected_files(report['files'], selected)}
+            notice = encoded_contract_notice(candidate, topic)
+            if notice is None:
+                continue
+            for position in optional:
+                indexes = [item[2] for item in selected]
+                if position[2] not in (min(indexes) - 1, max(indexes) + 1):
+                    continue
+                proposed = selected | {position}
+                candidate = {**report, 'status': 'observedContext',
+                             'files': selected_files(report['files'], proposed)}
+                enriched = encoded_contract_notice(candidate, topic)
+                if enriched is not None:
+                    selected, notice = proposed, enriched
+            rank = (-len(selected), len(notice.encode('ascii')), sorted(selected))
+            if chosen is None or rank < chosen[0]:
+                chosen = (rank, notice)
+        if chosen is None:
+            notice = encoded_contract_notice({**report, 'status': 'unknown', 'files': []}, topic)
+            if notice is None:
+                raise ValueError('contractNoticeBudget')
+        else:
+            notice = chosen[1]
+        notices.append(notice)
+    return notices
+
+
 def main():
     # 허용된 공개 문맥 변수만 읽으며, SDK probe의 stdin 이외 파일/네트워크에 접근하지 않는다.
     if os.environ.get('GITHUB_ACTIONS') != 'true' or sys.platform != 'darwin':
@@ -184,7 +376,8 @@ def main():
         if len(raw) > MAX_INPUT:
             return 2
         value = json.loads(raw.decode('ascii'), object_pairs_hook=strict_object, parse_constant=reject_constant)
-        if (not isinstance(value, dict) or set(value) != {'status', 'files'}
+        if (not isinstance(value, dict) or set(value) not in ({'status', 'files'}, {'status', 'files', 'auditContractContext'})
+                or ('auditContractContext' in value and (type(value['auditContractContext']) is not bool or value['auditContractContext'] is not True))
                 or value['status'] not in ('found', 'notFound') or not valid_files(value['files'])
                 or (value['status'] == 'found') != bool(value['files'])):
             return 2
@@ -193,10 +386,15 @@ def main():
         notice = compact_notice(report)
         if notice is None:
             return 2
+        companions = contract_notices(report) if value.get('auditContractContext') is True else []
+        if sum(len(item.encode('ascii')) + 1 for item in [notice, *companions]) > MAX_COMBINED_NOTICE:
+            return 2
     except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
         return 2
     # 크기 초과/잘못된 문맥에서는 부분 메시지나 대체 성공 notice를 출력하지 않는다.
     print(notice)
+    for companion in companions:
+        print(companion)
     return 0
 
 
