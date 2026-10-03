@@ -109,6 +109,7 @@ struct MirrorTodayView: View {
 @MainActor
 struct MirrorTaskRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorCalendarDropAvailable) private var calendarDropAvailable
     let task: TaskProjection
     var onOpen: (() -> Void)? = nil
     var body: some View {
@@ -149,7 +150,7 @@ struct MirrorTaskRow: View {
                     .disabled(model.isSaving || model.projectionPending || model.isDetailEditing)
                     .accessibilityLabel("\(task.title), 미루기, 날짜 선택")
                     .accessibilityIdentifier("task.postpone.\(task.taskID.uuidString)")
-                if let displayedContext { MirrorCalendarDragHandle(task: task, context: displayedContext) }
+                if calendarDropAvailable, let displayedContext { MirrorCalendarDragHandle(task: task, context: displayedContext) }
             }
         }
     }

@@ -47,6 +47,9 @@ SAFE_PNG = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,239}\.png')
 CASE_EVENT = re.compile(
     r"Test Case '(-\[([A-Za-z_][A-Za-z0-9_.]*) ([A-Za-z_][A-Za-z0-9_]*)\])' "
     r'(started|passed|failed|skipped)(?=[. (]|$)')
+SWIFT_SOURCE = re.compile(r'(?:App|Sources|Tests)/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.swift')
+COMPILER_ERROR = re.compile(r'^(.+?\.swift):([1-9][0-9]{0,5}):([1-9][0-9]{0,5}):\s+error:\s+(.+)$')
+MAX_DIAGNOSTICS = 12
 
 
 class AdaptiveError(Exception):
@@ -179,6 +182,71 @@ def context_for(directory, expected):
              re.fullmatch(r'platform=iOS Simulator,id=[0-9A-Fa-f-]{36}', destination) is not None), 'contextMismatch')
     checkout_matches(expected)
     return context
+
+
+def source_location(raw_path, line, column, source_root=ROOT):
+    """현재 checkout 안의 실제 Swift 위치만 반환한다. 원본 경로를 출력하지 않는다."""
+    if not isinstance(raw_path, str) or type(line) is not int or not 1 <= line <= 100_000:
+        return None
+    if type(column) is not int or not 1 <= column <= 100_000:
+        return None
+    prefix = str(source_root) + '/'
+    relative = raw_path[len(prefix):] if raw_path.startswith(prefix) else raw_path
+    if SWIFT_SOURCE.fullmatch(relative) is None:
+        return None
+    path = source_root / relative
+    try:
+        if any(candidate.is_symlink() for candidate in (path, *path.parents)):
+            return None
+        lines = read_regular(path, MAX_JSON).decode('utf-8').splitlines()
+        if line == len(lines) + 1:
+            return {'file': relative, 'line': line, 'column': column} if column == 1 else None
+        if line > len(lines) or column > len(lines[line - 1].encode('utf-8')) + 1:
+            return None
+    except (OSError, UnicodeError, AdaptiveError):
+        return None
+    return {'file': relative, 'line': line, 'column': column}
+
+
+def compiler_kind(message):
+    if re.fullmatch(r"call can throw,? but (?:it is |is )?not marked with 'try'(?: and the error is not handled)?", message):
+        return 'missingTry'
+    if re.fullmatch(r"(?:variable|constant) '[^'\r\n]+' used before being initialized", message) or re.fullmatch(
+            r"'?self'? used before all stored properties are initialized", message):
+        return 'usedBeforeInitialization'
+    if re.fullmatch(r"immutable value '[^'\r\n]+' may only be initialized once", message):
+        return 'immutableInitializedTwice'
+    return 'unknownCompilerError'
+
+
+def compiler_diagnostics(log, source_root=ROOT):
+    require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
+    reports, seen = [], set()
+    for text in log.splitlines():
+        match = COMPILER_ERROR.fullmatch(text)
+        if match is None:
+            continue
+        location = source_location(match[1], int(match[2]), int(match[3]), source_root)
+        if location is None:
+            continue
+        kind = compiler_kind(match[4])
+        key = (location['file'], location['line'], location['column'], kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        reports.append({**location, 'kind': kind})
+        if len(reports) == MAX_DIAGNOSTICS:
+            break
+    return reports
+
+
+def diagnostics(directory, expected):
+    context_for(directory, expected)
+    log = read_regular(directory / 'build.log', MAX_LOG).decode('utf-8', errors='strict')
+    reports = compiler_diagnostics(log)
+    print('::notice::Adaptive UI compiler diagnostics: ' + json.dumps(
+        {**expected, 'status': 'accepted' if reports else 'noAcceptedCompilerDiagnostics', 'diagnostics': reports},
+        sort_keys=True))
 
 
 def file_record(path, products):
@@ -552,7 +620,7 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'adaptiveRemoteOnly')
     parser = SafeParser()
-    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'failure'))
+    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'failure'))
     parser.add_argument('--directory', required=True)
     parser.add_argument('--platform', required=True)
     parser.add_argument('--appearance', required=True)
@@ -584,6 +652,9 @@ def main():
     elif args.command == 'outcome-verify':
         safe_directory(directory)
         validate_outcome(read_json(directory / 'safe-outcome.json'), expected)
+    elif args.command == 'diagnostics':
+        require(1 <= args.native_exit_code <= 255, 'invalidArguments')
+        diagnostics(directory, expected)
     else:
         require(args.phase in ('build', 'test') and type(args.exit_code) is int and 1 <= args.exit_code <= 255
                 and -1 <= args.native_exit_code <= 255, 'invalidArguments')

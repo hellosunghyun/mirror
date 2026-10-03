@@ -14,6 +14,17 @@ private extension UTType {
     static let mirrorCalendarPlanTransfer = UTType(exportedAs: "com.baserize.mirror.calendar-plan-transfer", conformingTo: .data)
 }
 
+private struct MirrorCalendarDropAvailableKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var mirrorCalendarDropAvailable: Bool {
+        get { self[MirrorCalendarDropAvailableKey.self] }
+        set { self[MirrorCalendarDropAvailableKey.self] = newValue }
+    }
+}
+
 /// Only an app-issued token crosses the drag boundary; task identity and versions stay in AppModel.
 private struct MirrorCalendarDragPayload: Codable, Sendable, Transferable {
     let token: UUID
@@ -40,6 +51,7 @@ private var supportsCalendarDrag: Bool {
 @MainActor
 struct MirrorCalendarDragHandle: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorCalendarDropAvailable) private var dropAvailable
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -48,7 +60,7 @@ struct MirrorCalendarDragHandle: View {
     let context: PlanningContext?
 
     private var isVisible: Bool {
-        guard supportsCalendarDrag, !dynamicTypeSize.isAccessibilitySize else { return false }
+        guard dropAvailable, supportsCalendarDrag, !dynamicTypeSize.isAccessibilitySize else { return false }
         #if os(iOS)
         return sizeClass != .compact
         #else
@@ -164,6 +176,7 @@ struct MirrorCalendarView: View {
             }
             .background(MirrorPalette.canvas)
         }
+        .environment(\.mirrorCalendarDropAvailable, true)
         .navigationTitle("일정")
         .task {
             if !initialized, let day = model.context?.planningDay {

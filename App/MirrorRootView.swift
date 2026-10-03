@@ -13,6 +13,7 @@ struct MirrorRootView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var sceneExposureID = UUID()
+    @State private var adjacentCalendarVisible = true
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -96,6 +97,8 @@ struct MirrorRootView: View {
             } else if isCompact {
                 compactNavigation
             } else {
+                let calendarEligible = model.selectedTask == nil && !model.showReview
+                    && showsAdjacentCalendar(width: availableWidth, destination: model.destination)
                 NavigationSplitView {
                     List(selection: sidebarSelection) {
                         ForEach(MirrorDestination.allCases) { destination in
@@ -117,8 +120,8 @@ struct MirrorRootView: View {
                     .navigationTitle("미러")
                     .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
                 } detail: {
-                    mainContent(model.destination, showCalendar: model.selectedTask == nil && !model.showReview
-                        && showsAdjacentCalendar(width: availableWidth, destination: model.destination))
+                    mainContent(model.destination, showCalendar: calendarEligible && adjacentCalendarVisible,
+                                offersCalendarToggle: calendarEligible)
                 }
                 .navigationSplitViewStyle(.balanced)
             }
@@ -208,9 +211,11 @@ struct MirrorRootView: View {
         .padding(.vertical, 8)
         .background(MirrorPalette.canvas)
     }
-    private func mainContent(_ destination: MirrorDestination, showCalendar: Bool = false) -> some View {
+    private func mainContent(_ destination: MirrorDestination, showCalendar: Bool = false,
+                             offersCalendarToggle: Bool = false) -> some View {
         HStack(spacing: 0) {
-            mainNavigation(destination)
+            mainNavigation(destination, offersCalendarToggle: offersCalendarToggle)
+                .environment(\.mirrorCalendarDropAvailable, showCalendar)
             #if os(iOS)
             .toolbarMinimizationBehavior(isCompact ? .never : .automatic, for: .navigationBar)
             #endif
@@ -227,7 +232,7 @@ struct MirrorRootView: View {
             }
         }
     }
-    private func mainNavigation(_ destination: MirrorDestination) -> some View {
+    private func mainNavigation(_ destination: MirrorDestination, offersCalendarToggle: Bool = false) -> some View {
         NavigationStack {
             content(destination)
                 #if os(iOS)
@@ -236,9 +241,23 @@ struct MirrorRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(MirrorPalette.canvas)
                 .safeAreaInset(edge: .bottom, spacing: 0) { statusBar }
-                .toolbar { commonToolbar }
+                .toolbar {
+                    commonToolbar
+                    if offersCalendarToggle {
+                        ToolbarItem(placement: commonToolbarPlacement) { adjacentCalendarToggle }
+                    }
+                }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    private var adjacentCalendarToggle: some View {
+        Button { adjacentCalendarVisible.toggle() } label: {
+            Label(adjacentCalendarVisible ? "보조 일정 숨기기" : "보조 일정 표시", systemImage: "sidebar.right")
+        }
+        .accessibilityLabel(adjacentCalendarVisible ? "보조 일정 숨기기" : "보조 일정 표시")
+        .accessibilityValue(adjacentCalendarVisible ? "표시됨" : "숨겨짐")
+        .accessibilityHint(adjacentCalendarVisible ? "일정을 숨겨 작업 목록을 넓게 봐요." : "작업 목록 옆에 날짜별 일정을 함께 보여요.")
+        .accessibilityIdentifier("ipad.adjacentCalendar.toggle")
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: commonToolbarPlacement) {

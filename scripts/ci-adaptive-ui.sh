@@ -18,9 +18,14 @@ adaptive_native_status=-1
 adaptive_args=(--directory "$adaptive_dir" --platform "$adaptive_platform" --appearance "$adaptive_appearance")
 adaptive_finish() {
   local adaptive_exit_status=$?
+  local adaptive_original_native_status="$adaptive_native_status"
   if [[ "$adaptive_exit_status" != 0 ]]; then
+    if [[ "$adaptive_mode" == build && "$adaptive_original_native_status" -gt 0 ]]; then
+      python3 scripts/ci-adaptive-ui-results.py diagnostics "${adaptive_args[@]}" \
+        --native-exit-code "$adaptive_original_native_status" || true
+    fi
     python3 scripts/ci-adaptive-ui-results.py failure "${adaptive_args[@]}" \
-      --phase "$adaptive_mode" --exit-code "$adaptive_exit_status" --native-exit-code "$adaptive_native_status" || true
+      --phase "$adaptive_mode" --exit-code "$adaptive_exit_status" --native-exit-code "$adaptive_original_native_status" || true
     printf '%s\n' '::error::adaptiveCommandFailed' >&2
   fi
   return "$adaptive_exit_status"
