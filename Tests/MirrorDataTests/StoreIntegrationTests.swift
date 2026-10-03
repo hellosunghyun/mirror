@@ -281,6 +281,63 @@ struct StoreIntegrationTests {
         #expect(try await reader.taskProjection(UUID()) == nil)
     }
 
+    @Test("따뜻한 snapshot의 원본 정렬은 같은 writer·다른 연결·import·삭제 후에도 최신이다")
+    func sortedRecordCacheFollowsCanonicalChanges() async throws {
+        let configuration = temporaryConfiguration()
+        let importDirectory = temporaryConfiguration().directory
+        let importConfiguration = StoreConfiguration(directory: importDirectory,
+            deviceID: "22222222-2222-4222-8222-222222222222")
+        defer {
+            try? FileManager.default.removeItem(at: configuration.directory)
+            try? FileManager.default.removeItem(at: importDirectory)
+        }
+        let reader = try await MirrorStore(configuration: configuration)
+        let writer = try await MirrorStore(configuration: configuration)
+        let source = try await MirrorStore(configuration: importConfiguration)
+        let context = try fixedContext()
+        // 빈 정렬 cache부터 실제 변경까지 같은 actor에서 재사용한다.
+        #expect(try await reader.snapshot().records.isEmpty)
+        let local = await reader.execute(try capture(key: "sorted-cache-local", title: "같은 writer", context: context), at: context.capturedAt)
+        #expect(local.state == .locallyCommitted)
+        let localOperationID = try #require(local.operationID)
+        let afterLocal = try await reader.snapshot()
+        #expect(afterLocal.records.map(\.operationID) == [localOperationID])
+        #expect(try await reader.snapshot().records == afterLocal.records)
+        let remote = await writer.execute(try capture(key: "sorted-cache-remote", title: "다른 연결", context: context), at: context.capturedAt)
+        #expect(remote.state == .locallyCommitted)
+        let remoteOperationID = try #require(remote.operationID)
+        let afterRemote = try await reader.snapshot()
+        #expect(afterRemote.records.map(\.operationID) == [localOperationID, remoteOperationID])
+        #expect(afterRemote.records.map(\.lamport) == [1, 2])
+        #expect(try await reader.snapshot().records == afterRemote.records)
+        let imported = await source.execute(try capture(key: "sorted-cache-import", title: "가져온 원본", context: context), at: context.capturedAt)
+        #expect(imported.state == .locallyCommitted)
+        let importedOperationID = try #require(imported.operationID)
+        let archive = try await source.exportArchive(exportedAt: context.capturedAt)
+        let report = try await reader.importArchive(archive)
+        #expect(report.inserted == 1)
+        #expect(!report.projectionPending)
+        let afterImport = try await reader.snapshot()
+        // 마지막에 추가한 Lamport 1 원본은 같은 Lamport의 device ID 순서로 앞에 들어간다.
+        #expect(afterImport.records.map(\.operationID) == [localOperationID, importedOperationID, remoteOperationID])
+        #expect(afterImport.records.map(\.lamport) == [1, 1, 2])
+        #expect(afterImport.records.map(\.deviceID) == [UUID(uuidString: testDeviceID)!, UUID(uuidString: importConfiguration.deviceID)!, UUID(uuidString: testDeviceID)!])
+        #expect(try await reader.snapshot().records == afterImport.records)
+        // 같은 원본을 새 actor에서 읽어 전체 payload/digest/부모/순서까지 비교한다.
+        let reopened = try await MirrorStore(configuration: configuration)
+        #expect(try await reopened.snapshot().records == afterImport.records)
+        let duplicate = try await reader.importArchive(archive)
+        #expect(duplicate.inserted == 0)
+        #expect(duplicate.duplicates == 1)
+        #expect(try await reader.snapshot().records == afterImport.records)
+        let deletion = try await reader.deleteLocalData()
+        #expect(deletion.deleted)
+        await #expect(throws: StoreError.obsoleteEpoch) { try await reader.snapshot() }
+        await #expect(throws: StoreError.obsoleteEpoch) { try await writer.snapshot() }
+        let replacement = try await MirrorStore(configuration: try #require(deletion.newConfiguration))
+        #expect(try await replacement.snapshot().records.isEmpty)
+    }
+
     @Test("저장한 계획 정책과 실제 현재 시각은 카드 context보다 우선한다")
     func staleClockAndPersistedPolicy() async throws {
         let configuration = temporaryConfiguration()

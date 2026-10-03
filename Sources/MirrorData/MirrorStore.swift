@@ -71,7 +71,10 @@ public actor MirrorStore {
     private let persistence: CoreDataPersistence
     private let gate: ProcessWriteGate
     private let identity: StorageIdentity
-    private var records: [OperationRecord] = []
+    private var records: [OperationRecord] = [] {
+        didSet { sortedRecordsCache = nil }
+    }
+    private var sortedRecordsCache: [OperationRecord]? = nil
     private var tasks: [UUID: TaskProjection] = [:]
     private var policy: PlanningPolicy
     private var historyCursor: Data?
@@ -148,7 +151,7 @@ public actor MirrorStore {
         try assertIdentity()
         return StoreSnapshot(
             tasks: tasks.values.sorted { $0.createdAt == $1.createdAt ? $0.taskID.uuidString < $1.taskID.uuidString : $0.createdAt < $1.createdAt },
-            records: records.sorted(by: Self.precedes), policy: policy,
+            records: orderedRecords(), policy: policy,
             workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch,
             syncState: configuration.cloudSync == nil ? .localOnly : .awaitingCloudSynchronization,
             quarantinedCount: Set(quarantined.keys).union(unknownIDs).count,
@@ -911,6 +914,14 @@ public actor MirrorStore {
         var values = try Dictionary(uniqueKeysWithValues: tasks.values.map { ("task:\($0.taskID.uuidString)", try CanonicalDigest.data($0)) })
         values["policy"] = try CanonicalDigest.data(policy)
         return values
+    }
+
+    /// await 없이 같은 actor의 현재 원본만 정렬한다. records의 모든 쓰기는 cache를 무효화한다.
+    private func orderedRecords() -> [OperationRecord] {
+        if let cached = sortedRecordsCache { return cached }
+        let ordered = records.sorted(by: Self.precedes)
+        sortedRecordsCache = ordered
+        return ordered
     }
 
     private static func precedes(_ lhs: OperationRecord, _ rhs: OperationRecord) -> Bool {
