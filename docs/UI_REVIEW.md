@@ -2,9 +2,15 @@
 
 2026-10-03 최신 관측: 소스 `ed384fb`의 추가 UI8 Mac에서는 실제 큰 글자 환경은 `accessibility5`였지만 접근성 그룹의 값이 빈 문자열이어서 네 비교가 실패했다. 실제 창도 드래그 전후1024×674로 원래 resize 대기를 통과하지 못했다. 다음 보완은 Mac의 실제 환경 이름과 창 두 가장자리의 직접 조작으로 검증하며, iOS 값·전체 audit·최종 크기 범위·시간 제한을 유지한다. 정적 보완과 실제 SDK·조작·시각 수용을 구분한다.
 
-이전 소스 `9f125a5`의 기본82는 SwiftPM184 / Mac184+UI6 / iPhone181+UI6 / iPad181+UI6의 네 native 경로와 집계·화면 취합을 통과했다. GitHub 화면 게시는 `processingFailed`로 실패했다. 같은 실행의 IPA archive와 Mac 서명·공증·Gatekeeper 검증은 통과했지만 Release 생성 POST가 HTTP403으로 거절됐다. 정확한 소스의 배포 태그를 먼저 만든 뒤 게시 job만 다시 실행한 attempt2도 POST403으로 실패했고, native 검사는 재실행되지 않았다. 태그 선행 생성은 게시 문제를 해결하지 못했으며 권한 거절의 원인은 미확정이다. 게시 helper의 API·검증·종료 결과를 보존하고 실제 loader·호출·출력 경계의 고정 단계, 허용 예외 분류, 직접 HTTPError의 알려진 상태 코드만 추가 관측한다. 12개 회귀를 작성했으며 로컬에서 실행하지 않았다. unsigned 화면 artifact 세 개의 다운로드도 HTTP403·0bytes로 거절되어 해당 원본의 새 시각 검토를 완료로 표시하지 않는다. 게시 실패의 실제 원인과 최신 소스의 UI 통과는 아직 별도로 확인해야 한다.
+이전 소스 `9f125a5`의 기본82는 SwiftPM184 / Mac184+UI6 / iPhone181+UI6 / iPad181+UI6의 네 native 경로와 집계·화면 취합을 통과했다. GitHub 화면 게시는 `processingFailed`로 실패했다. 같은 실행의 IPA archive와 Mac 서명·공증·Gatekeeper 검증은 통과했지만 Release 게시 POST가 HTTP403으로 거절됐다. 정확한 소스의 배포 태그를 먼저 만든 뒤 게시 job만 다시 실행한 attempt2도 POST403으로 실패했고, native 검사는 재실행되지 않았다. 태그 선행 생성은 게시 문제를 해결하지 못했으며 권한 거절의 원인은 미확정이다. 게시 helper의 API·검증·종료 결과를 보존하고 실제 loader·호출·출력 경계의 고정 단계, 허용 예외 분류, 직접 HTTPError의 알려진 상태 코드만 추가 관측한다. 12개 회귀를 작성했으며 로컬에서 실행하지 않았다. unsigned 화면 artifact 세 개의 다운로드도 HTTP403·0bytes로 거절되어 해당 원본의 새 시각 검토를 완료로 표시하지 않는다. 게시 실패의 실제 원인과 최신 소스의 UI 통과는 아직 별도로 확인해야 한다.
 
 긴 제목이 상세의 기본 화면을 채우지 않도록 기존 ExpandableText를 제목에 재사용한다. 기본3줄과 실제 잘림에 따른 더 보기·접기, 표시 paragraph 말단의 기존 `detail.contentTitle` ID, 별도의 실제 Button을 유지한다. 기존 내일 배치·검색 사례는500자 원문과 펼침·접기 뒤 같은 원문을 확인하며 사진은 다시 접힌 상태의 기존 위치에 남긴다. 원래135개 assertion·32개 XCTFail·여섯 사례·46장·helper/시간 제한을 유지하고 assertion8개를 더했다. 정적 원문 보존과 실제 Actions·접근성·시각 수용은 구별한다.
+
+후속 소스 `09bab98`의 추가 UI10 Mac system에서는 실제 SDK 빌드가 성공하고 actual accessibility5 label 비교를 지나 네 사례가 `unique`의487행에서 실패했다. 누락·중복 조회의 실제 ID는 미관측이며 좁은 창도 두 edge 조절 전후1024×674로15초 대기338행에 실패했다. Mac에 기존 native와 같은 클릭을 사용하고 iOS의 원래 탭을 보존하도록 보완한다. 같은 두 좌표의 마우스 드래그 API는 로컬 SDK가 없어 실제 컴파일·조절 결과를 원격에서 확인한다. 원래 존재·고유·소유·hittable/enabled·최종 크기·audit·시간 제한·사례·사진 계약은 유지한다. 실패 원인이나 수정 통과를 단정하지 않는다.
+
+기본82의 정확한 태그·소스에 빈 draft Release를 만드는 별도 인증의 API 요청은 성공했지만, Actions 게시 job만 다시 실행한 attempt3도 POST403이었다. native·archive는 step 시각까지 같은 계승 결과이며 새 실행0이다. 반복 실패를 중단하고 게시4곳에 선택적 MIRROR_RELEASE_TOKEN fallback을 제공한다. 등록은 아직 미확인이며 배포 완료로 표시하지 않는다. 이후 인증을 바꾼 새 실행에서 UI 원본·IPA·DMG와 실제 자산을 검증한다.
+
+정리 제목은 기본3줄로 접고 같은 표시 paragraph의 원문·접근성 focus를 보존한다. 선택 버튼에 실제 선택 상태와 고유 ID를 추가하고 월 달력은 308pt보다 좁은 가용 폭에서 기존 날짜 목록으로 분배한다. 이 세 변경의 독립 정적 검토는 완료했지만 SDK·실제 focus·44pt 날짜 영역·새 화면 수용은 대기다.
 
 2026-10-02 source `84cb158`의 [밝은63](https://github.com/hellosunghyun/mirror/actions/runs/37028033628)·[다크21](https://github.com/hellosunghyun/mirror/actions/runs/37028033878)은 세 플랫폼의 단위·UI6·guard·최종xcresult·원본 게시를 통과했다. 실제 attempt1·각49자산/46PNG의 귀속·해시·크기·IHDR·CRC·EXIF와 원본 ZIP을 검증하고 두 모드의92원본을 각각 열었다. 작은 입력창·접힌 부가 정보·목록과 선택 상세의 분배가 읽혔고 해당 고정 화면에서 새 확정 겹침은 없었다. [빌드63 설치 파일](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-37028033628)의 IPA·Mac DMG를 포함한8자산도 두 게시 job 성공 뒤 체크섬·버전·서명/공증 게이트로 확인했다. 당시 외관·배포 증거이며 후속 Root 배치·이력 회귀·큰 글자·VoiceOver·실기기 전체 수용을 대신하지 않는다.
 

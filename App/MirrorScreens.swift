@@ -541,6 +541,8 @@ struct MirrorLibraryView: View {
                             } label: { Image(systemName: model.selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square") }
                                 .buttonStyle(.plain).frame(minWidth: 44, minHeight: 44)
                                 .accessibilityLabel("\(task.title), 배치 대상 선택")
+                                .accessibilityValue(model.selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")
+                                .accessibilityIdentifier("task.select.\(task.taskID.uuidString)")
                         }
                         if task.status == .deleted {
                             Button { openDetail(task) } label: {
@@ -601,12 +603,13 @@ struct MirrorReviewView: View {
                         if let task = model.currentReviewTask, let card = model.currentCard {
                             VStack(alignment: .leading, spacing: 10) {
                                 HStack(alignment: .top, spacing: 12) {
-                                    Text(task.title)
+                                    ExpandableText(task.title, lineLimit: 3, togglesOnTap: false,
+                                                   style: .init(link: MirrorPalette.accent),
+                                                   paragraphAccessibilityIdentifier: "review.card",
+                                                   paragraphAccessibilityFocus: $cardFocused)
                                         .font(.title3.weight(.semibold))
-                                        .fixedSize(horizontal: false, vertical: true)
                                         .frame(maxWidth: .infinity, alignment: .leading)
-                                        .accessibilityFocused($cardFocused)
-                                        .accessibilityIdentifier("review.card")
+                                        .id(task.taskID)
                                     Button { model.selectedTaskID = task.taskID } label: {
                                         Label("작업 상세", systemImage: "info.circle")
                                             .labelStyle(.iconOnly)
@@ -1038,10 +1041,16 @@ struct MirrorMonthGrid: View {
             if typeSize.isAccessibilitySize {
                 ForEach(days, id: \.self) { date in dateButton(date, fullLabel: true) }
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7), spacing: 4) {
-                    ForEach(["월", "화", "수", "목", "금", "토", "일"], id: \.self) { Text($0).font(.caption).accessibilityHidden(true) }
-                    ForEach(0..<leadingSlots, id: \.self) { _ in Color.clear.frame(height: 44).accessibilityHidden(true) }
-                    ForEach(days, id: \.self) { date in dateButton(date, fullLabel: false) }
+                ViewThatFits(in: .horizontal) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 44), spacing: 0), count: 7), spacing: 4) {
+                        ForEach(["월", "화", "수", "목", "금", "토", "일"], id: \.self) { Text($0).font(.caption).accessibilityHidden(true) }
+                        ForEach(0..<leadingSlots, id: \.self) { _ in Color.clear.frame(height: 44).accessibilityHidden(true) }
+                        ForEach(days, id: \.self) { date in dateButton(date, fullLabel: false) }
+                    }
+                    .frame(minWidth: 308)
+                    VStack(spacing: 12) {
+                        ForEach(days, id: \.self) { date in dateButton(date, fullLabel: true) }
+                    }
                 }
             }
         }

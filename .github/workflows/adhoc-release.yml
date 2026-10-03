@@ -78,7 +78,7 @@ jobs:
           --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
       - name: 합성 UI 앱샷 전용 prerelease 게시
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: >-
           python3 scripts/ci-ui-evidence.py publish
           --publish-dir "$RUNNER_TEMP/mirror-ui-public"
@@ -202,7 +202,7 @@ jobs:
           path: ${{ runner.temp }}/mirror-adhoc-release
       - name: 검증된 IPA를 해당 push의 Release에 게시
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: >-
           python3 scripts/ci-publish-adhoc.py
           --publish-dir "$RUNNER_TEMP/mirror-adhoc-release"
@@ -225,7 +225,7 @@ jobs:
           path: ${{ runner.temp }}/mirror-macos-release
       - name: 검증한 DMG를 해당 push의 Release에 추가
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: >-
           python3 scripts/ci-macos-release.py
           --publish-dir "$RUNNER_TEMP/mirror-macos-release"

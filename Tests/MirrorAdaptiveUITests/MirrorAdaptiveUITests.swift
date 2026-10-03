@@ -53,12 +53,12 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let more = try button("capture.more", in: app)
         try reveal(more, in: app)
         try assertVisible(more, in: app, outsideKeyboard: true)
-        more.tap()
+        performActivation(more)
         let note = try find("capture.note", in: app)
         try reveal(note, in: app)
         XCTAssertTrue(note.isHittable, "오류 뒤에도 선택 입력을 실제 스크롤로 열 수 있다.")
         try reveal(more, in: app)
-        more.tap()
+        performActivation(more)
         try reveal(title, in: app)
         progress(.optionalInputsVerified)
         progress(.recoveryInputStarted)
@@ -188,7 +188,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         try assertVisible(tomorrow, in: app)
         try assertMobileTarget(tomorrow)
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists)
-        tomorrow.tap()
+        performActivation(tomorrow)
         try gone("plan.cancel", in: app)
         progress(.postponeComplete)
         try destination("today", title: "오늘", in: app)
@@ -214,7 +214,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         search.typeText("\n")
         try reveal(future, in: app)
         try assertVisible(future, in: app)
-        future.tap()
+        performActivation(future)
         try waitForText(title, in: find("detail.contentTitle", in: app))
         XCTAssertTrue(text(try find("detail.plan", in: app)).contains("10월 1일"))
         progress(.detailVerified)
@@ -317,13 +317,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
             .withOffset(CGVector(dx: -2, dy: 0))
         let widthDestination = window.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: 780, dy: before.height / 2))
-        rightEdge.press(forDuration: 0.1, thenDragTo: widthDestination)
+        rightEdge.click(forDuration: 0.1, thenDragTo: widthDestination)
         let widthAdjustedFrame = window.frame
         let bottomEdge = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1))
             .withOffset(CGVector(dx: 0, dy: -2))
         let heightDestination = window.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: widthAdjustedFrame.width / 2, dy: 600))
-        bottomEdge.press(forDuration: 0.1, thenDragTo: heightDestination)
+        bottomEdge.click(forDuration: 0.1, thenDragTo: heightDestination)
         let resizeObservations = ResizeObservations()
         let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let frame = window.frame
@@ -355,7 +355,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let saved = try row("좁은 창에서 저장", in: app)
         try reveal(saved, in: app)
         progress(.detailOpenStarted)
-        saved.tap()
+        performActivation(saved)
         try waitForText("좁은 창에서 저장", in: find("detail.contentTitle", in: app))
         for id in ["detail.close", "detail.postponeTomorrow", "task.complete"] {
             let control = try button(id, in: app)
@@ -496,7 +496,16 @@ final class MirrorAdaptiveUITests: XCTestCase {
         try reveal(control, in: app)
         try assertVisible(control, in: app)
         XCTAssertTrue(control.isEnabled)
-        control.tap()
+        performActivation(control)
+    }
+
+    @MainActor
+    private func performActivation(_ element: XCUIElement) {
+        #if os(macOS)
+        element.click()
+        #else
+        element.tap()
+        #endif
     }
 
     @MainActor
@@ -505,7 +514,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         if tabs.firstMatch.exists {
             let tab = try unique(tabs)
             try assertVisible(tab, in: app)
-            tab.tap()
+            performActivation(tab)
         } else { try tap("destination.\(identifier)", in: app) }
     }
 
@@ -648,7 +657,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor
     private func replaceText(_ field: XCUIElement, with value: String, in app: XCUIApplication) throws {
         try reveal(field, in: app)
-        field.tap()
+        performActivation(field)
         #if os(iOS)
         try dismissKeyboardIntroduction(in: app)
         let current = field.value as? String ?? ""

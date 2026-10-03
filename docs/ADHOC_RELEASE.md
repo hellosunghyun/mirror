@@ -49,6 +49,21 @@ gh secret list --repo hellosunghyun/mirror
 
 제공된 프로파일은 iOS를 포함하는 Ad Hoc 배포용, 와일드카드 Bundle ID, 등록 기기 1대, 배포 인증서 1개다. 앱·Widget·Share 세 Bundle ID의 일치를 각각 검증한다. 현재 프로파일에는 App Group과 iCloud 권한이 없다. 이 권한을 임의로 추가하지 않으며, 실제 공유 저장·CloudKit 연결에는 별도 등록과 해당 권한을 포함한 프로파일이 필요하다.
 
+## 선택적 Release 게시 토큰
+
+`MIRROR_RELEASE_TOKEN`은 선택적 게시용 Secret이다. 등록하면 IPA·DMG와 기본·다크 UI 검토 prerelease의 게시 단계에서 이 값을 `GITHUB_TOKEN`으로 사용한다. 없으면 기존 `secrets.GITHUB_TOKEN`을 사용한다. iOS 서명 세 개와 Mac 서명·공증 네 개의 입력 조건, 실제 검증·서명·공증 및 자산·태그 검증은 유지한다.
+
+GitHub의 fine-grained personal access token을 만들 때 Resource owner는 `hellosunghyun`, Repository access는 **Only select repositories**에서 `hellosunghyun/mirror`만 선택한다. Repository permissions의 **Contents**를 **Read and write**로 지정한다.
+
+저장소를 관리하는 계정으로 로그인한 GitHub CLI에서 다음 명령을 실행하고 비공개 입력창에 토큰을 입력한다. 토큰 값을 채팅·Git·명령줄 인자에 넣지 않는다.
+
+```bash
+gh secret set MIRROR_RELEASE_TOKEN --repo hellosunghyun/mirror
+gh secret list --repo hellosunghyun/mirror
+```
+
+`gh secret list`는 등록된 이름만 확인한다. Secret 등록 여부와 다음 Actions 실행의 실제 Release·자산 게시 성공을 각각 확인한다.
+
 ## 배포 순서와 결과
 
 1. 서명 Secret 등록을 확인한다.

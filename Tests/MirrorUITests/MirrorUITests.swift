@@ -1805,11 +1805,11 @@ final class MirrorUITests: XCTestCase {
             try dismissKeyboardIntroduction(in: app)
         }
         #endif
-        let current = value(of: field)
         #if os(macOS)
         field.typeKey("a", modifierFlags: .command)
         field.typeKey(.delete, modifierFlags: [])
         #else
+        let current = value(of: field)
         // TextField의 placeholder는 value로 보고될 수 있다. 실제 입력 값만 지운다.
         if !current.isEmpty, current != field.placeholderValue {
             field.press(forDuration: 1.2)

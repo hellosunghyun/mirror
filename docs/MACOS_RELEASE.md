@@ -25,6 +25,21 @@ gh secret set MAC_NOTARY_APP_PASSWORD --repo hellosunghyun/mirror
 
 공증용 앱 전용 암호는 [Apple 계정](https://account.apple.com/)의 로그인 및 보안 → 앱 암호에서 생성한다. P12 내보내기 암호, Mac 로그인 암호와 각각 다르다. 공증에 사용할 Team은 검증한 인증서에서 비공개로 확인한다. Apple Development·iOS Distribution·Developer ID Installer 인증서는 이 앱 배포의 서명 인증서로 허용하지 않는다.
 
+## 선택적 Release 게시 토큰
+
+`MIRROR_RELEASE_TOKEN`을 등록하면 같은 Release의 IPA·DMG와 기본·다크 UI 검토 prerelease 게시 단계에서 이 값을 `GITHUB_TOKEN`으로 사용한다. 선택적 Secret이며 없으면 기존 `secrets.GITHUB_TOKEN`을 사용한다. 위 Mac 서명·공증 네 개와 iOS 서명 세 개의 입력 조건 및 모든 실제 검증 게이트를 유지한다.
+
+GitHub의 fine-grained personal access token에서 Resource owner를 `hellosunghyun`으로 지정하고, Repository access의 **Only select repositories**에서 `hellosunghyun/mirror`만 선택한다. Repository permissions의 **Contents** 권한은 **Read and write**로 지정한다.
+
+저장소를 관리하는 계정으로 로그인한 GitHub CLI에서 실행한 뒤 비공개 입력창에 토큰을 입력한다. 토큰 값을 채팅·Git·명령줄 인자에 넣지 않는다.
+
+```bash
+gh secret set MIRROR_RELEASE_TOKEN --repo hellosunghyun/mirror
+gh secret list --repo hellosunghyun/mirror
+```
+
+등록된 이름 확인과 실제 게시 성공은 별도다. 등록 후 다음 Actions 실행에서 공개 DMG와 기존 iOS 자산의 보존을 확인한다.
+
 ## 게시 조건
 
 1. Secret 존재와 Developer ID Application 인증서의 용도·유효기간·신뢰 및 대응 개인 키를 확인한다.

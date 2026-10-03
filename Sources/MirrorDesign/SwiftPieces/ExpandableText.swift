@@ -34,6 +34,7 @@ import SwiftUI
 ///   - togglesOnTap: When true, tapping anywhere on the paragraph also expands or collapses it. Links inside the text still open.
 ///   - style: Link color and weight, fade width, and an optional solid fade color. Defaults to the house palette.
 ///   - paragraphAccessibilityIdentifier: An optional identifier for the visible paragraph after layout and clipping; measuring copies and buttons keep their own accessibility behavior.
+///   - paragraphAccessibilityFocus: An optional accessibility focus binding applied directly to the visible paragraph; measuring copies and buttons are excluded.
 @MainActor
 public struct ExpandableText: View {
     /// Link color and weight, and how the last line fades. `.standard` is the house palette.
@@ -90,18 +91,19 @@ public struct ExpandableText: View {
     private let togglesOnTap: Bool
     private let style: Style
     private let paragraphAccessibilityIdentifier: String?
+    private let paragraphAccessibilityFocus: AccessibilityFocusState<Bool>.Binding?
 
     /// A plain string, shown verbatim.
-    public init(_ text: String, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard, paragraphAccessibilityIdentifier: String? = nil) {
-        self.init(content: .plain(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style, paragraphAccessibilityIdentifier: paragraphAccessibilityIdentifier)
+    public init(_ text: String, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard, paragraphAccessibilityIdentifier: String? = nil, paragraphAccessibilityFocus: AccessibilityFocusState<Bool>.Binding? = nil) {
+        self.init(content: .plain(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style, paragraphAccessibilityIdentifier: paragraphAccessibilityIdentifier, paragraphAccessibilityFocus: paragraphAccessibilityFocus)
     }
 
     /// An attributed string: bold, italics and links are kept, and links stay tappable.
-    public init(_ text: AttributedString, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard, paragraphAccessibilityIdentifier: String? = nil) {
-        self.init(content: .attributed(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style, paragraphAccessibilityIdentifier: paragraphAccessibilityIdentifier)
+    public init(_ text: AttributedString, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard, paragraphAccessibilityIdentifier: String? = nil, paragraphAccessibilityFocus: AccessibilityFocusState<Bool>.Binding? = nil) {
+        self.init(content: .attributed(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style, paragraphAccessibilityIdentifier: paragraphAccessibilityIdentifier, paragraphAccessibilityFocus: paragraphAccessibilityFocus)
     }
 
-    private init(content: Content, lineLimit: Int, isExpanded: Binding<Bool>?, moreLabel: LocalizedStringKey, lessLabel: LocalizedStringKey, showsLess: Bool, togglesOnTap: Bool, style: Style, paragraphAccessibilityIdentifier: String?) {
+    private init(content: Content, lineLimit: Int, isExpanded: Binding<Bool>?, moreLabel: LocalizedStringKey, lessLabel: LocalizedStringKey, showsLess: Bool, togglesOnTap: Bool, style: Style, paragraphAccessibilityIdentifier: String?, paragraphAccessibilityFocus: AccessibilityFocusState<Bool>.Binding?) {
         self.content = content
         self.lineLimit = max(lineLimit, 1)
         self.externalExpanded = isExpanded
@@ -111,6 +113,7 @@ public struct ExpandableText: View {
         self.togglesOnTap = togglesOnTap
         self.style = style
         self.paragraphAccessibilityIdentifier = paragraphAccessibilityIdentifier
+        self.paragraphAccessibilityFocus = paragraphAccessibilityFocus
     }
 
     // MARK: State
@@ -206,7 +209,15 @@ public struct ExpandableText: View {
                 }
             }
         return Group {
-            if let paragraphAccessibilityIdentifier {
+            if let paragraphAccessibilityFocus {
+                if let paragraphAccessibilityIdentifier {
+                    visibleParagraph
+                        .accessibilityIdentifier(paragraphAccessibilityIdentifier)
+                        .accessibilityFocused(paragraphAccessibilityFocus)
+                } else {
+                    visibleParagraph.accessibilityFocused(paragraphAccessibilityFocus)
+                }
+            } else if let paragraphAccessibilityIdentifier {
                 visibleParagraph.accessibilityIdentifier(paragraphAccessibilityIdentifier)
             } else {
                 visibleParagraph

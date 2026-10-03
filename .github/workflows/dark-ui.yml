@@ -73,7 +73,7 @@ jobs:
           --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
       - name: 합성 UI 앱샷 전용 prerelease 게시
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: >-
           python3 scripts/ci-ui-evidence.py publish
           --publish-dir "$RUNNER_TEMP/mirror-ui-public"
