@@ -263,6 +263,24 @@ struct MirrorRootView: View {
         .accessibilityIdentifier("ipad.adjacentCalendar.toggle")
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
+        #if os(iOS)
+        ToolbarItem(placement: commonToolbarPlacement) {
+            HStack(spacing: 8) {
+                Button { model.openCapture() } label: {
+                    Label("일단 넣기", systemImage: "plus")
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("capture.open")
+                .keyboardShortcut("n", modifiers: .command)
+                Button { model.showSettings = true } label: {
+                    Label("설정", systemImage: "gearshape")
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("settings.button")
+            }
+            .buttonStyle(.plain)
+        }
+        #else
         ToolbarItemGroup(placement: commonToolbarPlacement) {
             Button { model.openCapture() } label: {
                 Label("일단 넣기", systemImage: "plus")
@@ -280,6 +298,7 @@ struct MirrorRootView: View {
             }
                 .accessibilityIdentifier("settings.button")
         }
+        #endif
     }
     @ViewBuilder private var statusBar: some View {
         if !model.showCapture,
