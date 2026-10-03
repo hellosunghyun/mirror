@@ -126,6 +126,10 @@ final class MirrorBatchUITests: XCTestCase {
         }
         for attempt in 0..<12 {
             guard app.state == .runningForeground, Date() < deadline else { break }
+            guard closeQuery.element(boundBy: 0).waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow)),
+                  app.state == .runningForeground, Date() < deadline else { break }
+            guard saveQuery.element(boundBy: 0).waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow)),
+                  app.state == .runningForeground, Date() < deadline else { break }
             let closeCount = closeQuery.count
             let saveCount = saveQuery.count
             guard closeCount <= 1, saveCount <= 1 else { break }
