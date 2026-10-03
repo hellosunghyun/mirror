@@ -1,4 +1,113 @@
 import Foundation
+import Observation
+
+/// 입력 presentation의 origin과 저장 뒤 동작은 생성 당시 값으로 고정한다.
+public struct CapturePresentationRequest: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let ownerSceneID: UUID
+    public let single: Bool
+    public let contextID: UUID
+
+    public init(ownerSceneID: UUID, single: Bool, contextID: UUID, id: UUID = UUID()) {
+        self.id = id
+        self.ownerSceneID = ownerSceneID
+        self.single = single
+        self.contextID = contextID
+    }
+}
+
+/// 활성 입력은 하나만 유지하며, 다른 창과 오래된 닫기가 현재 요청을 바꾸지 못한다.
+public struct CapturePresentationState: Equatable, Sendable {
+    public private(set) var request: CapturePresentationRequest?
+
+    public init() {}
+
+    public func presentation(for ownerSceneID: UUID) -> CapturePresentationRequest? {
+        guard request?.ownerSceneID == ownerSceneID else { return nil }
+        return request
+    }
+
+    @discardableResult
+    public mutating func open(ownerSceneID: UUID, single: Bool, contextID: UUID) -> Bool {
+        if let request { return request.ownerSceneID == ownerSceneID }
+        request = CapturePresentationRequest(ownerSceneID: ownerSceneID, single: single, contextID: contextID)
+        return true
+    }
+
+    @discardableResult
+    public mutating func close(presentationID: UUID, ownerSceneID: UUID) -> Bool {
+        guard request?.id == presentationID, request?.ownerSceneID == ownerSceneID else { return false }
+        request = nil
+        return true
+    }
+
+    @discardableResult
+    public mutating func finish(presentationID: UUID, ownerSceneID: UUID) -> Bool {
+        guard request?.single == true else { return false }
+        return close(presentationID: presentationID, ownerSceneID: ownerSceneID)
+    }
+}
+
+/// scene가 직접 보유하는 수명이다. 요청과 coordinator는 이 객체를 retain하지 않는다.
+@MainActor
+public final class CaptureSceneOwner {
+    public let id: UUID
+
+    public init(id: UUID = UUID()) { self.id = id }
+}
+
+/// 원본 상태의 관측은 유지하고, 실제 owner가 해제된 요청만 다음 open에서 정리한다.
+@Observable
+@MainActor
+public final class CapturePresentationCoordinator {
+    private var state = CapturePresentationState()
+    @ObservationIgnored private weak var owner: CaptureSceneOwner?
+
+    public init() {}
+
+    public var request: CapturePresentationRequest? {
+        // owner가 nil이어도 state 읽기를 먼저 수행하여 nested Observation 경계를 유지한다.
+        let request = state.request
+        guard let owner, request?.ownerSceneID == owner.id else { return nil }
+        return request
+    }
+
+    public func presentation(for ownerSceneID: UUID) -> CapturePresentationRequest? {
+        let request = request
+        guard request?.ownerSceneID == ownerSceneID else { return nil }
+        return request
+    }
+
+    public func isCurrent(_ request: CapturePresentationRequest, contextID: UUID) -> Bool {
+        guard let current = self.request else { return false }
+        return current == request && request.contextID == contextID
+    }
+
+    @discardableResult
+    public func open(owner newOwner: CaptureSceneOwner, single: Bool, contextID: UUID) -> Bool {
+        if let stale = state.request, owner == nil {
+            state.close(presentationID: stale.id, ownerSceneID: stale.ownerSceneID)
+        }
+        if let owner, owner !== newOwner { return false }
+        guard state.open(ownerSceneID: newOwner.id, single: single, contextID: contextID) else { return false }
+        owner = newOwner
+        return true
+    }
+
+    @discardableResult
+    public func close(presentationID: UUID, ownerSceneID: UUID) -> Bool {
+        guard state.close(presentationID: presentationID, ownerSceneID: ownerSceneID) else { return false }
+        owner = nil
+        return true
+    }
+
+    @discardableResult
+    public func finish(presentationID: UUID, ownerSceneID: UUID) -> Bool {
+        guard state.finish(presentationID: presentationID, ownerSceneID: ownerSceneID) else { return false }
+        owner = nil
+        return true
+    }
+}
 
 /// URL은 화면 탐색만 표현한다. 이를 받는 것만으로 명령을 실행하지 않는다.
 public enum MirrorRoute: Equatable, Sendable {

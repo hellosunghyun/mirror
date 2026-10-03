@@ -1,5 +1,6 @@
 import MirrorDesign
 import MirrorDomain
+import MirrorSystem
 import CoreSpotlight
 import SwiftUI
 #if os(iOS)
@@ -12,7 +13,7 @@ struct MirrorRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var sceneExposureID = UUID()
+    @State private var sceneOwner = CaptureSceneOwner()
     @State private var adjacentCalendarVisible = false
     @State private var detailCloseRequestedID: UUID?
     @State private var detailDraftTaskID: UUID?
@@ -20,6 +21,7 @@ struct MirrorRootView: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    private var sceneExposureID: UUID { sceneOwner.id }
     private var isCompact: Bool {
         #if os(iOS)
         return sizeClass == .compact
@@ -64,8 +66,12 @@ struct MirrorRootView: View {
             .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
         }
         .environment(\.mirrorTaskSelection, { id in requestTaskSelection(id) })
+        .environment(\.mirrorCaptureOpen, captureOpenAction)
+        #if os(macOS)
+        .focusedSceneValue(\.mirrorCaptureOpen, captureOpenAction)
+        #endif
         .tint(MirrorPalette.accent)
-        .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
+        .sheet(item: capturePresentation) { request in MirrorCaptureView(request: request) }
         .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
         .sheet(isPresented: $model.showReview) { MirrorReviewView() }
         .sheet(item: basePicker, onDismiss: { model.finishWidgetPickerDismissal() }) { MirrorPlanPicker(request: $0) }
@@ -81,7 +87,10 @@ struct MirrorRootView: View {
             }
         }
         .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
-        .onOpenURL { url in Task { await model.handleURL(url) } }
+        .onOpenURL { url in
+            let owner = sceneOwner
+            Task { await model.handleURL(url, captureOwner: owner) }
+        }
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
             Task { await model.handleSpotlight(activity) }
         }
@@ -197,7 +206,7 @@ struct MirrorRootView: View {
                 .font(.title2.weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 12)
-            Button { model.openCapture() } label: {
+            Button { captureOpenAction() } label: {
                 Label("일단 넣기", systemImage: "plus")
                     .labelStyle(.iconOnly)
                     .frame(minWidth: 44, minHeight: 44)
@@ -270,7 +279,7 @@ struct MirrorRootView: View {
         #if os(iOS)
         ToolbarItem(placement: commonToolbarPlacement) {
             HStack(spacing: 8) {
-                Button { model.openCapture() } label: {
+                Button { captureOpenAction() } label: {
                     Label("일단 넣기", systemImage: "plus")
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
@@ -286,7 +295,7 @@ struct MirrorRootView: View {
         }
         #else
         ToolbarItemGroup(placement: commonToolbarPlacement) {
-            Button { model.openCapture() } label: {
+            Button { captureOpenAction() } label: {
                 Label("일단 넣기", systemImage: "plus")
                     #if os(iOS)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -305,7 +314,7 @@ struct MirrorRootView: View {
         #endif
     }
     @ViewBuilder private var statusBar: some View {
-        if !model.showCapture,
+        if model.capturePresentation(for: sceneExposureID) == nil,
             (!model.showReview || model.systemProblem != nil || model.cleanupProblem != nil),
             model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
             || model.lastUndo != nil || model.systemProblem != nil || model.cleanupProblem != nil {
@@ -380,6 +389,30 @@ struct MirrorRootView: View {
                 }.accessibilityIdentifier("state.dismissFeedback")
             }
         }
+    }
+    private var captureOpenAction: MirrorCaptureOpenAction {
+        let model = model
+        let owner = sceneOwner
+        return {
+            if model.isLoading || model.context == nil {
+                Task {
+                    await model.start()
+                    model.openCapture(owner: owner)
+                }
+            } else {
+                model.openCapture(owner: owner)
+            }
+        }
+    }
+    private var capturePresentation: Binding<CapturePresentationRequest?> {
+        // Binding 생성 시의 요청을 닫는다. 오래된 false setter는 새 요청을 해제하지 못한다.
+        let displayedRequest = model.capturePresentation(for: sceneExposureID)
+        return Binding(get: {
+            model.capturePresentation(for: sceneExposureID)
+        }, set: { presented in
+            guard presented == nil, let displayedRequest else { return }
+            model.closeCapture(displayedRequest)
+        })
     }
     private var taskInspectorPresentation: Binding<Bool> {
         Binding(get: {
@@ -486,6 +519,7 @@ struct MirrorDeadlineConfirmation: ViewModifier {
 @MainActor
 struct MirrorOnboardingView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorCaptureOpen) private var openCapture
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -493,9 +527,9 @@ struct MirrorOnboardingView: View {
                 Text("잘 미루면,\n지금 할 일이 남는다.").font(.largeTitle.weight(.semibold))
                 Text("생각난 일은 보관함에 일단 넣으세요. 오늘 할 일은 정리할 때 직접 정해요. 날짜를 정하지 않은 일이 오늘 목록에 자동으로 들어가지 않아요.")
                 Text("계획 시간대: \(model.preferences.timeZoneID) · 설정에서 바꿀 수 있어요.").font(.caption)
-                Button { model.finishOnboarding() } label: {
+                Button { model.finishOnboarding(); openCapture?() } label: {
                     Text("첫 할 일 입력").foregroundStyle(MirrorPalette.onAccent)
-                }.buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
+                }.disabled(openCapture == nil).buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
                 Button("바로 둘러보기") { model.preferences.onboardingComplete = true; model.savePreferences() }
             }.padding(28).frame(maxWidth: 520, alignment: .leading).frame(maxWidth: .infinity)
         }

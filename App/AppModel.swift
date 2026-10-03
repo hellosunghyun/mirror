@@ -94,8 +94,8 @@ final class AppModel {
     private var detailEditingOwners: [UUID: DetailEditingClaim] = [:]
     var isDetailEditing: Bool { !detailEditingOwners.isEmpty }
     var selectedTaskIDs: Set<UUID> = []
-    var showCapture = false
-    var captureIsSingle = false
+    private let capturePresentationCoordinator = CapturePresentationCoordinator()
+    var showCapture: Bool { capturePresentationCoordinator.request != nil }
     var showSettings = false
     var showReview = false
     var picker: PlanPickerRequest?
@@ -524,21 +524,37 @@ final class AppModel {
             systemProblem = "복구 상태를 확인하지 못했어요. 외부 노출과 알림은 계속 꺼져 있어요."
         }
     }
-    func openCapture(single: Bool = false) {
-        captureIsSingle = single
-        showCapture = true
+    func capturePresentation(for ownerSceneID: UUID) -> CapturePresentationRequest? {
+        capturePresentationCoordinator.presentation(for: ownerSceneID)
     }
-    func finishCapture() {
-        guard captureIsSingle else { return }
-        showCapture = false
-        captureIsSingle = false
+    func openCapture(owner: CaptureSceneOwner, single: Bool = false) {
+        guard !isLoading, context != nil else { return }
+        guard capturePresentationCoordinator.open(owner: owner, single: single, contextID: storeObservationID) else {
+            feedback = "다른 창에서 입력 중이에요. 그 창에서 입력을 마무리해 주세요."
+            return
+        }
+    }
+    @discardableResult
+    func closeCapture(_ request: CapturePresentationRequest) -> Bool {
+        capturePresentationCoordinator.close(presentationID: request.id, ownerSceneID: request.ownerSceneID)
+    }
+    @discardableResult
+    func finishCapture(_ request: CapturePresentationRequest) -> Bool {
+        guard capturePresentationCoordinator.finish(presentationID: request.id, ownerSceneID: request.ownerSceneID) else { return false }
         destination = .today
+        return true
     }
-    func finishOnboarding() { preferences.onboardingComplete = true; savePreferences(); openCapture() }
+    func finishOnboarding() { preferences.onboardingComplete = true; savePreferences() }
 
     @discardableResult
     func capture(title: String, note: String, sourceURL: String, requestToken: String = UUID().uuidString,
-                 initialPlan: PlanTarget? = nil, displayedContext: PlanningContext? = nil) async -> Bool {
+                 initialPlan: PlanTarget? = nil, displayedContext: PlanningContext? = nil,
+                 presentation: CapturePresentationRequest? = nil) async -> Bool {
+        if let presentation, !capturePresentationCoordinator.isCurrent(presentation, contextID: storeObservationID) {
+            problem = "입력을 연 화면이나 저장 공간 연결이 바뀌었어요. 입력한 내용을 유지했어요. 닫고 현재 공간에서 다시 열어 주세요."
+            captureInputProblemRevision = problemRevision
+            return false
+        }
         let effectiveTitle = title.isEmpty ? sourceURL : title
         do {
             let content = try TaskContent(title: effectiveTitle,
@@ -1225,7 +1241,7 @@ final class AppModel {
         else { preferences.deadlineAlarmDates.removeValue(forKey: task.taskID) }
         savePreferences()
     }
-    func handleURL(_ url: URL, expectedObservationID: UUID? = nil) async {
+    func handleURL(_ url: URL, expectedObservationID: UUID? = nil, captureOwner: CaptureSceneOwner? = nil) async {
         do {
             if store == nil || isLoading { await start() }
             guard await refresh() else { return }
@@ -1260,7 +1276,12 @@ final class AppModel {
             default: break
             }
             switch validated {
-            case .capture: openCapture(single: true)
+            case .capture:
+                guard let captureOwner else {
+                    feedback = "이 창에서 일단 넣기를 눌러 입력을 열어 주세요."
+                    return
+                }
+                openCapture(owner: captureOwner, single: true)
             case .today: destination = .today
             case let .review(weekly): beginReview(mode: .manualResume, weekly: weekly)
             case let .task(id): selectedTaskID = id

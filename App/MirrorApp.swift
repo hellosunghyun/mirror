@@ -148,12 +148,26 @@ struct MirrorMenuBarContent: View {
 #endif
 
 #if os(macOS)
+private struct MirrorCaptureOpenFocusedKey: FocusedValueKey {
+    typealias Value = MirrorCaptureOpenAction
+}
+
+extension FocusedValues {
+    var mirrorCaptureOpen: MirrorCaptureOpenAction? {
+        get { self[MirrorCaptureOpenFocusedKey.self] }
+        set { self[MirrorCaptureOpenFocusedKey.self] = newValue }
+    }
+}
+
 @MainActor
 struct MirrorCommands: Commands {
     let model: AppModel
+    @FocusedValue(\.mirrorCaptureOpen) private var openCapture
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("할 일 일단 넣기") { model.openCapture() }.keyboardShortcut("n", modifiers: .command)
+            Button("할 일 일단 넣기") { openCapture?() }
+                .keyboardShortcut("n", modifiers: .command)
+                .disabled(openCapture == nil)
         }
         CommandGroup(after: .textEditing) {
             Button("전체 작업 검색") { model.destination = .library; model.searchRequested = true }.keyboardShortcut("f", modifiers: .command)

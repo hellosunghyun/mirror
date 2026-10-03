@@ -1,5 +1,6 @@
 import MirrorDesign
 import MirrorDomain
+import MirrorSystem
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,6 +10,19 @@ struct MirrorTaskSelectionRequest: Equatable, Sendable {
     let destinationID: UUID
     let workspaceKey: String
     let workspaceEpoch: String
+}
+
+typealias MirrorCaptureOpenAction = @MainActor @Sendable () -> Void
+
+private struct MirrorCaptureOpenKey: EnvironmentKey {
+    static let defaultValue: MirrorCaptureOpenAction? = nil
+}
+
+extension EnvironmentValues {
+    var mirrorCaptureOpen: MirrorCaptureOpenAction? {
+        get { self[MirrorCaptureOpenKey.self] }
+        set { self[MirrorCaptureOpenKey.self] = newValue }
+    }
 }
 
 private struct MirrorTaskSelectionKey: EnvironmentKey {
@@ -25,6 +39,7 @@ extension EnvironmentValues {
 @MainActor
 struct MirrorTodayView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.mirrorCaptureOpen) private var openCapture
     @Environment(\.mirrorTaskSelection) private var selectTask
     @State private var showCompleted = false
     @State private var showReviewSummary = false
@@ -98,7 +113,8 @@ struct MirrorTodayView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("today.empty.description")
-                        Button("일단 넣기") { model.openCapture() }
+                        Button("일단 넣기") { openCapture?() }
+                            .disabled(openCapture == nil)
                             .buttonStyle(.borderless).frame(minHeight: 44)
                     }
                     .multilineTextAlignment(.center)
@@ -229,6 +245,7 @@ struct MirrorTaskRow: View {
 
 @MainActor
 struct MirrorCaptureView: View {
+    let request: CapturePresentationRequest
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
@@ -296,7 +313,7 @@ struct MirrorCaptureView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { model.clearCaptureInputProblem(); focusedField = nil; dismiss() } label: {
+                    Button { closeCapture() } label: {
                         Text("닫기")
                             #if os(iOS)
                             .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -343,7 +360,7 @@ struct MirrorCaptureView: View {
                                 for line in lines {
                                     requestToken = UUID().uuidString
                                     guard await model.capture(title: line, note: note, sourceURL: sourceURL, requestToken: requestToken,
-                                                              initialPlan: initialPlan, displayedContext: planContext) else {
+                                                              initialPlan: initialPlan, displayedContext: planContext, presentation: request) else {
                                         if model.projectionPending { pendingLine = line }
                                         break
                                     }
@@ -360,7 +377,7 @@ struct MirrorCaptureView: View {
                 }.tint(MirrorPalette.accent)
             }
             .sheet(isPresented: $showDatePicker, onDismiss: {
-                if model.showCapture { focusedField = .title }
+                if model.capturePresentation(for: request.ownerSceneID) == request { focusedField = .title }
             }) {
                 if let datePickerContext {
                     MirrorCaptureDatePicker(context: datePickerContext) { target in
@@ -437,13 +454,19 @@ struct MirrorCaptureView: View {
         guard let context, let day = try? context.planningDay.addingDays(offset) else { return }
         planContext = context; initialPlan = .day(day)
     }
+    private func closeCapture() {
+        guard model.closeCapture(request) else { return }
+        model.clearCaptureInputProblem()
+        focusedField = nil
+        dismiss()
+    }
     private func save() {
         showSavedFeedback = false
         startCaptureFlow()
         Task {
             requestToken = UUID().uuidString
             if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken,
-                                   initialPlan: initialPlan, displayedContext: planContext) {
+                                   initialPlan: initialPlan, displayedContext: planContext, presentation: request) {
                 title = ""; note = ""; sourceURL = ""
                 initialPlan = nil; planContext = nil
                 requestToken = UUID().uuidString
@@ -454,14 +477,13 @@ struct MirrorCaptureView: View {
     }
     private func finishSavedCapture() {
         // 원본 저장과 projection 갱신을 확인한 성공 경로에서만 단일 입력을 닫는다.
-        let single = model.captureIsSingle
+        let single = request.single
         savedFeedback = model.feedback ?? "보관함에 넣었어요."
         if !single { showSavedFeedback = true }
         note = ""; sourceURL = ""
         more = false
         focusedField = single ? nil : .title
-        model.finishCapture()
-        if single { dismiss() }
+        if model.finishCapture(request) { dismiss() }
     }
     private func startCaptureFlow() {
         guard !captureFlowStarted else { return }

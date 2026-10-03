@@ -28,6 +28,137 @@ private func notificationEvent(_ route: MirrorRoute, request: String,
 
 @Suite("시스템 탐색과 복구 중 외부 노출")
 struct SystemNavigationTests {
+    @Test("같은 창의 입력 재호출은 생성 당시 모드와 presentation을 유지한다")
+    func captureSameOwnerKeepsPresentation() throws {
+        let contextID = UUID()
+        let owner = UUID()
+        for single in [false, true] {
+            var state = CapturePresentationState()
+            #expect(state.open(ownerSceneID: owner, single: single, contextID: contextID))
+            let first = try #require(state.presentation(for: owner))
+            #expect(state.open(ownerSceneID: owner, single: !single, contextID: UUID()))
+            #expect(state.request == first)
+            #expect(state.presentation(for: owner)?.single == single)
+            #expect(state.presentation(for: owner)?.contextID == contextID)
+        }
+    }
+
+    @Test("다른 창의 입력과 닫기는 기존 owner의 요청을 바꾸지 못한다")
+    func captureOtherOwnerCannotReplaceOrClose() throws {
+        let contextID = UUID()
+        let owner = UUID(), other = UUID()
+        var state = CapturePresentationState()
+        #expect(state.open(ownerSceneID: owner, single: false, contextID: contextID))
+        let first = try #require(state.request)
+        #expect(!state.open(ownerSceneID: other, single: true, contextID: contextID))
+        #expect(state.request == first)
+        #expect(state.presentation(for: other) == nil)
+        #expect(!state.close(presentationID: first.id, ownerSceneID: other))
+        #expect(!state.close(presentationID: UUID(), ownerSceneID: owner))
+        #expect(state.request == first)
+    }
+
+    @Test("이전 닫기와 저장 완료는 새 presentation을 해제하지 못한다")
+    func staleCaptureCannotCloseNewPresentation() throws {
+        let contextID = UUID()
+        let owner = UUID()
+        var state = CapturePresentationState()
+        #expect(state.open(ownerSceneID: owner, single: true, contextID: contextID))
+        let first = try #require(state.request)
+        #expect(state.close(presentationID: first.id, ownerSceneID: owner))
+        #expect(state.request == nil)
+        #expect(state.open(ownerSceneID: owner, single: true, contextID: contextID))
+        let second = try #require(state.request)
+        #expect(second.id != first.id)
+        #expect(!state.close(presentationID: first.id, ownerSceneID: owner))
+        #expect(!state.finish(presentationID: first.id, ownerSceneID: owner))
+        #expect(state.request == second)
+        #expect(state.finish(presentationID: second.id, ownerSceneID: owner))
+        #expect(state.request == nil)
+    }
+
+    @Test("연속 입력 성공은 열어 두고 단일 입력은 자신의 일치하는 성공만 닫는다")
+    func captureCompletionModeIsOwned() throws {
+        let contextID = UUID()
+        let owner = UUID(), other = UUID()
+        for single in [false, true] {
+            var state = CapturePresentationState()
+            #expect(state.open(ownerSceneID: owner, single: single, contextID: contextID))
+            let request = try #require(state.request)
+            #expect(!state.finish(presentationID: request.id, ownerSceneID: other))
+            #expect(state.request == request)
+            #expect(state.finish(presentationID: request.id, ownerSceneID: owner) == single)
+            if single {
+                #expect(state.request == nil)
+            } else {
+                #expect(state.request == request)
+                #expect(state.close(presentationID: request.id, ownerSceneID: owner))
+                #expect(state.request == nil)
+            }
+        }
+    }
+
+    @MainActor @Test("coordinator는 살아 있는 다른 owner를 거절하고 생성 당시 모드를 유지한다")
+    func captureCoordinatorKeepsLiveOwner() throws {
+        let contextID = UUID(), nextContextID = UUID()
+        let coordinator = CapturePresentationCoordinator()
+        let owner = CaptureSceneOwner(), other = CaptureSceneOwner()
+        #expect(coordinator.open(owner: owner, single: false, contextID: contextID))
+        let first = try #require(coordinator.request)
+        #expect(!coordinator.open(owner: other, single: true, contextID: contextID))
+        #expect(coordinator.request == first)
+        #expect(coordinator.presentation(for: owner.id) == first)
+        #expect(coordinator.presentation(for: other.id) == nil)
+        #expect(coordinator.open(owner: owner, single: true, contextID: nextContextID))
+        #expect(coordinator.request == first)
+        #expect(coordinator.request?.single == false)
+        #expect(coordinator.request?.contextID == contextID)
+        #expect(coordinator.isCurrent(first, contextID: contextID))
+        #expect(!coordinator.isCurrent(first, contextID: nextContextID))
+        #expect(!coordinator.close(presentationID: first.id, ownerSceneID: other.id))
+        #expect(!coordinator.finish(presentationID: first.id, ownerSceneID: other.id))
+        #expect(coordinator.request == first)
+        #expect(coordinator.close(presentationID: first.id, ownerSceneID: owner.id))
+        #expect(coordinator.request == nil)
+        #expect(coordinator.open(owner: owner, single: true, contextID: nextContextID))
+        let reopened = try #require(coordinator.request)
+        #expect(reopened.id != first.id)
+        #expect(reopened.contextID == nextContextID)
+        #expect(!coordinator.isCurrent(first, contextID: nextContextID))
+        #expect(coordinator.isCurrent(reopened, contextID: nextContextID))
+        #expect(coordinator.finish(presentationID: reopened.id, ownerSceneID: owner.id))
+        #expect(coordinator.request == nil)
+    }
+
+    @MainActor @Test("coordinator와 request는 owner를 retain하지 않고 stale close가 새 owner를 해제하지 않는다")
+    func captureCoordinatorReclaimsReleasedOwner() throws {
+        let contextID = UUID()
+        let coordinator = CapturePresentationCoordinator()
+        var initialOwner: CaptureSceneOwner? = CaptureSceneOwner()
+        weak var weakInitialOwner = initialOwner
+        let oldRequest: CapturePresentationRequest
+        do {
+            let owner = try #require(initialOwner)
+            #expect(coordinator.open(owner: owner, single: true, contextID: contextID))
+            oldRequest = try #require(coordinator.request)
+        }
+        initialOwner = nil
+        #expect(weakInitialOwner == nil)
+        #expect(coordinator.request == nil)
+        #expect(coordinator.presentation(for: oldRequest.ownerSceneID) == nil)
+
+        let nextOwner = CaptureSceneOwner()
+        #expect(coordinator.open(owner: nextOwner, single: true, contextID: contextID))
+        let nextRequest = try #require(coordinator.request)
+        #expect(nextRequest.id != oldRequest.id)
+        #expect(nextRequest.ownerSceneID == nextOwner.id)
+        #expect(!coordinator.close(presentationID: oldRequest.id, ownerSceneID: oldRequest.ownerSceneID))
+        #expect(!coordinator.finish(presentationID: oldRequest.id, ownerSceneID: oldRequest.ownerSceneID))
+        #expect(coordinator.request == nextRequest)
+        #expect(coordinator.finish(presentationID: nextRequest.id, ownerSceneID: nextOwner.id))
+        #expect(coordinator.request == nil)
+    }
+
     @Test("알림은 현재 epoch의 정리와 일치하는 실제 마감 작업만 열고 명령 경로를 받지 않는다")
     func notificationOwnership() {
         let id = UUID(), other = UUID()
@@ -41,6 +172,8 @@ struct SystemNavigationTests {
         #expect(notificationEvent(.task(other), request: "deadline:local-v1:\(id.uuidString)").route(workspaceEpoch: "local-v1") == nil)
         #expect(notificationEvent(.review(weekly: false), request: "review:local-v1:2026-02-30").route(workspaceEpoch: "local-v1") == nil)
         #expect(notificationEvent(.today, request: "review:local-v1:2026-10-03").route(workspaceEpoch: "local-v1") == nil)
+        #expect(notificationEvent(.capture, request: "review:local-v1:2026-10-03").route(workspaceEpoch: "local-v1") == nil)
+        #expect(notificationEvent(.capture, request: "deadline:local-v1:\(id.uuidString)").route(workspaceEpoch: "local-v1") == nil)
         #expect(notificationEvent(.schedule(taskID: id, sessionID: nil, cardID: nil), request: "deadline:local-v1:\(id.uuidString)").route(workspaceEpoch: "local-v1") == nil)
         #expect(notificationEvent(.task(id), request: "foreign:\(id.uuidString)").route(workspaceEpoch: "local-v1") == nil)
         for action in [UNNotificationDismissActionIdentifier, "complete"] {
