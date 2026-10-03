@@ -1159,5 +1159,60 @@ class PublicSDKNoticeBoundsTests(unittest.TestCase):
         self.assertEqual(self.run_notice(raw=b' ' * (sdk_notice.MAX_INPUT + 1)), (2, []))
 
 
+    def test_sdk_notice_oversize_prefers_three_real_declarations_over_function_parameter_references(self):
+        from hashlib import sha256
+        function = ('@available(macOS 14.0, *) @MainActor public func performAccessibilityAudit('
+                    'for auditTypes: XCUIAccessibilityAuditType = .all, '
+                    '_ issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)? = nil) throws')
+        variants = (('SyntheticTypes.swiftinterface', '@objc public class XCUIAccessibilityAuditIssue : NSObject {',
+                     'public struct XCUIAccessibilityAuditType : OptionSet {'),
+                    ('SyntheticTypes.swiftinterface', 'public struct XCUIAccessibilityAuditIssue {',
+                     'public enum XCUIAccessibilityAuditType : UInt {'),
+                    ('SyntheticTypes.h', '@interface XCUIAccessibilityAuditIssue : NSObject',
+                     'typedef NS_OPTIONS(NSUInteger, XCUIAccessibilityAuditType) {'))
+        context = '// synthetic public context % \\ " 한글 ' + 'x' * 400
+        for type_name, issue, audit_type in variants:
+            with self.subTest(declarationKinds=(issue.split()[0], audit_type.split()[0])):
+                function_lines = [context] * 5 + [function] + [context] * 5
+                issue_lines = [context] * 3 + [issue] + ['    // exact adjacent whole body line', '}'] + [context] * 3
+                type_lines = [context] * 3 + [audit_type] + ['    // exact adjacent whole body line', '}'] + [context] * 3
+                function_whole = ['// synthetic preceding public line'] * 16 + function_lines
+                type_whole = ['// synthetic preceding public line'] * 100 + issue_lines
+                type_whole += ['// synthetic gap kept outside excerpts'] * (200 - len(type_whole)) + type_lines
+                whole_sources = {'SyntheticPublic.swiftinterface': function_whole, type_name: type_whole}
+                value = {'status': 'found', 'files': [
+                    {**self.record(self.excerpt(17, '\r\n'.join(function_lines)), name='SyntheticPublic.swiftinterface'),
+                     'sha256': sha256(('\n'.join(function_whole) + '\n').encode('utf-8')).hexdigest()},
+                    {**self.record(self.excerpt(101, '\n'.join(issue_lines)), self.excerpt(201, '\n'.join(type_lines)), name=type_name),
+                     'sha256': sha256(('\n'.join(type_whole) + '\n').encode('utf-8')).hexdigest()}]}
+                self.assertTrue(sdk_notice.valid_files(value['files']))
+                self.assertLessEqual(len(json.dumps(value, ensure_ascii=True).encode('ascii')), sdk_notice.MAX_INPUT)
+                full_report = {'schemaVersion': 1, 'sourceSHA': 'a' * 40, 'runID': '1', 'attempt': '1', **value}
+                self.assertIsNone(sdk_notice.encoded_notice(full_report))
+                code, notices = self.run_notice(value)
+                self.assertEqual(code, 0)
+                self.assertEqual(len(notices), 1)
+                self.assertLessEqual(len(notices[0].encode('ascii')) + 1, sdk_notice.MAX_NOTICE)
+                report = self.decoded_report(notices[0])
+                self.assertEqual(set(report), {'schemaVersion', 'sourceSHA', 'runID', 'attempt', 'status', 'files'})
+                self.assertEqual(report['status'], 'found')
+                self.assertTrue(sdk_notice.valid_files(report['files']))
+                expected_hashes = {record['file']: record['sha256'] for record in value['files']}
+                returned_lines = {}
+                for record in report['files']:
+                    self.assertEqual(record['sha256'], expected_hashes[record['file']])
+                    source_lines = whole_sources[record['file']]
+                    for excerpt in record['excerpts']:
+                        start = excerpt['firstLine'] - 1
+                        lines = excerpt['text'].splitlines()
+                        self.assertEqual(lines, source_lines[start:start + len(lines)])
+                        for offset, line in enumerate(lines):
+                            returned_lines[(record['file'], excerpt['firstLine'] + offset)] = line
+                self.assertEqual(returned_lines[('SyntheticPublic.swiftinterface', 22)], function)
+                self.assertEqual(returned_lines[(type_name, 104)], issue)
+                self.assertEqual(returned_lines[(type_name, 204)], audit_type)
+                self.assertLessEqual(len(returned_lines), 9)
+
+
 if __name__ == '__main__':
     unittest.main()

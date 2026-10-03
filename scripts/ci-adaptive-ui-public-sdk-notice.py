@@ -100,23 +100,43 @@ def selected_files(files, selected):
     return records
 
 
+def declared_symbols(line):
+    # 공개 발췌의 선언 시작만 우선한다. parameter/reference/comment를 타입 정의로 세지 않는다.
+    modifiers = r'^\s*(?:(?:@[A-Za-z_][A-Za-z0-9_:]*(?:\([^)]*\))?|public|open|final|indirect|nonisolated|static|override|required|convenience|mutating|nonmutating)\s+)*'
+    declared = []
+    for symbol in SYMBOLS:
+        if symbol == 'performAccessibilityAudit':
+            patterns = (modifiers + r'func\s+' + symbol + r'\b',
+                        r'^\s*[-+]\s*\([^)]*\)\s*' + symbol + r'\b')
+        else:
+            patterns = (modifiers + r'(?:class|struct|enum|protocol|typealias)\s+' + symbol + r'\b',
+                        r'^\s*@(?:interface|protocol)\s+' + symbol + r'\b',
+                        r'^\s*typedef\s+NS_(?:OPTIONS|ENUM)\s*\([^,()]+,\s*' + symbol + r'\b')
+        if any(re.match(pattern, line) for pattern in patterns):
+            declared.append(symbol)
+    return tuple(declared)
+
+
 def compact_notice(report):
     notice = encoded_notice(report)
     if notice is not None:
         return notice
-    # 원래 input 전체를 검증한 뒤 실제 target 줄만 고른다. greedy 선택은 최적 조합을 보장하지 않는다.
+    # 원래 input 전체를 검증한 뒤 실제 선언이 있는 계약은 그 정의 줄로만 coverage를 채운다.
+    # 발췌에 선언이 없는 이름만 기존 reference 선택을 유지하며, API 계약 확인으로 해석하지 않는다.
     candidates = []
     for file_index, record in enumerate(report['files']):
         for excerpt_index, excerpt in enumerate(record['excerpts']):
             for index, line in enumerate(excerpt['text'].splitlines()):
                 symbols = tuple(symbol for symbol in SYMBOLS if re.search(r'\b' + symbol + r'\b', line))
                 if symbols:
-                    candidates.append(((file_index, excerpt_index, index), symbols))
+                    candidates.append(((file_index, excerpt_index, index), symbols, declared_symbols(line)))
+    declarations_available = {symbol for _, _, declarations in candidates for symbol in declarations}
     selected, covered, targets = set(), set(), []
     for _ in SYMBOLS:
         best = None
-        for position, symbols in candidates:
-            new_symbols = set(symbols) - covered
+        for position, symbols, declarations in candidates:
+            coverage = set(declarations) | (set(symbols) - declarations_available)
+            new_symbols = coverage - covered
             if not new_symbols:
                 continue
             proposed = selected | {position}
@@ -128,7 +148,7 @@ def compact_notice(report):
                 continue
             rank = (-len(new_symbols), len(notice.encode('ascii')), position)
             if best is None or rank < best[0]:
-                best = (rank, proposed, symbols, position)
+                best = (rank, proposed, coverage, position)
         if best is None:
             break
         selected = best[1]
