@@ -5,6 +5,14 @@ import MirrorDomain
 /// 앱과 위젯의 includedPackages가 이 정적 framework의 인텐트 metadata를 포함한다.
 public struct MirrorAppIntentsPackage: AppIntentsPackage {}
 
+public enum MirrorDeadlineKind: String, AppEnum, Sendable {
+    case notSet, day, instant
+    public static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "실제 마감 종류")
+    public static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .notSet: "마감 없음", .day: "날짜 마감", .instant: "시각 마감"
+    ]
+}
+
 public struct MirrorTaskEntity: AppEntity, Sendable {
     public static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "할 일")
     public static let defaultQuery = MirrorTaskQuery()
@@ -12,8 +20,14 @@ public struct MirrorTaskEntity: AppEntity, Sendable {
     public let title: String
     public let planSummary: String
     public let completed: Bool
+    @Property(title: "실제 마감 종류") public var deadlineKind: MirrorDeadlineKind
+    /// 날짜 마감을 임의의 자정 Date로 바꾸지 않는다.
+    @Property(title: "실제 마감 날짜 (YYYY-MM-DD)") public var deadlineDay: String?
+    @Property(title: "실제 마감 시각") public var deadlineInstant: Date?
+    @Property(title: "실제 마감 시간대") public var deadlineTimeZoneID: String?
+    public let deadlineSummary: String
     public var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(title: "\(title)", subtitle: "\(planSummary)")
+        DisplayRepresentation(title: "\(title)", subtitle: "\(planSummary) · \(deadlineSummary)")
     }
     public init(task: TaskProjection, hideTitle: Bool) {
         id = task.taskID; title = hideTitle ? "할 일" : task.title; completed = task.status == .completed
@@ -22,6 +36,25 @@ public struct MirrorTaskEntity: AppEntity, Sendable {
         case let .day(date): planSummary = "계획 \(date)"
         case let .week(start, _): planSummary = "\(start) 주, 요일 미정"
         case .parked: planSummary = "보관"
+        }
+        switch task.deadline {
+        case nil:
+            deadlineKind = .notSet; deadlineDay = nil; deadlineInstant = nil; deadlineTimeZoneID = nil
+            deadlineSummary = "실제 마감 없음"
+        case let .day(date, timeZoneID):
+            deadlineKind = .day; deadlineDay = date.description; deadlineInstant = nil; deadlineTimeZoneID = timeZoneID
+            deadlineSummary = "실제 마감 \(date) (\(timeZoneID))"
+        case let .instant(timestamp, timeZoneID):
+            deadlineKind = .instant; deadlineDay = nil; deadlineInstant = timestamp; deadlineTimeZoneID = timeZoneID
+            if let timeZone = TimeZone(identifier: timeZoneID) {
+                let formatter = DateFormatter()
+                formatter.calendar = Calendar(identifier: .gregorian)
+                formatter.locale = Locale(identifier: "ko_KR")
+                formatter.timeZone = timeZone; formatter.dateFormat = "yyyy-MM-dd HH:mm"
+                deadlineSummary = "실제 마감 \(formatter.string(from: timestamp)) (\(timeZoneID))"
+            } else {
+                deadlineSummary = "실제 마감 \(ISO8601DateFormatter().string(from: timestamp)) (\(timeZoneID))"
+            }
         }
     }
 }

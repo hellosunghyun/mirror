@@ -35,6 +35,11 @@ public struct OperationRecord: Hashable, Codable, Sendable {
     public let reviewDecision: ReviewDecisionContext?; public let reviewClosure: ReviewClosure?
     public let settings: PlanningPolicy?; public let payloadDigest: String
 
+    /// v2는 명시적으로 계획한 생성만 추가한다. 다른 미지원 기록은 격리·보존한다.
+    public var isSupportedSchemaVersion: Bool {
+        schemaVersion == 1 || (schemaVersion == 2 && commandKind == .capture)
+    }
+
     public init(operationID: String, schemaVersion: Int = 1, workspaceKey: String, workspaceEpoch: String,
                 deviceID: UUID, lamport: Int64, recordedAt: Date, commandKind: OperationKind,
                 mutations: [TaskMutation], idempotencyKey: String? = nil, logicalCommandDigest: String? = nil,

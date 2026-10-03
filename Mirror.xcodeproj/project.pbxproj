@@ -302,6 +302,13 @@
 			path = Tests/MirrorDomainTests/LocalDateTests.swift;
 			sourceTree = SOURCE_ROOT;
 		};
+		F61DC53F1291D187424BB5D8 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = PlannedCaptureTests.swift;
+			path = Tests/MirrorDomainTests/PlannedCaptureTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
 		206CBDDA5F530D484045A7C3 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -323,6 +330,7 @@
 				EFD2DE7B9105FCC04700EA2A,
 				7EACF16C1F63B3A1AD265FB9,
 				896A3C89CF6199057D355371,
+				F61DC53F1291D187424BB5D8,
 				206CBDDA5F530D484045A7C3,
 				07B4C7A2CC9D1BAF71F6CC9E,
 			);
@@ -336,6 +344,20 @@
 			path = Tests/MirrorDataTests/ArchivePreviewTests.swift;
 			sourceTree = SOURCE_ROOT;
 		};
+		C90E835B6CEDFC82ADC874AD = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = PersistenceRecoveryTests.swift;
+			path = Tests/MirrorDataTests/PersistenceRecoveryTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		0EA3D49A8ADD3456B8495136 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = PlannedCaptureStoreTests.swift;
+			path = Tests/MirrorDataTests/PlannedCaptureStoreTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
 		EC5CFCAE32833A040E42F095 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -347,6 +369,8 @@
 			isa = PBXGroup;
 			children = (
 				A0A867C3FED37E1493884A31,
+				C90E835B6CEDFC82ADC874AD,
+				0EA3D49A8ADD3456B8495136,
 				EC5CFCAE32833A040E42F095,
 			);
 			name = Tests/MirrorDataTests;
@@ -366,11 +390,19 @@
 			path = Tests/MirrorSystemTests/SystemContractTests.swift;
 			sourceTree = SOURCE_ROOT;
 		};
+		338BF654D7A859C28F219269 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = SystemNavigationTests.swift;
+			path = Tests/MirrorSystemTests/SystemNavigationTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
 		948D8BBF505C676307568F7E = {
 			isa = PBXGroup;
 			children = (
 				7949DF5EBDB1F1AFE6D0FE93,
 				695F764792ED2FD9F449E2B5,
+				338BF654D7A859C28F219269,
 			);
 			name = Tests/MirrorSystemTests;
 			sourceTree = "<group>";
@@ -465,6 +497,21 @@
 				52B345E5CB1CC1AB6172D7CD,
 			);
 			name = Tests/MirrorUITests;
+			sourceTree = "<group>";
+		};
+		96FA42041F508BA578E0D4F2 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorAdaptiveUITests.swift;
+			path = Tests/MirrorAdaptiveUITests/MirrorAdaptiveUITests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		25C3E98656BE362070848933 = {
+			isa = PBXGroup;
+			children = (
+				96FA42041F508BA578E0D4F2,
+			);
+			name = Tests/MirrorAdaptiveUITests;
 			sourceTree = "<group>";
 		};
 		3E1D3D5DF271B14B3ACC76D2 = {
@@ -690,6 +737,20 @@
 			path = MirrorMacUITests.xctest;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
+		CB14298BB5BD06504C98D69C = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorIOSAdaptiveUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		FFDD504E334D3346450E7E52 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorMacAdaptiveUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
 		77BB0A0DD12CE614CF80E316 = {
 			isa = PBXGroup;
 			children = (
@@ -708,6 +769,8 @@
 				030EA7ECC771258E04F23397,
 				4392A457B8033F15BB254CBE,
 				A5FB5F6A0A5D9578D1E6119A,
+				CB14298BB5BD06504C98D69C,
+				FFDD504E334D3346450E7E52,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -726,6 +789,7 @@
 				2025592CD32DA24AD6D117D3,
 				0E76ACFD3A99B2E37B5109BB,
 				8E25E1F96F6C72C0D46C4F17,
+				25C3E98656BE362070848933,
 				18FD7FD8A86AE7DB07FFE101,
 				22D02A9EFAC9B3FBBAEBE062,
 				77BB0A0DD12CE614CF80E316,
@@ -1401,6 +1465,10 @@
 			isa = PBXBuildFile;
 			fileRef = 896A3C89CF6199057D355371;
 		};
+		90EBBEA9A7787B8DBB71669E = {
+			isa = PBXBuildFile;
+			fileRef = F61DC53F1291D187424BB5D8;
+		};
 		B7B1953B34B6D90B8CA63D6A = {
 			isa = PBXBuildFile;
 			fileRef = 206CBDDA5F530D484045A7C3;
@@ -1417,6 +1485,7 @@
 				B75E7B4C48FF15D5376B10B5,
 				24766FDC002E70806D40ABA6,
 				5CEB0832E9CB3F897BE4FC93,
+				90EBBEA9A7787B8DBB71669E,
 				B7B1953B34B6D90B8CA63D6A,
 				CCBBEA107CEF66792AAAADD2,
 			);
@@ -1534,6 +1603,14 @@
 			isa = PBXBuildFile;
 			fileRef = A0A867C3FED37E1493884A31;
 		};
+		22C1BC69B1FD8B55D6E645B8 = {
+			isa = PBXBuildFile;
+			fileRef = C90E835B6CEDFC82ADC874AD;
+		};
+		F523727B0E5F15DCB028B8B2 = {
+			isa = PBXBuildFile;
+			fileRef = 0EA3D49A8ADD3456B8495136;
+		};
 		EF9BCD351B4F60F2F3D4BB79 = {
 			isa = PBXBuildFile;
 			fileRef = EC5CFCAE32833A040E42F095;
@@ -1543,6 +1620,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				BCED82F99EC357DF7E5BA661,
+				22C1BC69B1FD8B55D6E645B8,
+				F523727B0E5F15DCB028B8B2,
 				EF9BCD351B4F60F2F3D4BB79,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1677,12 +1756,17 @@
 			isa = PBXBuildFile;
 			fileRef = 695F764792ED2FD9F449E2B5;
 		};
+		A3CB351B1746345070043E4D = {
+			isa = PBXBuildFile;
+			fileRef = 338BF654D7A859C28F219269;
+		};
 		FB4E1A69DC0190513141C5DB = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				597406B8D1252A2A99EBF22F,
 				3B3F82DD5C226A30A7E24223,
+				A3CB351B1746345070043E4D,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3226,6 +3310,230 @@
 			productReference = A5FB5F6A0A5D9578D1E6119A;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		A353BFC71C1D1F62B6DCE1B3 = {
+			isa = PBXBuildFile;
+			fileRef = 96FA42041F508BA578E0D4F2;
+		};
+		D46F1EDCDED4632C60959361 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A353BFC71C1D1F62B6DCE1B3,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		245F55DB3CAB6D6765B418A4 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		13D5487A000D3059F238FAD3 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BAD4B1CE6A7A7EA63A5CCB77 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 6D966BF1135AC5B72C078FD9;
+			remoteInfo = MirrorIOS;
+		};
+		6B77C61774B3F9370B3A9BDD = {
+			isa = PBXTargetDependency;
+			target = 6D966BF1135AC5B72C078FD9;
+			targetProxy = BAD4B1CE6A7A7EA63A5CCB77;
+		};
+		68A824656211A779FE489134 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirroriosadaptiveuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorIOS;
+			};
+			name = Debug;
+		};
+		8205E89978A7D287754BB0DA = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirroriosadaptiveuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorIOS;
+			};
+			name = Release;
+		};
+		03A953EBBC4EDC257890DF12 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				68A824656211A779FE489134,
+				8205E89978A7D287754BB0DA,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		8E324BB2EF7B04AE3277A2A2 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 03A953EBBC4EDC257890DF12;
+			buildPhases = (
+				D46F1EDCDED4632C60959361,
+				245F55DB3CAB6D6765B418A4,
+				13D5487A000D3059F238FAD3,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				6B77C61774B3F9370B3A9BDD,
+			);
+			name = MirrorIOSAdaptiveUITests;
+			productName = MirrorIOSAdaptiveUITests;
+			productReference = CB14298BB5BD06504C98D69C;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		9B19312CBBC9FF419941E453 = {
+			isa = PBXBuildFile;
+			fileRef = 96FA42041F508BA578E0D4F2;
+		};
+		01F811B1360D99D00971B7F2 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9B19312CBBC9FF419941E453,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		603A95A9201DAE1616B9647A = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C8DB1A4EBE8B278E4B0C414D = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		606AF4669560D17756C646F1 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 583C3B36359F849E61F1240E;
+			remoteInfo = MirrorMac;
+		};
+		47D06DA49F3D9F11B7EAD944 = {
+			isa = PBXTargetDependency;
+			target = 583C3B36359F849E61F1240E;
+			targetProxy = 606AF4669560D17756C646F1;
+		};
+		748A3F151C061A96093E913D = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrormacadaptiveuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorMac;
+			};
+			name = Debug;
+		};
+		C43B8E749C36082580C37A5C = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrormacadaptiveuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorMac;
+			};
+			name = Release;
+		};
+		BB02A2A4651BF9ACC369135E = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				748A3F151C061A96093E913D,
+				C43B8E749C36082580C37A5C,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EBA578FDBEB466FDD0C68953 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BB02A2A4651BF9ACC369135E;
+			buildPhases = (
+				01F811B1360D99D00971B7F2,
+				603A95A9201DAE1616B9647A,
+				C8DB1A4EBE8B278E4B0C414D,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				47D06DA49F3D9F11B7EAD944,
+			);
+			name = MirrorMacAdaptiveUITests;
+			productName = MirrorMacAdaptiveUITests;
+			productReference = FFDD504E334D3346450E7E52;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		98F54143AB4E86B28C3AFEE0 = {
 			isa = PBXProject;
 			attributes = {
@@ -3280,6 +3588,14 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 583C3B36359F849E61F1240E;
 					};
+					8E324BB2EF7B04AE3277A2A2 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 6D966BF1135AC5B72C078FD9;
+					};
+					EBA578FDBEB466FDD0C68953 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 583C3B36359F849E61F1240E;
+					};
 				};
 			};
 			buildConfigurationList = 4BA304E783CFBB9FA6E56552;
@@ -3311,6 +3627,8 @@
 				22212BAEF0B2FFC92FE55634,
 				E8D78EE972D7C897E4D223F0,
 				5211D665102AB37A1A8DFCEB,
+				8E324BB2EF7B04AE3277A2A2,
+				EBA578FDBEB466FDD0C68953,
 			);
 		};
 	};

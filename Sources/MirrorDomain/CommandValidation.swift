@@ -47,6 +47,7 @@ public enum CommandValidator {
         var decision: ReviewDecisionContext?
         var closure: ReviewClosure?
         var settings: PlanningPolicy?
+        var schemaVersion = 1
 
         func task(_ id: UUID) throws -> TaskProjection {
             guard let value = snapshot.tasks[id] else { throw ValidationFailure(.notFound, "작업을 찾을 수 없어요.", [id]) }
@@ -83,20 +84,33 @@ public enum CommandValidator {
             }
             append(value, .plan(try PlanValue.assignment(target, in: snapshot.currentContext)))
         }
+        func capture(_ id: UUID, _ content: TaskContent, initialPlan: PlanTarget) throws {
+            guard snapshot.tasks[id] == nil,
+                  !snapshot.records.contains(where: { $0.mutations.contains { $0.taskID == id } }) else {
+                throw ValidationFailure(.staleSnapshot, "이미 있는 작업 ID예요.", [id])
+            }
+            guard PlanningRules.validatePlan(initialPlan, on: snapshot.currentContext.planningDay) else {
+                throw ValidationFailure(.unavailable, "오늘 이후의 날짜나 올바른 주를 선택해 주세요.", [id])
+            }
+            operationKind = .capture
+            mutations = [TaskMutation(taskID: id, value: .content(content)),
+                         TaskMutation(taskID: id, value: .plan(try PlanValue.assignment(initialPlan, in: snapshot.currentContext))),
+                         TaskMutation(taskID: id, value: .status(StatusValue(status: .open))),
+                         TaskMutation(taskID: id, value: .deadline(nil))]
+            undoValues = [TaskMutation(taskID: id, value: .status(StatusValue(status: .deleted, deletedAt: snapshot.recordedAt)))]
+        }
         do {
             switch command.payload {
             case let .capture(id, content):
-                guard snapshot.tasks[id] == nil,
-                      !snapshot.records.contains(where: { $0.mutations.contains { $0.taskID == id } }) else {
-                    throw ValidationFailure(.staleSnapshot, "이미 있는 작업 ID예요.", [id])
+                try capture(id, content, initialPlan: .unassigned)
+            case let .captureWithPlan(id, content, initialPlan):
+                switch initialPlan {
+                case .day, .week: break
+                case .unassigned, .parked:
+                    throw ValidationFailure(.unavailable, "입력에서 선택한 날짜를 확인해 주세요.", [id])
                 }
-                operationKind = .capture
-                mutations = [TaskMutation(taskID: id, value: .content(content)),
-                             TaskMutation(taskID: id, value: .plan(PlanValue(target: .unassigned))),
-                             TaskMutation(taskID: id, value: .status(StatusValue(status: .open))),
-                             TaskMutation(taskID: id, value: .deadline(nil))]
-                // 생성 취소는 존재하지 않았던 값을 덮어쓰는 대신 복구 가능한 휴지통 이동이다.
-                undoValues = [TaskMutation(taskID: id, value: .status(StatusValue(status: .deleted, deletedAt: snapshot.recordedAt)))]
+                schemaVersion = 2
+                try capture(id, content, initialPlan: initialPlan)
             case let .setPlan(item, target, review):
                 operationKind = .setPlan
                 if let review {
@@ -216,6 +230,7 @@ public enum CommandValidator {
             guard observed < Int64.max, observed >= 0 else { throw ValidationFailure(.unavailable, "변경 기록의 버전을 확인해야 해요.") }
             let operation = try OperationRecord.create(
                 operationID: logicalID,
+                schemaVersion: schemaVersion,
                 workspaceKey: snapshot.workspaceKey, workspaceEpoch: snapshot.workspaceEpoch, deviceID: snapshot.deviceID,
                 lamport: observed + 1, recordedAt: snapshot.recordedAt, commandKind: operationKind, mutations: mutations,
                 idempotencyKey: command.idempotencyKey, logicalCommandDigest: digest, undoValues: undoValues,

@@ -1,5 +1,6 @@
 @preconcurrency import CoreData
 import Foundation
+import Darwin
 
 struct StoredOperation: Codable, Sendable {
     let operationID: String
@@ -25,14 +26,27 @@ struct StoredReceipt: Sendable {
 /// unchecked는 Core Data queue 제약에 한정하며 공개 경계는 Sendable DTO다.
 final class CoreDataPersistence: @unchecked Sendable {
     private static let connections = CoreDataConnectionRegistry()
+    private static let retainedProjectionLifetimes = RetainedProjectionLifetimes()
     private let canonical: NSPersistentContainer
     private let projection: NSPersistentContainer
     private let changeHub: CanonicalStoreChangeHub
+    private let projectionLifetime: ProjectionLifetimeLease
 
-    private init(canonical: NSPersistentContainer, projection: NSPersistentContainer) {
+    private init(canonical: NSPersistentContainer, projection: NSPersistentContainer,
+                 projectionLifetime: ProjectionLifetimeLease) {
         self.canonical = canonical
         self.projection = projection
+        self.projectionLifetime = projectionLifetime
         self.changeHub = CanonicalStoreChangeHub(coordinator: canonical.persistentStoreCoordinator)
+    }
+
+    deinit {
+        changeHub.finish()
+        // container의 지연 정리보다 먼저 lease를 해제하지 않는다.
+        for store in projection.persistentStoreCoordinator.persistentStores {
+            try? projection.persistentStoreCoordinator.remove(store)
+        }
+        Self.releaseProjectionLifetime(projectionLifetime, projection: projection)
     }
 
     static func open(configuration: StoreConfiguration) async throws -> CoreDataPersistence {
@@ -52,13 +66,46 @@ final class CoreDataPersistence: @unchecked Sendable {
             canonical.persistentStoreDescriptions = [storeDescription(url: configuration.directory.appendingPathComponent("Canonical.sqlite"))]
         }
         let projection = NSPersistentContainer(name: "MirrorProjection", managedObjectModel: model(canonical: false))
-        projection.persistentStoreDescriptions = [storeDescription(url: configuration.directory.appendingPathComponent("LocalProjection.sqlite"))]
-        try await load(canonical)
-        try await load(projection)
-        let persistence = CoreDataPersistence(canonical: canonical, projection: projection)
-        connections.register(canonical, changes: persistence.changeHub)
-        connections.register(projection)
-        return persistence
+        let projectionURL = configuration.directory.appendingPathComponent("LocalProjection.sqlite")
+        projection.persistentStoreDescriptions = [storeDescription(url: projectionURL)]
+        // MirrorStore의 Writer.lock 안에서 호출된다. 열린 다른 프로세스의 SQLite도 이동하지 않는다.
+        let lifetime: ProjectionLifetimeLease
+        do { lifetime = try ProjectionLifetimeLease.acquire(in: configuration.directory) }
+        catch { throw StoreError.classify(error) }
+        do {
+            _ = try await backupCanonicalBeforeMigration(
+                at: configuration.directory.appendingPathComponent("Canonical.sqlite"), model: canonicalModel)
+            try await load(canonical)
+            do { try await load(projection) }
+            catch {
+                guard isProjectionCorruption(error), FileManager.default.fileExists(atPath: projectionURL.path) else {
+                    throw error
+                }
+                try await unload([projection])
+                try lifetime.useExclusive()
+                try await quarantineProjection(at: projectionURL)
+                try await load(projection)
+            }
+            let persistence = CoreDataPersistence(canonical: canonical, projection: projection, projectionLifetime: lifetime)
+            // pending 파일은 새 cache save 전의 종료에도 재동의 신호를 유지한다.
+            let pendingURL = configuration.directory.appendingPathComponent("ProjectionRecoveryPending.json")
+            if FileManager.default.fileExists(atPath: pendingURL.path) {
+                let marker = try JSONDecoder().decode(ProjectionRecoveryMarker.self, from: Data(contentsOf: pendingURL))
+                guard marker.schemaVersion == 1, marker.recoveredAt.timeIntervalSinceReferenceDate.isFinite else {
+                    throw StoreError.invalidConfiguration
+                }
+                try await persistence.saveProjection(["local:projection-recovery-v1": try JSONEncoder().encode(marker)])
+                try FileManager.default.removeItem(at: pendingURL)
+            }
+            try lifetime.useShared()
+            connections.register(canonical, changes: persistence.changeHub)
+            connections.register(projection)
+            return persistence
+        } catch {
+            try? await unload([canonical, projection])
+            releaseProjectionLifetime(lifetime, projection: projection)
+            throw StoreError.classify(error)
+        }
     }
 
     func canonicalChanges(includeInitial: Bool) -> AsyncStream<StoreChangeEvent> {
@@ -159,12 +206,8 @@ final class CoreDataPersistence: @unchecked Sendable {
 
     func close() async throws {
         changeHub.finish()
-        try await Task.detached(priority: .userInitiated) { [canonical, projection] in
-            for container in [canonical, projection] {
-                let coordinator = container.persistentStoreCoordinator
-                for store in coordinator.persistentStores { try coordinator.remove(store) }
-            }
-        }.value
+        try await Self.unload([canonical, projection])
+        projectionLifetime.release()
     }
 
     func canonicalStoreIdentifiers() -> Set<String> {
@@ -322,10 +365,124 @@ final class CoreDataPersistence: @unchecked Sendable {
     private static func load(_ container: NSPersistentContainer) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             container.loadPersistentStores { _, error in
-                if let error { continuation.resume(throwing: StoreError.classify(error)) }
+                // 판정 전 underlying SQLite/POSIX 오류를 보존한다.
+                if let error { continuation.resume(throwing: error) }
                 else { continuation.resume() }
             }
         }
+    }
+
+    private static func unload(_ containers: [NSPersistentContainer]) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            var firstError: (any Error)?
+            for container in containers {
+                let coordinator = container.persistentStoreCoordinator
+                for store in coordinator.persistentStores {
+                    do { try coordinator.remove(store) }
+                    catch { if firstError == nil { firstError = error } }
+                }
+            }
+            if let firstError { throw firstError }
+        }.value
+    }
+
+    private static func releaseProjectionLifetime(_ lifetime: ProjectionLifetimeLease, projection: NSPersistentContainer) {
+        if projection.persistentStoreCoordinator.persistentStores.isEmpty { lifetime.release() }
+        else {
+            // detach 실패는 복구를 허용하는 근거가 아니다. 프로세스 재시작 전까지 connection과 lease를 보존한다.
+            retainedProjectionLifetimes.retain(lifetime, projection: projection)
+        }
+    }
+
+    /// 공식 저장소 복제 API가 WAL을 포함한 일관된 backup을 만든다. 실패하면 migration을 시작하지 않는다.
+    /// 이전 모델의 metadata와 원본을 보존하며 성공/실패 어느 쪽에서도 backup을 자동 삭제하지 않는다.
+    static func backupCanonicalBeforeMigration(at url: URL, model: NSManagedObjectModel) async throws -> URL? {
+        try await Task.detached(priority: .utility) { () throws -> URL? in
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let options: [AnyHashable: Any] = [NSReadOnlyPersistentStoreOption: true]
+            let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+                ofType: NSSQLiteStoreType, at: url, options: options)
+            guard !model.isConfiguration(withName: nil, compatibleWithStoreMetadata: metadata) else { return nil }
+            let directory = url.deletingLastPathComponent().appendingPathComponent("MigrationBackups", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            #if os(iOS)
+            try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
+            #endif
+            let backupURL = directory.appendingPathComponent("Canonical.sqlite")
+            let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+            var destinationOptions: [AnyHashable: Any] = [:]
+            #if os(iOS)
+            destinationOptions[NSPersistentStoreFileProtectionKey] = FileProtectionType.complete.rawValue
+            #endif
+            try coordinator.replacePersistentStore(at: backupURL, destinationOptions: destinationOptions,
+                withPersistentStoreFrom: url, sourceOptions: options, ofType: NSSQLiteStoreType)
+            let backupMetadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+                ofType: NSSQLiteStoreType, at: backupURL, options: options)
+            guard let originalHashes = metadata[NSStoreModelVersionHashesKey] as? [String: Data],
+                  let copiedHashes = backupMetadata[NSStoreModelVersionHashesKey] as? [String: Data],
+                  originalHashes == copiedHashes else { throw StoreError.persistence("원본 백업을 확인할 수 없습니다.") }
+            return backupURL
+        }.value
+    }
+
+    /// 모호한 load 실패는 손상으로 간주하지 않는다. 자원/보호 데이터 오류가 있으면 복구를 보류한다.
+    static func isProjectionCorruption(_ error: any Error) -> Bool {
+        var errors = [error as NSError]
+        var corruption = false
+        var visited: Set<ObjectIdentifier> = []
+        while let current = errors.popLast() {
+            guard visited.insert(ObjectIdentifier(current)).inserted, visited.count <= 32 else { return false }
+            if current.domain == NSCocoaErrorDomain {
+                if current.code == NSFileReadCorruptFileError { corruption = true }
+                else if [NSFileReadNoPermissionError, NSFileWriteNoPermissionError, NSFileWriteOutOfSpaceError,
+                         NSFileReadNoSuchFileError, NSFileWriteVolumeReadOnlyError].contains(current.code) { return false }
+            }
+            if current.domain == NSPOSIXErrorDomain { return false }
+            let sqliteCode = current.domain == "NSSQLiteErrorDomain" ? current.code :
+                (current.userInfo["NSSQLiteErrorDomain"] as? NSNumber)?.intValue
+            if let sqliteCode {
+                // SQLite extended codes keep the primary result in the low byte.
+                let primary = sqliteCode & 0xff
+                if primary == 11 || primary == 26 { corruption = true }
+                else { return false }
+            }
+            if let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError { errors.append(underlying) }
+            if let detailed = current.userInfo[NSDetailedErrorsKey] as? [NSError] { errors.append(contentsOf: detailed) }
+        }
+        return corruption
+    }
+
+    private static func quarantineProjection(at url: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            let parent = url.deletingLastPathComponent()
+            let pendingURL = parent.appendingPathComponent("ProjectionRecoveryPending.json")
+            if !FileManager.default.fileExists(atPath: pendingURL.path) {
+                try JSONEncoder().encode(ProjectionRecoveryMarker(schemaVersion: 1, recoveredAt: Date()))
+                    .write(to: pendingURL, options: .atomic)
+            }
+            let quarantine = parent.appendingPathComponent("ProjectionQuarantine", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: quarantine, withIntermediateDirectories: true)
+            #if os(iOS)
+            try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: quarantine.path)
+            #endif
+            var moved: [(URL, URL)] = []
+            do {
+                // 원본은 대상에 포함하지 않는다. main file을 마지막으로 이동해 중간 종료에서도 오래된 cache를 식별한다.
+                for suffix in ["-journal", "-shm", "-wal", ""] {
+                    let source = URL(fileURLWithPath: url.path + suffix)
+                    guard FileManager.default.fileExists(atPath: source.path) else { continue }
+                    let destination = quarantine.appendingPathComponent(source.lastPathComponent)
+                    try FileManager.default.moveItem(at: source, to: destination)
+                    moved.append((source, destination))
+                }
+            } catch {
+                // rollback도 실패하면 격리물을 남겨 반환한다. 삭제나 새 개설을 계속하지 않는다.
+                for (source, destination) in moved.reversed() { try? FileManager.default.moveItem(at: destination, to: source) }
+                throw error
+            }
+        }.value
     }
 
     private static func storeDescription(url: URL) -> NSPersistentStoreDescription {
@@ -389,6 +546,75 @@ struct HistoryBatch: Sendable {
     let containsGlobalChanges: Bool
     let cursor: Data?
     let changed: Bool
+}
+
+private struct ProjectionRecoveryMarker: Codable, Sendable {
+    let schemaVersion: Int
+    let recoveredAt: Date
+}
+
+/// Writer.lock은 쓰기 순서, 이 lease는 열린 projection 연결의 수명만 보호한다.
+/// 다른 프로세스가 읽는 SQLite를 옮기지 않도록 복구 때만 exclusive NONBLOCK을 사용한다.
+private final class ProjectionLifetimeLease: @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptor: Int32?
+
+    private init(descriptor: Int32) { self.descriptor = descriptor }
+
+    static func acquire(in directory: URL) throws -> ProjectionLifetimeLease {
+        let url = directory.appendingPathComponent("ProjectionLifetime.lock")
+        let descriptor = Darwin.open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+        guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else {
+            let code = errno
+            Darwin.close(descriptor)
+            if code == EWOULDBLOCK || code == EAGAIN { throw StoreError.busy }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+        return ProjectionLifetimeLease(descriptor: descriptor)
+    }
+
+    func useExclusive() throws {
+        try lock.withLock {
+            guard let descriptor else { throw StoreError.busy }
+            // 자신의 shared lease를 해제한 뒤 타 인스턴스가 없을 때만 교체한다.
+            guard flock(descriptor, LOCK_UN) == 0 else { throw StoreError.busy }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                let code = errno
+                if code == EWOULDBLOCK || code == EAGAIN { throw StoreError.busy }
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+            }
+        }
+    }
+
+    func useShared() throws {
+        try lock.withLock {
+            guard let descriptor else { throw StoreError.busy }
+            guard flock(descriptor, LOCK_SH | LOCK_NB) == 0 else { throw StoreError.busy }
+        }
+    }
+
+    func release() {
+        lock.withLock {
+            guard let descriptor else { return }
+            self.descriptor = nil
+            flock(descriptor, LOCK_UN)
+            Darwin.close(descriptor)
+        }
+    }
+
+    deinit { release() }
+}
+
+private final class RetainedProjectionLifetimes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(ProjectionLifetimeLease, NSPersistentContainer)] = []
+
+    func retain(_ lifetime: ProjectionLifetimeLease, projection: NSPersistentContainer) {
+        lock.withLock {
+            if !entries.contains(where: { $0.0 === lifetime }) { entries.append((lifetime, projection)) }
+        }
+    }
 }
 
 /// 동일 디렉터리를 여는 별도 actor의 연결도 삭제 전에 닫는다. container 수명은 소유하지 않는다.

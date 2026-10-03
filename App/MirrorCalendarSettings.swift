@@ -1,9 +1,123 @@
+import CoreTransferable
+import Foundation
 import MirrorData
 import MirrorDesign
 import MirrorDomain
 import MirrorSystem
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
+
+private extension UTType {
+    static let mirrorCalendarPlanTransfer = UTType(exportedAs: "com.baserize.mirror.calendar-plan-transfer", conformingTo: .data)
+}
+
+/// Only an app-issued token crosses the drag boundary; task identity and versions stay in AppModel.
+private struct MirrorCalendarDragPayload: Codable, Sendable, Transferable {
+    let token: UUID
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(importedContentType: .mirrorCalendarPlanTransfer) { data in
+            try JSONDecoder().decode(Self.self, from: data)
+        }
+    }
+}
+
+@MainActor
+private var supportsCalendarDrag: Bool {
+    #if os(iOS)
+    return UIDevice.current.userInterfaceIdiom == .pad
+    #elseif os(macOS)
+    return true
+    #else
+    return false
+    #endif
+}
+
+/// A separate native drag handle leaves the task row's swipe and explicit buttons intact.
+@MainActor
+struct MirrorCalendarDragHandle: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
+    let task: TaskProjection
+    let context: PlanningContext?
+
+    private var isVisible: Bool {
+        guard supportsCalendarDrag, !dynamicTypeSize.isAccessibilitySize else { return false }
+        #if os(iOS)
+        return sizeClass != .compact
+        #else
+        return true
+        #endif
+    }
+
+    var body: some View {
+        if isVisible, task.status == .open, let context {
+            Image(systemName: "line.3.horizontal")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+                .onDrag { provider(context: context) }
+                .accessibilityLabel("\(task.title), 날짜로 이동")
+                .accessibilityHint("끌어서 날짜나 요일 미정에 놓으세요. 미루기 버튼으로도 날짜를 바꿀 수 있어요.")
+                .accessibilityAction(named: Text("날짜 선택")) {
+                    guard !model.isSaving, !model.projectionPending, !model.isDetailEditing else { return }
+                    model.makePicker(taskIDs: [task.taskID])
+                }
+                .accessibilityIdentifier("calendar.drag.\(task.taskID.uuidString)")
+                .disabled(model.isSaving || model.projectionPending || model.isDetailEditing)
+        }
+    }
+
+    private func provider(context: PlanningContext) -> NSItemProvider {
+        guard let token = model.beginCalendarDrag(task, context: context),
+              let data = try? JSONEncoder().encode(MirrorCalendarDragPayload(token: token)) else {
+            return NSItemProvider()
+        }
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.mirrorCalendarPlanTransfer.identifier,
+                                            visibility: .ownProcess) { completion in
+            completion(data, nil)
+            return nil
+        }
+        return provider
+    }
+}
+
+@MainActor
+private struct MirrorCalendarDropTarget: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let target: PlanTarget
+    @State private var isTargeted = false
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if supportsCalendarDrag {
+            content
+                .overlay {
+                    if isTargeted {
+                        RoundedRectangle(cornerRadius: 14)
+                            .strokeBorder(MirrorPalette.accent, lineWidth: 2)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .dropDestination(for: MirrorCalendarDragPayload.self) { payloads, _ in
+                    guard payloads.count == 1, let payload = payloads.first,
+                          let request = model.takeCalendarDrag(token: payload.token) else { return false }
+                    Task { await model.choosePlan(request, target: target) }
+                    return true
+                } isTargeted: { isTargeted = $0 }
+        } else {
+            content
+        }
+    }
+}
 
 @MainActor
 struct MirrorCalendarView: View {
@@ -150,6 +264,7 @@ struct MirrorCalendarView: View {
                 }
             }
         }
+        .modifier(MirrorCalendarDropTarget(target: .day(date)))
     }
 
     private func taskRows(_ tasks: [TaskProjection]) -> some View {
@@ -188,6 +303,7 @@ struct MirrorCalendarView: View {
                 }
                 taskRows(tasks)
             }
+            .modifier(MirrorCalendarDropTarget(target: .week(startDate: week.startDate, endExclusiveDate: week.endExclusiveDate)))
         }
     }
 
@@ -302,10 +418,24 @@ struct MirrorSettingsView: View {
                     }
                 }
                 planningSection
-                notificationsSection
-                calendarsSection
+                if model.projectionRecovery != nil || model.recoveryConfigurationBlocked {
+                    Section("목록 복구") {
+                        Text("화면 캐시가 손상되어 원본에서 목록을 복구했어요. 외부 제목 노출·알림·캘린더 선택은 꺼져 있어요.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        if model.projectionRecovery != nil {
+                            Button("복구 확인") { Task { await model.acknowledgeProjectionRecovery() } }
+                                .disabled(model.isSaving).accessibilityIdentifier("settings.recoveryAcknowledge")
+                        } else {
+                            Text("복구 안내를 읽지 못했어요. 원본은 유지하고 저장소를 다시 확인해 주세요.")
+                            Button("다시 확인") { Task { await model.retry() } }.disabled(model.isSaving)
+                        }
+                        Text("확인 뒤 필요한 외부 기능을 각각 다시 켜 주세요.").font(.caption)
+                    }
+                }
+                notificationsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
+                calendarsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
                 syncSection
-                privacySection
+                privacySection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
                 diagnosticsSection
                 archiveSection
                 deletionSection

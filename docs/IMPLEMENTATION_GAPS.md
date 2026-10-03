@@ -1,5 +1,7 @@
 # 구현 공백과 남은 수용 조건
 
+2026-10-03 후속 작업 트리에서 선택적 날짜의 원자 입력, Mac/iPad 날짜 드래그, migration 사전 원본 백업, 물리 projection 손상 복구와 외부 설정 재동의, 알림·Spotlight 진입, 위젯 날짜 저장 뒤 다음 행동, App Entity 실제 마감 반환을 구현했다. 아래 `d7a3630` 표는 감사 당시의 공백을 보존한 이력이며 새 소스의 검증 완료를 뜻하지 않는다. 새 코드·원격 수용과 대용량 조회·CloudKit 삭제 전송 설계의 남은 범위는 [최신 전체 제작·수용 계획](COMPLETION_PLAN.md)에서 추적한다. App Group/iCloud 실제 등록과 물리·두 기기·사용자 수용은 별도 선행 조건으로 유지한다.
+
 확인일은 **2026-10-01**, 코드 기준은 [`d7a3630121904a66546d554f2867bf00ebf8955c`](https://github.com/hellosunghyun/mirror/tree/d7a3630121904a66546d554f2867bf00ebf8955c)다. 원본 FR 30개·QA 87개·NFR 12개와 네 검증 게이트의 전체 범위를 유지하며, 생산 코드에서 확인한 공백과 외부 설정·수용 검증을 구분한다. 아래 코드 줄 번호는 이 기준 커밋에 대한 것이다.
 
 최근 전체 GitHub Actions 검사는 통과했고, [Ad Hoc 실행 36867363304](https://github.com/hellosunghyun/mirror/actions/runs/36867363304)와 [Release `adhoc-36867363304`](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36867363304)의 iOS IPA·macOS DMG 서명·공증 배포가 성공했다. 이전 인증서 불일치·Secrets 누락·IPA 미게시 기록을 현재 차단 사유로 사용하지 않는다. 이 배포 결과와 QA 87개 전체 수용, 실제 App Group·iCloud 권한, 두 기기 동기화는 각각 별도 완료 조건이다.

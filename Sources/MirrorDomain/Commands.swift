@@ -51,6 +51,8 @@ public struct PlanningPolicy: Hashable, Codable, Sendable {
 }
 public enum CommandPayload: Hashable, Codable, Sendable {
     case capture(taskID: UUID, content: TaskContent)
+    // 기존 capture의 논리 digest를 보존하면서 명시적 날짜를 한 원본에 저장한다.
+    case captureWithPlan(taskID: UUID, content: TaskContent, initialPlan: PlanTarget)
     case setPlan(item: PlanCommandItem, target: PlanTarget, review: ReviewDecisionContext?)
     case completion(taskID: UUID, desiredCompleted: Bool, expectedStatus: String)
     case setDeadline(taskID: UUID, deadline: Deadline?, expectedDeadline: String)
@@ -64,7 +66,7 @@ public enum CommandPayload: Hashable, Codable, Sendable {
     case settings(policy: PlanningPolicy, expectedRevision: String)
     public var kind: CommandKind {
         switch self {
-        case .capture: .capture; case .setPlan: .setPlan; case .completion: .setStatus
+        case .capture, .captureWithPlan: .capture; case .setPlan: .setPlan; case .completion: .setStatus
         case .setDeadline: .setDeadline; case .editContent: .editContent; case .park: .park
         case .trash: .trash; case .restore: .restore; case .undo: .undo
         case .reviewClose: .reviewClose; case .batchSetPlan: .batchSetPlan; case .settings: .settings
@@ -167,6 +169,9 @@ private enum CommandJSON {
     private struct Plan: Codable {
         let target: PlanTarget; let acknowledgment: DeadlineAcknowledgment?; let review: ReviewDecisionContext?
     }
+    private struct PlannedCapture: Codable {
+        let title: String; let note: String?; let sourceURL: String?; let initialPlan: PlanTarget?
+    }
     private struct Completion: Codable { let desiredCompleted: Bool }
     private struct Restore: Codable { let observedDeleteHeadIDs: [String] }
     private struct Undo: Codable { let operationID: String; let expected: [TaskVersionExpectation] }
@@ -234,7 +239,11 @@ private enum CommandJSON {
         let value: CommandPayload
         switch kind {
         case .capture:
-            value = .capture(taskID: try taskID(), content: try payload(TaskContent.self, p, allowed: ["title", "note", "sourceURL"]))
+            let fields = try payload(PlannedCapture.self, p, allowed: ["title", "note", "sourceURL", "initialPlan"])
+            let content = try TaskContent(title: fields.title, note: fields.note, sourceURL: fields.sourceURL)
+            if let initialPlan = fields.initialPlan {
+                value = .captureWithPlan(taskID: try taskID(), content: content, initialPlan: initialPlan)
+            } else { value = .capture(taskID: try taskID(), content: content) }
         case .setPlan:
             let fields = try payload(Plan.self, p, allowed: ["target", "acknowledgment", "review"])
             value = .setPlan(item: PlanCommandItem(taskID: try taskID(), expected: expected, acknowledgment: fields.acknowledgment),
@@ -282,6 +291,10 @@ private enum CommandJSON {
         switch command.payload {
         case let .capture(id, content):
             try c.encode(id, forKey: .taskID); try c.encode(content, forKey: .payload)
+        case let .captureWithPlan(id, content, initialPlan):
+            try c.encode(id, forKey: .taskID)
+            try c.encode(PlannedCapture(title: content.title, note: content.note,
+                sourceURL: content.sourceURL, initialPlan: initialPlan), forKey: .payload)
         case let .setPlan(item, target, review):
             try c.encode(item.taskID, forKey: .taskID); try c.encode(item.expected, forKey: .expectedVersions)
             try c.encode(Plan(target: target, acknowledgment: item.acknowledgment, review: review), forKey: .payload)

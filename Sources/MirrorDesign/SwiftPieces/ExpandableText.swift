@@ -22,7 +22,7 @@ import SwiftUI
 ///
 /// Font and color come from the environment like `Text`: apply `.font(...)`, `.foregroundStyle(...)` and
 /// `.multilineTextAlignment(...)` to the piece. VoiceOver reads the full text in both states and gets
-/// "Show more" / "Show less" actions; the visual links are hidden from it.
+/// "Show more" / "Show less" actions; the visual links are also accessible buttons.
 ///
 /// - Parameters:
 ///   - text: The paragraph. A `String` is shown verbatim; an `AttributedString` keeps bold, italics and tappable links.
@@ -261,7 +261,8 @@ public struct ExpandableText: View {
                 .contentShape(Rectangle().inset(by: -12))
         }
         .buttonStyle(.plain)
-        .accessibilityHidden(true)
+        .accessibilityLabel(Text(label))
+        .accessibilityIdentifier(expanded ? "expandableText.collapse" : "expandableText.expand")
     }
 
     // MARK: Measuring

@@ -1,5 +1,6 @@
 import MirrorDesign
 import MirrorDomain
+import CoreSpotlight
 import SwiftUI
 #if os(iOS)
 import UIKit
@@ -10,6 +11,7 @@ struct MirrorRootView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var sceneExposureID = UUID()
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -61,7 +63,7 @@ struct MirrorRootView: View {
         .sheet(isPresented: $model.showCapture) { MirrorCaptureView() }
         .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
         .sheet(isPresented: $model.showReview) { MirrorReviewView() }
-        .sheet(item: basePicker) { MirrorPlanPicker(request: $0) }
+        .sheet(item: basePicker, onDismiss: { model.finishWidgetPickerDismissal() }) { MirrorPlanPicker(request: $0) }
         .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
         .task { await model.start() }
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -75,6 +77,9 @@ struct MirrorRootView: View {
         }
         .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
         .onOpenURL { url in Task { await model.handleURL(url) } }
+        .onContinueUserActivity(CSSearchableItemActionType) { activity in
+            Task { await model.handleSpotlight(activity) }
+        }
         #if os(macOS)
         // Inspector는 자신의 최소 폭을 별도로 더하므로, 열렸을 때는 탐색 영역만 확보한다.
         .frame(minWidth: isTaskInspectorVisible ? 520 : 760, minHeight: 520)
@@ -152,7 +157,8 @@ struct MirrorRootView: View {
     }
     private func showsAdjacentCalendar(width: CGFloat, destination: MirrorDestination) -> Bool {
         #if os(iOS)
-        return !isCompact && UIDevice.current.userInterfaceIdiom == .pad && width >= 1_050 && destination != .calendar
+        return !isCompact && !dynamicTypeSize.isAccessibilitySize
+            && UIDevice.current.userInterfaceIdiom == .pad && width >= 1_050 && destination != .calendar
         #else
         return false
         #endif
@@ -249,33 +255,52 @@ struct MirrorRootView: View {
             model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
             || model.lastUndo != nil || model.systemProblem != nil || model.cleanupProblem != nil {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center, spacing: 10) {
-                    StatusMorph(state: model.isSaving || model.projectionPending ? .loading : model.problem == nil ? .success : .failure,
-                                size: 18, tint: MirrorPalette.accent, pops: false)
-                        .accessibilityHidden(true)
-                    if model.isSaving { Text("저장 중…").font(.callout) }
-                    else if let problem = model.problem {
-                        Text(problem).font(.callout).fixedSize(horizontal: false, vertical: true)
-                            .accessibilityLabel(problem).accessibilityIdentifier("state.error")
-                    } else if model.projectionPending {
-                        Text("저장 결과를 확인하고 있어요").font(.callout)
-                    } else if let feedback = model.feedback {
-                        Text(feedback).font(.callout).accessibilityIdentifier("state.feedback")
-                    } else { Text(model.storageLabel).font(.caption).foregroundStyle(.secondary) }
-                    Spacer(minLength: 8)
-                    if model.problem != nil || model.projectionPending {
-                        Button("다시 확인") { Task { await model.retry() } }.accessibilityIdentifier("state.retry")
-                    }
-                    if let undo = model.lastUndo,
-                       !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
-                        Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo")
-                    }
+                let layout = dynamicTypeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                    : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+                layout {
+                    statusMessage
+                    statusActions
                 }
                 .buttonStyle(.borderless)
                 if let systemProblem = model.systemProblem { Text(systemProblem).font(.caption).foregroundStyle(.secondary) }
                 if let cleanupProblem = model.cleanupProblem { Text(cleanupProblem).font(.caption).foregroundStyle(.secondary) }
             }.padding(.horizontal, 20).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)
                 .background(reduceTransparency ? AnyShapeStyle(MirrorPalette.surface) : AnyShapeStyle(Material.bar))
+        }
+    }
+    private var statusMessage: some View {
+        HStack(alignment: .center, spacing: 10) {
+            StatusMorph(state: model.isSaving || model.projectionPending ? .loading : model.problem == nil ? .success : .failure,
+                        size: 18, tint: MirrorPalette.accent, pops: false)
+                .accessibilityHidden(true)
+            if model.isSaving { Text("저장 중…").font(.callout) }
+            else if let problem = model.problem {
+                Text(problem).font(.callout).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(problem).accessibilityIdentifier("state.error")
+            } else if model.projectionPending {
+                Text("저장 결과를 확인하고 있어요").font(.callout)
+            } else if let feedback = model.feedback {
+                Text(feedback).font(.callout).accessibilityIdentifier("state.feedback")
+            } else { Text(model.storageLabel).font(.caption).foregroundStyle(.secondary) }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var statusActions: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            if model.problem != nil || model.projectionPending {
+                Button("다시 확인") { Task { await model.retry() } }.accessibilityIdentifier("state.retry")
+                    .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
+            }
+            if let undo = model.lastUndo,
+               !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
+                Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo")
+                    .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
+            }
         }
     }
     private var taskInspectorPresentation: Binding<Bool> {
@@ -374,15 +399,19 @@ struct MirrorDeadlineConfirmation: ViewModifier {
 struct MirrorOnboardingView: View {
     @Environment(AppModel.self) private var model
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Image(systemName: "sun.max").font(.largeTitle).accessibilityHidden(true)
-            Text("잘 미루면,\n지금 할 일이 남는다.").font(.largeTitle.weight(.semibold))
-            Text("생각난 일은 보관함에 일단 넣으세요. 오늘 할 일은 정리할 때 직접 정해요. 날짜를 정하지 않은 일이 오늘 목록에 자동으로 들어가지 않아요.")
-            Text("계획 시간대: \(model.preferences.timeZoneID) · 설정에서 바꿀 수 있어요.").font(.caption)
-            Button { model.finishOnboarding() } label: {
-                Text("첫 할 일 입력").foregroundStyle(MirrorPalette.onAccent)
-            }.buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
-            Button("바로 둘러보기") { model.preferences.onboardingComplete = true; model.savePreferences() }
-        }.padding(28).frame(maxWidth: 520, alignment: .leading).frame(maxWidth: .infinity, maxHeight: .infinity)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Image(systemName: "sun.max").font(.largeTitle).accessibilityHidden(true)
+                Text("잘 미루면,\n지금 할 일이 남는다.").font(.largeTitle.weight(.semibold))
+                Text("생각난 일은 보관함에 일단 넣으세요. 오늘 할 일은 정리할 때 직접 정해요. 날짜를 정하지 않은 일이 오늘 목록에 자동으로 들어가지 않아요.")
+                Text("계획 시간대: \(model.preferences.timeZoneID) · 설정에서 바꿀 수 있어요.").font(.caption)
+                Button { model.finishOnboarding() } label: {
+                    Text("첫 할 일 입력").foregroundStyle(MirrorPalette.onAccent)
+                }.buttonStyle(.borderedProminent).accessibilityIdentifier("onboarding.capture")
+                Button("바로 둘러보기") { model.preferences.onboardingComplete = true; model.savePreferences() }
+            }.padding(28).frame(maxWidth: 520, alignment: .leading).frame(maxWidth: .infinity)
+        }
+        .defaultScrollAnchor(.center, for: .alignment)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

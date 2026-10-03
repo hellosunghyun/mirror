@@ -10,6 +10,22 @@ public actor SpotlightService {
     private let domainIdentifier = "mirror.tasks"
     public init(index: CSSearchableIndex? = nil) { self.index = index }
 
+    /// NSUserActivity는 수신한 executor에서 읽고 현재 공간의 유효한 작업만 탐색한다.
+    public nonisolated static func navigationRoute(for activity: NSUserActivity, tasks: [TaskProjection],
+                                                   enabled: Bool, hideTitles: Bool) -> MirrorRoute? {
+        navigationRoute(activityType: activity.activityType,
+                        itemIdentifier: activity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+                        tasks: tasks, enabled: enabled, hideTitles: hideTitles)
+    }
+
+    nonisolated static func navigationRoute(activityType: String, itemIdentifier: String?, tasks: [TaskProjection],
+                                            enabled: Bool, hideTitles: Bool) -> MirrorRoute? {
+        guard activityType == CSSearchableItemActionType, enabled, !hideTitles,
+              let itemIdentifier, let id = UUID(uuidString: itemIdentifier),
+              tasks.contains(where: { $0.taskID == id && $0.status != .deleted && $0.isProjectionComplete }) else { return nil }
+        return .task(id)
+    }
+
     /// 사용자가 검색 노출을 허용한 경우에만 제목을 시스템 인덱스에 보낸다.
     public func reconcile(tasks: [TaskProjection], enabled: Bool, hideTitles: Bool) async throws {
         try await removeAll()

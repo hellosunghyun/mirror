@@ -18,7 +18,7 @@ public enum TaskReducer {
             guard record.workspaceKey == workspaceKey, record.workspaceEpoch == workspaceEpoch else {
                 quarantined[id] = .wrongWorkspace; continue
             }
-            guard record.schemaVersion == 1 else { quarantined[id] = .unsupportedSchema; continue }
+            guard record.isSupportedSchemaVersion else { quarantined[id] = .unsupportedSchema; continue }
             guard structurallyValid(record) else { quarantined[id] = .malformedRecord; continue }
             valid[id] = record
         }
@@ -235,10 +235,18 @@ public enum TaskReducer {
                   record.mutations.allSatisfy({ $0.observedHeadIDs.isEmpty }) else { return false }
             return record.mutations.allSatisfy { mutation in
                 switch mutation.value {
-                case .content: true
-                case let .plan(value): value.target == .unassigned && value.reviewNotBefore == nil
-                case let .status(value): value.status == .open
-                case let .deadline(value): value == nil
+                case .content: return true
+                case let .plan(value):
+                    if record.schemaVersion == 1 { return value.target == .unassigned && value.reviewNotBefore == nil }
+                    switch value.target {
+                    case .day: return value.reviewNotBefore == nil
+                    case let .week(start, end):
+                        guard let notBefore = value.reviewNotBefore else { return false }
+                        return notBefore >= start && notBefore <= end
+                    case .unassigned, .parked: return false
+                    }
+                case let .status(value): return value.status == .open
+                case let .deadline(value): return value == nil
                 }
             }
         case .setPlan: return !record.mutations.isEmpty && record.mutations.allSatisfy { $0.group == .plan }

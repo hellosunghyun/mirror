@@ -1,0 +1,98 @@
+name: 최대 글자와 좁은 창의 적응형 UI 검증
+
+on:
+  push:
+    paths:
+      - 'App/**'
+      - 'Sources/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
+      - 'Tests/MirrorAdaptiveUITests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'scripts/generate-xcode-project.py'
+      - 'scripts/ci-adaptive-ui*'
+      - 'tests/test_adaptive_ui_results.py'
+      - '.github/workflows/adaptive-ui.yml'
+      - 'development-baseline.json'
+  pull_request:
+    paths:
+      - 'App/**'
+      - 'Sources/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
+      - 'Tests/MirrorAdaptiveUITests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'scripts/generate-xcode-project.py'
+      - 'scripts/ci-adaptive-ui*'
+      - 'tests/test_adaptive_ui_results.py'
+      - '.github/workflows/adaptive-ui.yml'
+      - 'development-baseline.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adaptive-ui-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+
+jobs:
+  adaptive-ui:
+    name: ${{ matrix.platform }} · ${{ matrix.appearance }}
+    runs-on: xcode-27
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        appearance: [system, dark]
+        platform: [iphone, ipad, macos]
+    env:
+      MIRROR_UI_APPEARANCE: ${{ matrix.appearance }}
+      MIRROR_ADAPTIVE_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 사례 전체 결과와 PNG 게이트의 오프라인 회귀
+        timeout-minutes: 1
+        run: python3 -m unittest discover -s tests -p 'test_adaptive_ui_results.py' -v
+      - name: 선택한 적응형 UI 앱과 runner 빌드
+        id: build
+        timeout-minutes: 10
+        run: bash scripts/ci-adaptive-ui.sh "$MIRROR_ADAPTIVE_PLATFORM" "$MIRROR_UI_APPEARANCE" build
+      - name: 적응형 사례 전체 순차 실행과 결과·앱 PNG 검증
+        id: test
+        if: ${{ always() && steps.build.outputs.adaptive_build_ready == 'true' }}
+        timeout-minutes: 20
+        run: bash scripts/ci-adaptive-ui.sh "$MIRROR_ADAPTIVE_PLATFORM" "$MIRROR_UI_APPEARANCE" test
+      - name: 고정 요약의 현재 실행 소유와 schema 검증
+        id: summary
+        if: always()
+        timeout-minutes: 1
+        run: |
+          python3 scripts/ci-adaptive-ui-results.py outcome-verify \
+            --directory ".build/ci-adaptive-ui/$MIRROR_ADAPTIVE_PLATFORM-$MIRROR_UI_APPEARANCE" \
+            --platform "$MIRROR_ADAPTIVE_PLATFORM" --appearance "$MIRROR_UI_APPEARANCE"
+          printf 'adaptive_summary_ready=true\n' >> "$GITHUB_OUTPUT"
+      - name: 현재 실행의 고정 요약 보존
+        if: ${{ always() && steps.summary.outputs.adaptive_summary_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: adaptive-ui-summary-${{ matrix.platform }}-${{ matrix.appearance }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-adaptive-ui/${{ matrix.platform }}-${{ matrix.appearance }}/safe-outcome.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: 성공한 현재 실행의 검증한 앱 PNG와 manifest 보존
+        if: ${{ always() && steps.test.outputs.adaptive_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: adaptive-ui-screenshots-${{ matrix.platform }}-${{ matrix.appearance }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-adaptive-ui/${{ matrix.platform }}-${{ matrix.appearance }}/review/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

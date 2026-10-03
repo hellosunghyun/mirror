@@ -11,11 +11,13 @@ struct MirrorAppIntentsRegistration: AppIntentsPackage {
 @MainActor
 struct MirrorApp: App {
     @State private var model = AppModel()
+    init() { NotificationService.bootstrapNavigation() }
     var body: some Scene {
         WindowGroup(id: "main") {
             MirrorRootView()
                 .environment(model)
                 .preferredColorScheme(uiTestingColorScheme)
+                .modifier(MirrorUITestingDynamicType())
         }
         #if os(macOS)
         .commands { MirrorCommands(model: model) }
@@ -54,6 +56,31 @@ struct MirrorApp: App {
         #endif
     }
 }
+
+/// 실제 시스템 값을 보존하고, 독립 UI 수용 검사의 명시적 launch 값만 적용한다.
+private struct MirrorUITestingDynamicType: ViewModifier {
+    func body(content: Content) -> some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
+           ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
+            content.modifier(MirrorAppliedDynamicType()).dynamicTypeSize(.accessibility5)
+        } else { content }
+        #else
+        content
+        #endif
+    }
+}
+
+#if DEBUG
+private struct MirrorAppliedDynamicType: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    func body(content: Content) -> some View {
+        content.accessibilityElement(children: .contain)
+            .accessibilityIdentifier("ui.appliedDynamicType")
+            .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
+    }
+}
+#endif
 
 #if os(macOS)
 @MainActor

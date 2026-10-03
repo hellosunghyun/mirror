@@ -61,9 +61,7 @@ public actor SurfaceReconciler {
         } catch { return .init(failures: [.canonicalRead], omittedNotificationCount: 0) }
         let preferences: SystemPreferences
         do {
-            if let data = try await store.localValue(forKey: "system-preferences-v1") {
-                preferences = try JSONDecoder().decode(SystemPreferences.self, from: data)
-            } else { preferences = .init() }
+            preferences = try await SystemPreferenceRecoveryPolicy.load(store: store)
         } catch { return .init(failures: [.preferences], omittedNotificationCount: 0) }
         var failures: Set<SurfaceReconciliationFailure> = []
         var omitted = 0

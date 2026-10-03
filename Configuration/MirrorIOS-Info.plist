@@ -47,6 +47,19 @@
 	</array>
 	<key>MirrorPersistenceMode</key>
 	<string>localOnly</string>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.baserize.mirror.calendar-plan-transfer</string>
+			<key>UTTypeDescription</key>
+			<string>미러 내부 계획 이동</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

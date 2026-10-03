@@ -117,27 +117,9 @@ public struct TaskRow: View {
     private var card: some View {
         HStack(spacing: 8) {
             checkControl
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(compact ? .subheadline : .body.weight(.medium))
-                    .foregroundStyle(status == .open ? style.text : style.muted)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .overlay(alignment: .leading) {
-                        // The strike draws from the leading edge over the text's own width.
-                        Capsule()
-                            .fill(style.muted)
-                            .frame(height: 2)
-                            .scaleEffect(x: strike, y: 1, anchor: .leading)
-                            .opacity(strike > 0 ? 1 : 0)
-                    }
-                if !compact, status == .snoozed || due != nil {
-                    meta
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
+            taskContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
             if let priority, !compact, status == .open {
                 priorityLabel(priority)
                     .transition(.scale(scale: 0.6).combined(with: .opacity))
@@ -156,7 +138,43 @@ public struct TaskRow: View {
         }
         .clipShape(cardShape)
         .contentShape(cardShape)
-        .onTapGesture { if offset != 0 { settle(0) } else { onTap?() } }
+    }
+
+    @ViewBuilder
+    private var taskContent: some View {
+        if onTap != nil {
+            Button {
+                if offset != 0 { settle(0) } else { onTap?() }
+            } label: {
+                titleAndMetadata.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            titleAndMetadata
+        }
+    }
+
+    private var titleAndMetadata: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(compact ? .subheadline : .body.weight(.medium))
+                .foregroundStyle(status == .open ? style.text : style.muted)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .overlay(alignment: .leading) {
+                    // The strike draws from the leading edge over the text's own width.
+                    Capsule()
+                        .fill(style.muted)
+                        .frame(height: 2)
+                        .scaleEffect(x: strike, y: 1, anchor: .leading)
+                        .opacity(strike > 0 ? 1 : 0)
+                }
+            if !compact, status == .snoozed || due != nil {
+                meta
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -218,6 +236,7 @@ public struct TaskRow: View {
             .animation(spring, value: status)
         }
         .buttonStyle(PressStyle(reduceMotion: reduceMotion))
+        .accessibilityLabel(status == .completed ? "다시 열기" : "완료")
     }
 
     private var checkmark: Path {

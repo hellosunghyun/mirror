@@ -44,6 +44,10 @@ TARGETS = {
                          'deps': [], 'host': 'MirrorIOS'},
     'MirrorMacUITests': {'kind': 'ui-testing', 'path': 'Tests/MirrorUITests', 'platform': 'macos',
                          'deps': [], 'host': 'MirrorMac'},
+    'MirrorIOSAdaptiveUITests': {'kind': 'ui-testing', 'path': 'Tests/MirrorAdaptiveUITests', 'platform': 'ios',
+                               'deps': [], 'host': 'MirrorIOS'},
+    'MirrorMacAdaptiveUITests': {'kind': 'ui-testing', 'path': 'Tests/MirrorAdaptiveUITests', 'platform': 'macos',
+                               'deps': [], 'host': 'MirrorMac'},
 }
 TYPES = {'swift': 'sourcecode.swift', 'metal': 'sourcecode.metal', 'plist': 'text.plist.xml',
          'entitlements': 'text.plist.entitlements', 'xcprivacy': 'text.xml', 'json': 'text.json',
@@ -288,4 +292,25 @@ for target in ('MirrorIOS', 'MirrorMac'):
         ET.indent(scheme, space='   ')
         suffix = 'UIDark' if appearance == 'dark' else 'UI' if ui else ''
         ET.ElementTree(scheme).write(schemes / f'{target}{suffix}.xcscheme', encoding='UTF-8', xml_declaration=True)
-print(f'Xcode 프로젝트 생성: {len(TARGETS)} targets, {len(OBJECTS)} objects, 6 schemes')
+for target in ('MirrorIOS', 'MirrorMac'):
+    adaptive_target = target + 'AdaptiveUITests'
+    scheme = ET.Element('Scheme', LastUpgradeVersion='2700', version='1.3')
+    action = ET.SubElement(scheme, 'BuildAction', parallelizeBuildables='YES', buildImplicitDependencies='YES')
+    entries = ET.SubElement(action, 'BuildActionEntries')
+    for name in (target, adaptive_target):
+        entry = ET.SubElement(entries, 'BuildActionEntry', buildForTesting='YES', buildForRunning='NO',
+                              buildForProfiling='NO', buildForArchiving='NO', buildForAnalyzing='YES')
+        buildable(entry, name)
+    test = ET.SubElement(scheme, 'TestAction', buildConfiguration='Debug',
+                        selectedDebuggerIdentifier='Xcode.DebuggerFoundation.Debugger.LLDB',
+                        selectedLauncherIdentifier='Xcode.IDEFoundation.Launcher.LLDB',
+                        shouldUseLaunchSchemeArgsEnv='NO', codeCoverageEnabled='NO')
+    testables = ET.SubElement(test, 'Testables')
+    buildable(ET.SubElement(testables, 'TestableReference', skipped='NO', parallelizable='NO'), adaptive_target)
+    buildable(ET.SubElement(test, 'MacroExpansion'), target)
+    variables = ET.SubElement(test, 'EnvironmentVariables')
+    ET.SubElement(variables, 'EnvironmentVariable', key='MIRROR_UI_APPEARANCE',
+                  value='$(MIRROR_UI_APPEARANCE)', isEnabled='YES')
+    ET.indent(scheme, space='   ')
+    ET.ElementTree(scheme).write(schemes / f'{target}AdaptiveUI.xcscheme', encoding='UTF-8', xml_declaration=True)
+print(f'Xcode 프로젝트 생성: {len(TARGETS)} targets, {len(OBJECTS)} objects, 8 schemes')

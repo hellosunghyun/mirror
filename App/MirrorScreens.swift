@@ -149,6 +149,7 @@ struct MirrorTaskRow: View {
                     .disabled(model.isSaving || model.projectionPending || model.isDetailEditing)
                     .accessibilityLabel("\(task.title), 미루기, 날짜 선택")
                     .accessibilityIdentifier("task.postpone.\(task.taskID.uuidString)")
+                if let displayedContext { MirrorCalendarDragHandle(task: task, context: displayedContext) }
             }
         }
     }
@@ -185,6 +186,11 @@ struct MirrorCaptureView: View {
     @State private var pendingSingle = false
     @State private var captureFlowStarted = false
     @State private var showSavedFeedback = false
+    @State private var savedFeedback = "보관함에 넣었어요."
+    @State private var initialPlan: PlanTarget?
+    @State private var planContext: PlanningContext?
+    @State private var datePickerContext: PlanningContext?
+    @State private var showDatePicker = false
     private enum InputField: Hashable { case title, note, url }
     @FocusState private var focusedField: InputField?
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
@@ -195,19 +201,21 @@ struct MirrorCaptureView: View {
                     TextField("할 일 제목", text: $title, prompt: Text("할 일 제목").foregroundColor(MirrorPalette.inputPrompt), axis: .vertical)
                         .font(.title3)
                         .textFieldStyle(.plain)
-                        .lineLimit(1...8).focused($focusedField, equals: .title)
+                        .lineLimit(1...4).focused($focusedField, equals: .title)
                         .disabled(model.isSaving || model.projectionPending)
                         .accessibilityIdentifier("capture.title")
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
-                    DisclosureGroup("메모와 원문 링크", isExpanded: $more) {
+                    DisclosureGroup("메모·링크·날짜", isExpanded: $more) {
                         VStack(alignment: .leading, spacing: 14) {
                             TextField("메모", text: $note, axis: .vertical).lineLimit(3...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
                             TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
                             Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(.secondary)
+                            capturePlanChoices
                         }.textFieldStyle(.roundedBorder).padding(.top, 12)
                     }
+                    .accessibilityIdentifier("capture.more")
                     .padding(16)
                     .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
                     if lines.count > 1 {
@@ -220,6 +228,7 @@ struct MirrorCaptureView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
             .background(MirrorPalette.canvas)
+            .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { captureActions }
             .navigationTitle("일단 넣기")
             #if os(iOS)
@@ -232,6 +241,7 @@ struct MirrorCaptureView: View {
             }
             .onChange(of: note) { _, value in if !value.isEmpty { showSavedFeedback = false } }
             .onChange(of: sourceURL) { _, value in if !value.isEmpty { showSavedFeedback = false } }
+            .onChange(of: initialPlan) { _, _ in showSavedFeedback = false }
             .onChange(of: more) { _, expanded in
                 if !expanded, focusedField == .note || focusedField == .url { focusedField = .title }
             }
@@ -241,13 +251,14 @@ struct MirrorCaptureView: View {
                 guard token == requestToken else { return }
                 if pendingSingle {
                     title = ""; note = ""; sourceURL = ""; pendingSingle = false
+                    initialPlan = nil; planContext = nil
                     requestToken = UUID().uuidString; captureFlowStarted = false
                     finishSavedCapture()
                 } else if let pendingLine {
                     var remaining = title.components(separatedBy: .newlines)
                     if remaining.first == pendingLine { remaining.removeFirst(); title = remaining.joined(separator: "\n") }
                     self.pendingLine = nil; requestToken = UUID().uuidString
-                    if remaining.isEmpty { finishSavedCapture() }
+                    if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
                 }
             }
             .sheet(isPresented: $splitPreview) {
@@ -260,7 +271,8 @@ struct MirrorCaptureView: View {
                                 var remaining = lines
                                 for line in lines {
                                     requestToken = UUID().uuidString
-                                    guard await model.capture(title: line, note: note, sourceURL: sourceURL, requestToken: requestToken) else {
+                                    guard await model.capture(title: line, note: note, sourceURL: sourceURL, requestToken: requestToken,
+                                                              initialPlan: initialPlan, displayedContext: planContext) else {
                                         if model.projectionPending { pendingLine = line }
                                         break
                                     }
@@ -268,13 +280,23 @@ struct MirrorCaptureView: View {
                                 }
                                 title = remaining.joined(separator: "\n")
                                 splitPreview = false
-                                if remaining.isEmpty { finishSavedCapture() }
+                                if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
                                 else { focusedField = .title }
                             }
                         }.disabled(model.isSaving || model.projectionPending)
                     }.navigationTitle("줄마다 나누기")
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { splitPreview = false } } }
                 }.tint(MirrorPalette.accent)
+            }
+            .sheet(isPresented: $showDatePicker) {
+                if let datePickerContext {
+                    MirrorCaptureDatePicker(context: datePickerContext) { target in
+                        initialPlan = target
+                        planContext = datePickerContext
+                        showDatePicker = false
+                        focusedField = .title
+                    }
+                }
             }
         }
         .tint(MirrorPalette.accent)
@@ -293,13 +315,13 @@ struct MirrorCaptureView: View {
                     .accessibilityLabel(problem).accessibilityIdentifier("state.error")
             }
             if showSavedFeedback, model.problem == nil, !model.projectionPending, !model.isSaving {
-                Text("보관함에 넣었어요.").font(.callout).foregroundStyle(.secondary)
+                Text(savedFeedback).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("capture.feedback")
             }
             Button { save() } label: {
-                Text(model.isSaving ? "저장 중…" : lines.count > 1 ? "한 개로 저장" : "보관함에 넣기")
+                Text(model.isSaving ? "저장 중…" : lines.count > 1 ? "한 개로 저장" : initialPlan == nil ? "보관함에 넣기" : "날짜에 넣기")
                     .foregroundStyle(MirrorPalette.onAccent)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -314,15 +336,43 @@ struct MirrorCaptureView: View {
                 Button("저장 결과 다시 확인") { Task { await model.retry() } }
                     .frame(minHeight: 44)
             }
-        }.padding(12).frame(maxWidth: .infinity).background(.bar)
+        }.padding(12).frame(maxWidth: .infinity).background(MirrorPalette.surface)
+    }
+    private var capturePlanChoices: some View {
+        let displayedContext = model.context
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(initialPlan.map(planLabel) ?? "날짜는 나중에 정해도 돼요")
+                .font(.callout).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("capture.planSummary")
+            MirrorActionGroup {
+                Button("오늘") { selectInitialPlan(offset: 0, context: displayedContext) }.accessibilityIdentifier("capture.planToday")
+                Button("내일") { selectInitialPlan(offset: 1, context: displayedContext) }.accessibilityIdentifier("capture.planTomorrow")
+                Button("다른 날짜") {
+                    guard let displayedContext else { return }
+                    datePickerContext = displayedContext; focusedField = nil; showDatePicker = true
+                }.accessibilityIdentifier("capture.planOther")
+            }.buttonStyle(.bordered).controlSize(.regular)
+            if initialPlan != nil {
+                Button("날짜 정하지 않기") { initialPlan = nil; planContext = nil }
+                    .frame(minHeight: 44).accessibilityIdentifier("capture.planClear")
+            }
+        }
+        .disabled(model.isSaving || model.projectionPending)
+        .accessibilityIdentifier("capture.planChoices")
+    }
+    private func selectInitialPlan(offset: Int, context: PlanningContext?) {
+        guard let context, let day = try? context.planningDay.addingDays(offset) else { return }
+        planContext = context; initialPlan = .day(day)
     }
     private func save() {
         showSavedFeedback = false
         startCaptureFlow()
         Task {
             requestToken = UUID().uuidString
-            if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken) {
+            if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken,
+                                   initialPlan: initialPlan, displayedContext: planContext) {
                 title = ""; note = ""; sourceURL = ""
+                initialPlan = nil; planContext = nil
                 requestToken = UUID().uuidString
                 captureFlowStarted = false
                 finishSavedCapture()
@@ -332,6 +382,7 @@ struct MirrorCaptureView: View {
     private func finishSavedCapture() {
         // 원본 저장과 projection 갱신을 확인한 성공 경로에서만 단일 입력을 닫는다.
         let single = model.captureIsSingle
+        savedFeedback = model.feedback ?? "보관함에 넣었어요."
         if !single { showSavedFeedback = true }
         focusedField = single ? nil : .title
         model.finishCapture()
@@ -341,6 +392,41 @@ struct MirrorCaptureView: View {
         guard !captureFlowStarted else { return }
         captureFlowStarted = true
         Task { await model.recordCaptureFlowStarted() }
+    }
+}
+
+/// 선택만 하는 달력이다. 날짜를 골라도 저장 버튼 전에는 작업·계획을 쓰지 않는다.
+@MainActor
+struct MirrorCaptureDatePicker: View {
+    @Environment(\.dismiss) private var dismiss
+    let context: PlanningContext
+    let choose: (PlanTarget) -> Void
+    @State private var anchor: LocalDate?
+    @State private var useWeek = false
+    var body: some View {
+        NavigationStack {
+            Form {
+                Text("저장할 때 함께 정할 날짜를 골라 주세요.").font(.callout)
+                Toggle("요일은 나중에 정하기", isOn: $useWeek).accessibilityIdentifier("capture.planWeek")
+                MirrorMonthGrid(anchor: Binding(get: { anchor ?? context.planningDay }, set: { anchor = $0 }),
+                                minimum: context.planningDay) { date in
+                    if useWeek, let week = try? date.mondayWeek() {
+                        choose(.week(startDate: week.startDate, endExclusiveDate: week.endExclusiveDate))
+                    } else { choose(.day(date)) }
+                }.accessibilityIdentifier("capture.planCalendar")
+            }
+            .navigationTitle("날짜 선택")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("취소") { dismiss() }.accessibilityIdentifier("capture.planCancel")
+            } }
+        }
+        .tint(MirrorPalette.accent)
+        #if os(macOS)
+        .frame(minWidth: 320, idealWidth: 460, minHeight: 420, idealHeight: 540)
+        #endif
     }
 }
 
@@ -383,6 +469,7 @@ struct MirrorLibraryView: View {
     private var selectableTaskIDs: Set<UUID> {
         Set(filtered.filter { $0.status == .open }.map(\.taskID))
     }
+    private var searchesWholeLibrary: Bool { !model.search.isEmpty && filter == .inbox }
     var body: some View {
         @Bindable var model = model
         let selectedIDs = model.selectedTaskIDs.intersection(selectableTaskIDs)
@@ -398,8 +485,12 @@ struct MirrorLibraryView: View {
                     .padding(10).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
                     MirrorActionGroup {
                         Picker("목록", selection: $filter) {
-                            ForEach(LibraryFilter.allCases) { Text($0.label).tag($0) }
-                        }.pickerStyle(.menu).labelsHidden().accessibilityLabel("목록").frame(minHeight: 44)
+                            ForEach(LibraryFilter.allCases) { option in
+                                Text(option == .inbox && !model.search.isEmpty ? "전체에서 검색" : option.label).tag(option)
+                            }
+                        }.pickerStyle(.menu).labelsHidden()
+                            .accessibilityLabel(searchesWholeLibrary ? "검색 범위, 전체" : "목록")
+                            .frame(minHeight: 44)
                         Button(selecting ? "선택 마치기" : "선택") {
                             model.selectedTaskIDs.removeAll()
                             selecting.toggle()
@@ -407,6 +498,12 @@ struct MirrorLibraryView: View {
                             .buttonStyle(.borderless).frame(minHeight: 44)
                             .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
                             .accessibilityIdentifier("library.selectToggle")
+                    }
+                    if !model.search.isEmpty {
+                        Text(searchesWholeLibrary ? "미래·완료·보관한 일까지 검색해요. 휴지통은 제외해요." : "\(filter.label)에서 검색해요.")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("library.searchScope")
                     }
                     if selecting {
                         Text("화면에 보이는 일만, 최대 20개까지 선택해요.")
@@ -743,7 +840,12 @@ struct MirrorPlanPicker: View {
     @State private var useWeek = false
     @State private var showDates = false
     private var usesQuickChoices: Bool { request.review == nil && request.widgetState == nil }
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if model.completedWidgetPickerID == request.id {
+            MirrorWidgetPlanCompletion(request: request)
+        } else { planner }
+    }
+    private var planner: some View {
         NavigationStack {
             Form {
                 Section {
@@ -861,6 +963,33 @@ struct MirrorPlanPicker: View {
     }
 
     private func choose(_ target: PlanTarget) { Task { await model.choosePlan(request, target: target) } }
+}
+
+@MainActor
+struct MirrorWidgetPlanCompletion: View {
+    @Environment(AppModel.self) private var model
+    let request: PlanPickerRequest
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Image(systemName: "checkmark.circle").font(.largeTitle).foregroundStyle(MirrorPalette.accent).accessibilityHidden(true)
+                    Text("날짜를 정했어요").font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
+                    Text(model.feedback ?? "선택한 날짜에 넣었어요.").fixedSize(horizontal: false, vertical: true)
+                    Button { model.finishWidgetPlan(request, resume: true) } label: {
+                        Text("이어서 정리").frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.borderedProminent).accessibilityIdentifier("widget.nextReview")
+                    Button { model.finishWidgetPlan(request, resume: false) } label: {
+                        Text("오늘 목록").frame(maxWidth: .infinity, minHeight: 44)
+                    }.buttonStyle(.bordered).accessibilityIdentifier("widget.nextToday")
+                }.padding(24).frame(maxWidth: 480, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle("저장 완료")
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("닫기") { model.picker = nil }.accessibilityIdentifier("widget.nextClose")
+            } }
+        }.tint(MirrorPalette.accent)
+    }
 }
 
 @MainActor

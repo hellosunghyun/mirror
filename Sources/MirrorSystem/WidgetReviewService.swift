@@ -248,10 +248,7 @@ public actor WidgetReviewService {
                                  manuallyStarted: Bool = false) async throws -> WidgetReviewState {
         let snapshot = try await store.snapshot()
         let context = try PlanningContext.capture(at: now, timeZoneID: snapshot.policy.timeZoneID, policyRevision: snapshot.policy.revision)
-        let preferences: SystemPreferences
-        if let value = try await store.localValue(forKey: "system-preferences-v1") {
-            preferences = try JSONDecoder().decode(SystemPreferences.self, from: value)
-        } else { preferences = .init() }
+        let preferences = try await SystemPreferenceRecoveryPolicy.load(store: store)
         let report = TaskReducer.reduce(snapshot.records, workspaceKey: snapshot.workspaceKey, workspaceEpoch: snapshot.workspaceEpoch)
         let cycle = ReviewCycle.id(workspaceEpoch: workspaceEpoch, context: context)
         var state: WidgetReviewState

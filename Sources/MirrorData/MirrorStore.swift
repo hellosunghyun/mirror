@@ -193,8 +193,8 @@ public actor MirrorStore {
                 return Self.failure(envelope, state: .unavailable, message: "이 결정의 원본을 해석할 수 없습니다. 새 버전으로 이력을 확인해 주세요.")
             }
             if let previousOperation = previous.first {
-                guard previousRaw.count == previous.count, previousOperation.schemaVersion == 1,
-                      previous.allSatisfy({ $0.schemaVersion == 1 }),
+                guard previousRaw.count == previous.count, previousOperation.isSupportedSchemaVersion,
+                      previous.allSatisfy({ $0.isSupportedSchemaVersion }),
                       previous.allSatisfy({ $0.payloadDigest == previousOperation.payloadDigest &&
                           (try? $0.computedDigest()) == $0.payloadDigest }) else {
                     return Self.failure(envelope, state: .unavailable, message: "같은 변경의 서로 다른 원본이 있습니다. 이력을 확인해 주세요.")
@@ -692,7 +692,7 @@ public actor MirrorStore {
             if contents[row.operationID]?.contains(fingerprint) == true { duplicates += 1; continue }
             var isQuarantined = contents[row.operationID] != nil
             if let record = try? decoder.decode(OperationRecord.self, from: row.payload) {
-                if record.schemaVersion != 1 || (try? record.computedDigest()) != record.payloadDigest { isQuarantined = true }
+                if !record.isSupportedSchemaVersion || (try? record.computedDigest()) != record.payloadDigest { isQuarantined = true }
             } else { isQuarantined = true }
             if isQuarantined { quarantined += 1 }
             inserted += 1
@@ -797,7 +797,7 @@ public actor MirrorStore {
 
     private func affectedTaskIDs(_ payload: CommandPayload) async throws -> Set<String> {
         switch payload {
-        case let .capture(id, _), let .completion(id, _, _), let .setDeadline(id, _, _),
+        case let .capture(id, _), let .captureWithPlan(id, _, _), let .completion(id, _, _), let .setDeadline(id, _, _),
              let .editContent(id, _, _), let .park(id, _), let .trash(id, _), let .restore(id, _, _):
             return [id.uuidString]
         case let .setPlan(item, _, _): return [item.taskID.uuidString]
@@ -864,7 +864,7 @@ public actor MirrorStore {
                 unknown.insert(row.operationID); unknownTasks.formUnion(row.taskIDs.compactMap(UUID.init(uuidString:))); continue
             }
             records.append(operation)
-            if operation.schemaVersion != 1 {
+            if !operation.isSupportedSchemaVersion {
                 unknown.insert(row.operationID); unknownTasks.formUnion(operation.affectedTaskIDs)
             }
         }

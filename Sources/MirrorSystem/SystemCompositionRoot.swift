@@ -100,6 +100,44 @@ private actor ProcessServicesRegistry {
     }
 }
 
+/// projection만 복구한 사실은 사용자가 확인할 때까지 기기 설정과 함께 남긴다.
+public struct ProjectionRecoveryNotice: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public let recoveredAt: Date
+    public init(recoveredAt: Date) { schemaVersion = 1; self.recoveredAt = recoveredAt }
+}
+
+/// Widget/Shortcuts/저장 후 갱신도 앱과 같은 복구 중 privacy 정책을 적용한다.
+enum SystemPreferenceRecoveryPolicy {
+    static let markerKey = "projection-recovery-v1"
+
+    static func notice(store: MirrorStore) async throws -> ProjectionRecoveryNotice? {
+        guard let data = try await store.localValue(forKey: markerKey) else { return nil }
+        let notice = try JSONDecoder().decode(ProjectionRecoveryNotice.self, from: data)
+        guard notice.schemaVersion == 1, notice.recoveredAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw SystemServiceError.unavailable
+        }
+        return notice
+    }
+
+    static func failClosed(_ preferences: SystemPreferences) -> SystemPreferences {
+        var safe = preferences
+        safe.hideExternalTitles = true; safe.spotlightEnabled = false; safe.notificationsOnThisDevice = false
+        safe.selectedCalendarIDs = []; safe.reviewNotification.enabled = false; safe.deadlineNotifications = []
+        return safe
+    }
+
+    static func load(store: MirrorStore) async throws -> SystemPreferences {
+        let recoveryPending = try await store.localValue(forKey: markerKey) != nil
+        let preferences: SystemPreferences
+        if let data = try await store.localValue(forKey: "system-preferences-v1") {
+            preferences = try JSONDecoder().decode(SystemPreferences.self, from: data)
+        } else { preferences = .init() }
+        // 손상/미지원 marker도 외부 노출을 허용하지 않는다.
+        return recoveryPending ? failClosed(preferences) : preferences
+    }
+}
+
 public actor SystemServices {
     public let store: MirrorStore
     public let directory: URL
@@ -136,23 +174,48 @@ public actor SystemServices {
 
     public func preferences() async throws -> SystemPreferences {
         do {
-            guard let data = try await store.localValue(forKey: "system-preferences-v1") else { return .init() }
-            return try JSONDecoder().decode(SystemPreferences.self, from: data)
+            return try await SystemPreferenceRecoveryPolicy.load(store: store)
         } catch {
             if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
             throw SystemServiceError.unavailable
         }
     }
 
+    public func projectionRecoveryNotice() async throws -> ProjectionRecoveryNotice? {
+        do { return try await SystemPreferenceRecoveryPolicy.notice(store: store) }
+        catch {
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw SystemServiceError.unavailable
+        }
+    }
+
+    /// 복구 안내를 확인한 명시 동작에만 연결한다. 기본 설정 저장으로 marker를 지우지 않는다.
+    /// 외부 노출은 여기서 켜지지 않으며 이후 설정 화면에서 각각 다시 동의해야 한다.
+    public func acknowledgeProjectionRecovery(_ notice: ProjectionRecoveryNotice) async throws {
+        guard let current = try await projectionRecoveryNotice(), current == notice else { throw SystemServiceError.invalidInput }
+        let safe = SystemPreferenceRecoveryPolicy.failClosed(try await preferences())
+        try await store.setLocalValue(JSONEncoder().encode(safe), forKey: "system-preferences-v1")
+        try await store.setLocalValue(nil, forKey: SystemPreferenceRecoveryPolicy.markerKey)
+        WidgetReload.request()
+    }
+
     public func savePreferences(_ preferences: SystemPreferences) async throws {
         guard TimeZone(identifier: preferences.planningTimeZoneID) != nil, !preferences.policyRevision.isEmpty else {
             throw SystemServiceError.invalidInput
         }
-        try await store.setLocalValue(JSONEncoder().encode(preferences), forKey: "system-preferences-v1")
-        if !preferences.spotlightEnabled || preferences.hideExternalTitles { try await spotlight.removeAll() }
-        if !preferences.notificationsOnThisDevice { try await notifications.clearAll() }
+        let recoveryPending = try await store.localValue(forKey: SystemPreferenceRecoveryPolicy.markerKey) != nil
+        let effective = recoveryPending ? SystemPreferenceRecoveryPolicy.failClosed(preferences) : preferences
+        try await store.setLocalValue(JSONEncoder().encode(effective), forKey: "system-preferences-v1")
+        var cleanupError: (any Error)?
+        if !effective.spotlightEnabled || effective.hideExternalTitles {
+            do { try await spotlight.removeAll() } catch { cleanupError = error }
+        }
+        if !effective.notificationsOnThisDevice {
+            do { try await notifications.clearAll() } catch { if cleanupError == nil { cleanupError = error } }
+        }
         await calendar.clearCache()
         WidgetReload.request()
+        if let cleanupError { throw cleanupError }
     }
 
     /// 로컬 원본 삭제/공간 교체 후 호출한다. 실패한 후처리를 숨기지 않으며 모든 표면에 시도한다.

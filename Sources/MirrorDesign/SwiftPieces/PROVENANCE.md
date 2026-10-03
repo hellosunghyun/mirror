@@ -14,3 +14,5 @@
 FormField와 TrackingTabs 원본도 검토했다. FormField는 UIKit 키보드·폰트 의존성과 입력 길이를 자동 자르는 동작이 있고, 미러는 긴 원문 입력을 유지하고 검증 오류를 보여야 하므로 시스템 TextField/TextEditor를 사용한다. TrackingTabs의 커스텀 페이지 이동은 iPhone 네이티브 탭 및 iPad/Mac 사이드바와 겹쳐 도입하지 않았다. 도입한 파일에는 Metal 의존성이 없다.
 
 실제 VoiceOver, 큰 글자, Reduce Motion, Reduce Transparency 검증 결과는 플랫폼 QA에 별도로 기록한다. 원본 데모의 검증 결과를 미러의 검증 결과로 대체하지 않는다.
+
+2026-10-03 후속 변경: TaskRow의 제목·메타 영역을 실제 plain Button으로 바꾸고 완료 체크 Button과 형제로 유지했다. 스와이프가 열려 있을 때 첫 활성화는 닫기만 수행하는 기존 동작을 보존하며 체크의 한국어 접근성 이름을 명시했다. ExpandableText의 실제 더 보기/접기 Button을 접근성에서 숨기지 않고 한국어 이름·식별자를 제공한다. 측정용 숨김 복사본·줄 수·접힘·Reduce Motion·원저작권과 라이선스는 유지한다. 새 원격 접근성/큰 글자 검증은 실행과 원본별로 기록한다.
