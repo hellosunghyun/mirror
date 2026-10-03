@@ -809,6 +809,249 @@ esac
             with self.assertRaises(helper.AdaptiveError):
                 helper.clean_png(png(helper.chunk(kind, b'\0')))
 
+    def case_diagnostic_row(self, case=CASE, sequence=0, element=None, **extra):
+        return helper.CASE_DIAGNOSTIC_MARKER + json.dumps(
+            {'schemaVersion': 1, 'case': helper.CASE_DIAGNOSTIC_NAMES[case],
+             'requestSequence': sequence, 'requestedElement': element, **extra})
+
+    def audit_boundary_row(self, case=CASE, sequence=1, outcome='returned', **extra):
+        return helper.AUDIT_BOUNDARY_MARKER + json.dumps(
+            {'schemaVersion': 1, 'case': helper.CASE_DIAGNOSTIC_NAMES[case],
+             'auditSequence': sequence, 'outcome': outcome, **extra})
+
+    def case_protocol_rows(self, case=CASE, platform='iphone', outcome='returned'):
+        owner = ('MirrorMacAdaptiveUITests' if platform == 'macos' else BUNDLE) + '.MirrorAdaptiveUITests'
+        rows = [event(case, owner), self.case_diagnostic_row(case)]
+        for sequence, (phase, step) in enumerate(helper.PROGRESS_PROTOCOL[case], 1):
+            rows.append(self.progress_row(case, phase, sequence, step))
+            if phase == 'auditStarted':
+                rows.append(self.audit_boundary_row(case, step, outcome))
+                if outcome == 'threw':
+                    break
+        return rows
+
+    def test_case_diagnostics_preserve_four_failed_case_requests_after_narrow_starts(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'macos')
+        expected = {'platform': 'macos', 'appearance': 'system'}
+        owner = 'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'
+        rows = []
+        common = list(helper.required_cases('macos'))
+        for case in [case for case in common if case != helper.NARROW]:
+            rows.extend((event(case, owner), self.case_diagnostic_row(case), self.progress_row(case),
+                         self.progress_row(case, 'launchComplete', 2),
+                         self.case_diagnostic_row(case, 1, 'captureOpen'), event(case, owner, 'failed')))
+        rows.extend((event(helper.NARROW, owner), self.case_diagnostic_row(helper.NARROW),
+                     self.progress_row(helper.NARROW), self.progress_row(helper.NARROW, 'launchComplete', 2),
+                     self.progress_row(helper.NARROW, 'windowResizeStarted', 3)))
+        reports = helper.xctest_case_diagnostics('\n'.join(rows), expected, entries)
+        self.assertEqual(len(reports), 5)
+        for report in reports[:4]:
+            self.assertEqual(report['requestedElement'], 'captureOpen')
+            self.assertEqual(report['requestSequence'], 1)
+            self.assertEqual(report['lastProgress'], {'phase': 'launchComplete', 'sequence': 2, 'step': 0})
+        self.assertEqual(reports[-1]['lastProgress']['phase'], 'windowResizeStarted')
+        self.assertIsNone(reports[-1]['requestedElement'])
+        self.assertEqual(reports[-1]['case'], 'narrowMac')
+        for forbidden in ('passedTests', 'failedTests', 'xcodebuildExitCode', PRIVATE):
+            self.assertNotIn(forbidden, json.dumps(reports))
+
+    def test_case_diagnostics_allow_entry_only_and_unterminated_observed_prefix(self):
+        _, entries = self.progress_fixture()
+        rows = [event(), self.case_diagnostic_row()]
+        report = helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries)[0]
+        self.assertIsNone(report['lastProgress'])
+        self.assertIsNone(report['requestedElement'])
+        self.assertEqual(report['auditBoundaries'], [])
+        rows.extend((self.progress_row(), self.case_diagnostic_row(sequence=1, element='todayList')))
+        for state in (None, 'passed', 'failed', 'skipped'):
+            log = '\n'.join(rows + ([] if state is None else [event(state=state)]))
+            report = helper.xctest_case_diagnostics(log, EXPECTED, entries)[0]
+            self.assertEqual(report['requestSequence'], 1)
+            self.assertEqual(report['requestedElement'], 'todayList')
+            self.assertNotIn('result', report)
+
+    def test_case_diagnostics_allow_contiguous_repeated_requests_without_extra_observation_fields(self):
+        _, entries = self.progress_fixture()
+        rows = [event(), self.case_diagnostic_row(), self.progress_row()]
+        rows.extend(self.case_diagnostic_row(sequence=sequence, element='captureTitle') for sequence in range(1, 4))
+        report = helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries)[0]
+        self.assertEqual((report['requestSequence'], report['requestedElement']), (3, 'captureTitle'))
+        self.assertEqual(set(report), {'case', 'method', 'sourceFile', 'entryLine', 'lastProgress',
+                                       'requestSequence', 'requestedElement', 'auditBoundaries'})
+
+    def test_case_diagnostics_reject_unknown_private_enums_extra_and_duplicate_json_keys(self):
+        _, entries = self.progress_fixture()
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row()]
+        bad = [self.case_diagnostic_row(sequence=1, element=PRIVATE),
+               self.case_diagnostic_row(sequence=1, element='task.row.12345678-1234-1234-1234-123456789ABC'),
+               self.case_diagnostic_row(sequence=1, element='captureOpen', label=PRIVATE),
+               self.case_diagnostic_row(sequence=1, element='captureOpen', schemaVersion=True),
+               self.case_diagnostic_row(sequence=1, element='captureOpen', schemaVersion=2),
+               helper.CASE_DIAGNOSTIC_MARKER + '{"schemaVersion":1,"case":"captureValidation","case":"' + PRIVATE + '","requestSequence":1,"requestedElement":"captureOpen"}',
+               helper.CASE_DIAGNOSTIC_MARKER + '{"schemaVersion":1,"case":"' + PRIVATE + '","requestSequence":1,"requestedElement":"captureOpen"}',
+               helper.CASE_DIAGNOSTIC_MARKER + PRIVATE]
+        for row in bad:
+            with self.subTest(row=row):
+                self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row]), EXPECTED, entries))
+
+    def test_case_diagnostics_reject_missing_duplicate_wrong_and_out_of_bound_request_sequences(self):
+        _, entries = self.progress_fixture()
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row()]
+        for sequence in (-1, True, 1.0, 2, 10_001):
+            row = self.case_diagnostic_row(sequence=sequence, element='captureOpen')
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row]), EXPECTED, entries))
+        first = self.case_diagnostic_row(sequence=1, element='captureOpen')
+        for row in (first, self.case_diagnostic_row(), self.case_diagnostic_row(sequence=0, element='captureOpen')):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [first, row]), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join([event(), first]), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join([event(), self.progress_row(), self.case_diagnostic_row()]), EXPECTED, entries))
+        long = first + ' ' * 2049
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [long]), EXPECTED, entries))
+        with mock.patch.object(helper, 'MAX_LOG', 1), self.assertRaises(helper.AdaptiveError):
+            helper.xctest_case_diagnostics('\n'.join(prefix), EXPECTED, entries)
+
+    def test_case_diagnostics_reject_wrong_case_platform_bundle_and_late_malformed_stream(self):
+        source, entries = self.progress_fixture()
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row()]
+        wrong = self.case_diagnostic_row('testMaximumTypeReviewAndWeekPicker', 1, 'reviewCard')
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [wrong]), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [self.case_diagnostic_row(sequence=1, element='reviewCard')]), EXPECTED, entries))
+        for platform in ('iphone', 'ipad'):
+            expected = {**EXPECTED, 'platform': platform}
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [self.case_diagnostic_row(sequence=1, element='captureMoreDisclosure')]), expected, entries))
+        mac = {'platform': 'macos', 'appearance': 'system'}
+        mac_entries = helper.source_method_entries(source, 'macos')
+        for element in ('nativeStatusBar', 'selectAll', 'keyboardContinue'):
+            rows = [event(owner='MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'), self.case_diagnostic_row(),
+                    self.progress_row(), self.case_diagnostic_row(sequence=1, element=element)]
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), mac, mac_entries))
+        foreign = '\n'.join(prefix).replace(BUNDLE, 'ForeignUITests')
+        self.assertIsNone(helper.xctest_case_diagnostics(foreign, EXPECTED, entries))
+        valid = prefix + [self.case_diagnostic_row(sequence=1, element='captureOpen'), event(state='failed')]
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(valid + [helper.CASE_DIAGNOSTIC_MARKER + PRIVATE]), EXPECTED, entries))
+
+    def test_case_diagnostics_reject_native_event_marker_mixing_and_noncontiguous_progress(self):
+        _, entries = self.progress_fixture()
+        entry = self.case_diagnostic_row()
+        request = self.case_diagnostic_row(sequence=1, element='todayList')
+        audit = self.audit_boundary_row()
+        for rows in ([event() + ' ' + entry], [event() + ' ' + audit],
+                     [event() + ' UI adaptive configuration measurement: not-json', entry, self.progress_row()],
+                     [event() + ' UI adaptive resize measurement: not-json', entry, self.progress_row()],
+                     [event() + ' ' + self.progress_row(), entry],
+                     [event(), entry, self.progress_row(), event(state='failed') + ' ' + request],
+                     [event(), entry, self.progress_row(), self.progress_row(phase='launchComplete', sequence=3)],
+                     [event(), entry, self.progress_row() + ' ' + request],
+                     [event(), entry, self.progress_row(), event() + ' ' + event(state='failed')]):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries))
+
+    def test_audit_boundaries_preserve_all_nine_returns_without_case_pass_inference(self):
+        source, _ = self.progress_fixture()
+        expected = {'platform': 'macos', 'appearance': 'system'}
+        entries = helper.source_method_entries(source, 'macos')
+        owner = 'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'
+        rows = []
+        for case in helper.required_cases('macos'):
+            rows.extend(self.case_protocol_rows(case, 'macos'))
+            rows.append(event(case, owner, 'passed'))
+        reports = helper.xctest_case_diagnostics('\n'.join(rows), expected, entries)
+        self.assertEqual(sum(len(report['auditBoundaries']) for report in reports), 9)
+        self.assertEqual([len(report['auditBoundaries']) for report in reports],
+                         [sum(phase == 'auditStarted' for phase, _ in helper.PROGRESS_PROTOCOL[case])
+                          for case in helper.required_cases('macos')])
+        for report in reports:
+            self.assertTrue(all(boundary['outcome'] == 'returned' for boundary in report['auditBoundaries']))
+            for key in ('passedTests', 'failedTests', 'result', 'issue', 'message', 'timeout'):
+                self.assertNotIn(key, report)
+
+    def test_audit_throw_is_owned_per_case_and_preserved_when_a_later_case_starts(self):
+        _, entries = self.progress_fixture()
+        other = 'testMaximumTypeReviewAndWeekPicker'
+        rows = self.case_protocol_rows(outcome='threw') + [event(state='failed'), event(other),
+                self.case_diagnostic_row(other), self.progress_row(other)]
+        reports = helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries)
+        self.assertEqual(reports[0]['auditBoundaries'], [{'auditSequence': 1, 'outcome': 'threw'}])
+        self.assertEqual(reports[0]['lastProgress']['phase'], 'auditStarted')
+        self.assertEqual(reports[1]['auditBoundaries'], [])
+        self.assertNotIn(PRIVATE, json.dumps(reports))
+
+    def test_audit_boundaries_reject_wrong_context_sequences_private_outcomes_and_repeated_returns(self):
+        _, entries = self.progress_fixture()
+        prefix = self.case_protocol_rows()
+        boundary_index = next(index for index, row in enumerate(prefix) if row.startswith(helper.AUDIT_BOUNDARY_MARKER))
+        before = prefix[:boundary_index]
+        for row in (self.audit_boundary_row(sequence=0), self.audit_boundary_row(sequence=True),
+                    self.audit_boundary_row(sequence=2), self.audit_boundary_row(outcome=PRIVATE),
+                    self.audit_boundary_row(issue=PRIVATE), self.audit_boundary_row(schemaVersion=True),
+                    self.audit_boundary_row(case='testMaximumTypeReviewAndWeekPicker')):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(before + [row]), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(before + [self.audit_boundary_row()] * 2), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join([event(), self.case_diagnostic_row(), self.progress_row(), self.audit_boundary_row()]), EXPECTED, entries))
+        missing_return = prefix[:boundary_index] + prefix[boundary_index + 1:]
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(missing_return), EXPECTED, entries))
+        thrown = self.case_protocol_rows(outcome='threw')
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(thrown + [self.progress_row(phase='auditComplete', sequence=10, step=1)]), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(thrown + [self.case_diagnostic_row(sequence=1, element='captureOpen')]), EXPECTED, entries))
+
+    def test_case_diagnostic_legacy_absence_preserves_original_progress_and_measurement_parsers(self):
+        _, entries = self.progress_fixture()
+        rows = [event(), self.progress_row(), self.configuration_measurement_row()]
+        legacy = '\n'.join(rows)
+        self.assertIsNone(helper.xctest_case_diagnostics(legacy, EXPECTED, entries))
+        self.assertEqual(helper.xctest_progress_diagnostics(legacy, EXPECTED, entries)['phase'], 'started')
+        self.assertEqual(len(helper.xctest_measurement_diagnostics(legacy, EXPECTED, entries)), 1)
+        new = '\n'.join([event(), self.case_diagnostic_row(), self.progress_row(), self.configuration_measurement_row()])
+        self.assertEqual(helper.xctest_progress_diagnostics(new, EXPECTED, entries)['phase'], 'started')
+        self.assertEqual(len(helper.xctest_measurement_diagnostics(new, EXPECTED, entries)), 1)
+        self.assertEqual(helper.xctest_case_diagnostics(new, EXPECTED, entries)[0]['case'], 'captureValidation')
+
+    def test_case_diagnostic_notice_requires_bounded_source_log_and_pinned_context_without_raw_text(self):
+        source, _ = self.progress_fixture()
+        expected = {**EXPECTED, 'commitSHA': 'a' * 40, 'buildNumber': '12', 'runID': '34', 'runAttempt': '1'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / helper.UI_FAILURE_SOURCE_FILE
+            path.parent.mkdir(parents=True)
+            path.write_text(source)
+            with mock.patch.object(helper, 'context_for', side_effect=helper.AdaptiveError(PRIVATE)), \
+                    mock.patch.object(helper, 'read_regular') as read, mock.patch('builtins.print') as output:
+                helper.case_progress_diagnostics(root, expected)
+            read.assert_not_called()
+            self.assertIn('contextUnavailable', output.call_args[0][0])
+            self.assertNotIn(PRIVATE, output.call_args[0][0])
+            with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'context_for'), \
+                    mock.patch('builtins.print') as output:
+                helper.case_progress_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                log = root / 'test.log'
+                log.write_text('\n'.join([event(), self.case_diagnostic_row(), self.progress_row(),
+                                          self.case_diagnostic_row(sequence=1, element='captureOpen')]))
+                helper.case_progress_diagnostics(root, expected)
+                notice = output.call_args[0][0]
+                self.assertIn('observedCaseBoundariesOnly', notice)
+                self.assertIn(expected['commitSHA'], notice)
+                for forbidden in (str(root), PRIVATE, 'passedTests', 'failedTests', 'message', 'xcodebuildExitCode'):
+                    self.assertNotIn(forbidden, notice)
+                log.write_text('\n'.join([event(), self.case_diagnostic_row(), self.progress_row(),
+                                          self.case_diagnostic_row(sequence=1, element=PRIVATE)]))
+                helper.case_progress_diagnostics(root, expected)
+                self.assertIn('noAcceptedCaseDiagnostics', output.call_args[0][0])
+                self.assertNotIn(PRIVATE, output.call_args[0][0])
+                log.rename(root / 'original.log')
+                log.symlink_to(root / 'original.log')
+                helper.case_progress_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                log.unlink()
+                log.write_text(PRIVATE)
+                with mock.patch.object(helper, 'MAX_LOG', 1):
+                    helper.case_progress_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                path.unlink()
+                helper.case_progress_diagnostics(root, expected)
+                self.assertIn('sourceUnavailable', output.call_args[0][0])
+
+
 
 if __name__ == '__main__':
     unittest.main()

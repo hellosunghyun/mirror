@@ -48,6 +48,10 @@ TARGETS = {
                                'deps': [], 'host': 'MirrorIOS'},
     'MirrorMacAdaptiveUITests': {'kind': 'ui-testing', 'path': 'Tests/MirrorAdaptiveUITests', 'platform': 'macos',
                                'deps': [], 'host': 'MirrorMac'},
+    'MirrorIOSBatchUITests': {'kind': 'ui-testing', 'path': 'Tests/MirrorBatchUITests', 'platform': 'ios',
+                            'deps': [], 'host': 'MirrorIOS'},
+    'MirrorMacBatchUITests': {'kind': 'ui-testing', 'path': 'Tests/MirrorBatchUITests', 'platform': 'macos',
+                            'deps': [], 'host': 'MirrorMac'},
 }
 TYPES = {'swift': 'sourcecode.swift', 'metal': 'sourcecode.metal', 'plist': 'text.plist.xml',
          'entitlements': 'text.plist.entitlements', 'xcprivacy': 'text.xml', 'json': 'text.json',
@@ -313,4 +317,22 @@ for target in ('MirrorIOS', 'MirrorMac'):
                   value='$(MIRROR_UI_APPEARANCE)', isEnabled='YES')
     ET.indent(scheme, space='   ')
     ET.ElementTree(scheme).write(schemes / f'{target}AdaptiveUI.xcscheme', encoding='UTF-8', xml_declaration=True)
-print(f'Xcode 프로젝트 생성: {len(TARGETS)} targets, {len(OBJECTS)} objects, 8 schemes')
+for target in ('MirrorIOS', 'MirrorMac'):
+    batch_target = target + 'BatchUITests'
+    scheme = ET.Element('Scheme', LastUpgradeVersion='2700', version='1.3')
+    action = ET.SubElement(scheme, 'BuildAction', parallelizeBuildables='YES', buildImplicitDependencies='YES')
+    entries = ET.SubElement(action, 'BuildActionEntries')
+    for name in (target, batch_target):
+        entry = ET.SubElement(entries, 'BuildActionEntry', buildForTesting='YES', buildForRunning='NO',
+                              buildForProfiling='NO', buildForArchiving='NO', buildForAnalyzing='YES')
+        buildable(entry, name)
+    test = ET.SubElement(scheme, 'TestAction', buildConfiguration='Debug',
+                        selectedDebuggerIdentifier='Xcode.DebuggerFoundation.Debugger.LLDB',
+                        selectedLauncherIdentifier='Xcode.IDEFoundation.Launcher.LLDB',
+                        shouldUseLaunchSchemeArgsEnv='NO', codeCoverageEnabled='NO')
+    testables = ET.SubElement(test, 'Testables')
+    buildable(ET.SubElement(testables, 'TestableReference', skipped='NO', parallelizable='NO'), batch_target)
+    buildable(ET.SubElement(test, 'MacroExpansion'), target)
+    ET.indent(scheme, space='   ')
+    ET.ElementTree(scheme).write(schemes / f'{target}BatchUI.xcscheme', encoding='UTF-8', xml_declaration=True)
+print(f'Xcode 프로젝트 생성: {len(TARGETS)} targets, {len(OBJECTS)} objects, 10 schemes')

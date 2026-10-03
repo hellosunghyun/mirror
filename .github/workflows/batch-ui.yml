@@ -1,0 +1,67 @@
+name: 실제 두 개와 스무 개 작업의 간편 일괄 배치 검증
+
+on:
+  push:
+    paths:
+      - 'App/**'
+      - 'Sources/**'
+      - 'Tests/MirrorBatchUITests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'scripts/generate-xcode-project.py'
+      - 'scripts/ci-batch-ui*'
+      - 'tests/test_batch_ui_results.py'
+      - '.github/workflows/batch-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: batch-ui-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+
+jobs:
+  batch-ui:
+    name: ${{ matrix.platform }} · 실제 2개와 20개
+    runs-on: xcode-27
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        platform: [iphone, ipad, macos]
+    env:
+      MIRROR_BATCH_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 두 typed 사례 게이트의 오수용 회귀
+        timeout-minutes: 1
+        run: python3 -m unittest discover -s tests -p 'test_batch_ui_results.py' -v
+      - name: 전용 batch 앱과 runner 빌드
+        id: build
+        timeout-minutes: 10
+        run: bash scripts/ci-batch-ui.sh "$MIRROR_BATCH_PLATFORM" build
+      - name: 실제 입력·선택·날짜 배치와 두 typed 사례 검증
+        id: test
+        if: ${{ always() && steps.build.outputs.batch_build_ready == 'true' }}
+        timeout-minutes: 20
+        run: bash scripts/ci-batch-ui.sh "$MIRROR_BATCH_PLATFORM" test
+      - name: 현재 실행 소유와 고정 요약 schema 검증
+        id: summary
+        if: always()
+        timeout-minutes: 1
+        run: |
+          python3 scripts/ci-batch-ui-results.py outcome-verify --platform "$MIRROR_BATCH_PLATFORM"
+          printf 'batch_summary_ready=true\n' >> "$GITHUB_OUTPUT"
+      - name: 원본 로그 없이 현재 실행의 typed 수용 요약 보존
+        if: ${{ always() && steps.summary.outputs.batch_summary_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: batch-ui-summary-${{ matrix.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-batch-ui/${{ matrix.platform }}/safe-outcome.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

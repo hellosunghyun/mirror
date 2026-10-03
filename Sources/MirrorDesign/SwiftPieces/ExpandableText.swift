@@ -2,7 +2,7 @@
 // Adapted for Mirror; see PROVENANCE.md.
 // swiftpieces:
 // title: Expandable Text
-// description: A paragraph clamped to a line limit that measures whether it is really truncated, and only then fades the end of its last line into a trailing "more" link; tapping grows the block smoothly to its full height with no reflow, a "less" link collapses it, links stay tappable, and VoiceOver always reads the whole text.
+// description: A paragraph clamped to a line limit that measures whether it is really truncated, then fades its last line and offers a separate "more" button below it; tapping grows the block smoothly to its full height with no reflow, a "less" button collapses it, links stay tappable, and VoiceOver always reads the whole text.
 // category: text
 // minIOSVersion: "17.0"
 // version: "1.0.0"
@@ -17,7 +17,7 @@ import SwiftUI
 /// the full text, the text at `lineLimit` lines, and the text at one line fewer (which locates the last visible line).
 /// The copies re-measure on width, Dynamic Type and text changes. When the full height exceeds the limited height,
 /// the visible text is laid out in full and clipped to the limited height; the end of the last line fades out
-/// (a transparent mask, so it works over any background) and a `more` link sits in the faded space on the trailing edge.
+/// (a transparent mask, so it works over any background). A separate `more` button below the paragraph expands it.
 /// Expanding animates the clip to the full height, so lines never reflow or jump.
 ///
 /// Font and color come from the environment like `Text`: apply `.font(...)`, `.foregroundStyle(...)` and
@@ -28,7 +28,7 @@ import SwiftUI
 ///   - text: The paragraph. A `String` is shown verbatim; an `AttributedString` keeps bold, italics and tappable links.
 ///   - lineLimit: Lines shown while collapsed. Values below 1 are treated as 1.
 ///   - isExpanded: Optional binding to drive or observe the state from outside. `nil` keeps the state internally.
-///   - moreLabel: The trailing link on the last collapsed line. Localized from your app's strings; defaults to "more".
+///   - moreLabel: The button below the collapsed paragraph. Localized from your app's strings; defaults to "more".
 ///   - lessLabel: The link under the expanded text. Localized from your app's strings; defaults to "less".
 ///   - showsLess: When false, an expanded paragraph stays expanded (no "less" link, and tapping the body does nothing).
 ///   - togglesOnTap: When true, tapping anywhere on the paragraph also expands or collapses it. Links inside the text still open.
@@ -162,7 +162,10 @@ public struct ExpandableText: View {
         VStack(alignment: .trailing, spacing: 2) {
             paragraph(truncated: truncated, collapsed: collapsed, lastLine: lastLine)
 
-            if truncated && expanded && showsLess {
+            if collapsed {
+                link(moreLabel)
+                    .transition(.opacity)
+            } else if truncated && expanded && showsLess {
                 link(lessLabel)
                     .transition(.opacity)
             }
@@ -191,7 +194,7 @@ public struct ExpandableText: View {
                 openURL(url)
                 return .handled
             })
-            // After the body tap, so tapping "more" never also counts as a body tap.
+            // The collapsed-line fade is decorative; the independent button is below the paragraph.
             .overlay(alignment: .topTrailing) {
                 if collapsed {
                     moreAffordance(lastLine: lastLine)
@@ -242,7 +245,7 @@ public struct ExpandableText: View {
         .overlay { Rectangle().opacity(isTruncated ? 0 : 1) }
     }
 
-    /// "More" in the faded space, trailing edge of the last line. With a solid `fade` color, the gradient is painted here instead.
+    /// Decorative space at the trailing edge of the last line. With a solid `fade` color, the gradient is painted here instead.
     private func moreAffordance(lastLine: CGFloat) -> some View {
         HStack(spacing: 0) {
             if let fade = style.fade {
@@ -250,10 +253,13 @@ public struct ExpandableText: View {
                     .frame(width: style.fadeWidth * scale)
                     .allowsHitTesting(false)
             }
-            link(moreLabel)
+            linkLabel(moreLabel)
+                .hidden()
                 .background { style.fade }
         }
         .frame(height: lastLine)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     private func fadeGradient(_ colors: [Color]) -> some View {
@@ -270,7 +276,7 @@ public struct ExpandableText: View {
             .frame(minWidth: 44)
     }
 
-    /// A text link whose hit area is at least 44 x 44 even though it draws at one line tall.
+    /// A separate text button with a real layout and hit area of at least 44 x 44.
     private func link(_ label: LocalizedStringKey) -> some View {
         Button {
             pendingToggle?.cancel()
@@ -279,7 +285,8 @@ public struct ExpandableText: View {
             linkLabel(label)
                 .foregroundStyle(style.link)
                 .opacity(isEnabled ? 1 : 0.45)
-                .contentShape(Rectangle().inset(by: -12))
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(label))

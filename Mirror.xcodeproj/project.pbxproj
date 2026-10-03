@@ -514,6 +514,21 @@
 			name = Tests/MirrorAdaptiveUITests;
 			sourceTree = "<group>";
 		};
+		4FC8A9FB33CA290610D264B3 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = MirrorBatchUITests.swift;
+			path = Tests/MirrorBatchUITests/MirrorBatchUITests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
+		ADF4E6CBFD07D04E2E5DADD1 = {
+			isa = PBXGroup;
+			children = (
+				4FC8A9FB33CA290610D264B3,
+			);
+			name = Tests/MirrorBatchUITests;
+			sourceTree = "<group>";
+		};
 		3E1D3D5DF271B14B3ACC76D2 = {
 			isa = PBXFileReference;
 			lastKnownFileType = text.plist.entitlements;
@@ -751,6 +766,20 @@
 			path = MirrorMacAdaptiveUITests.xctest;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
+		6CBDA054AF8F0C4ABFB6C6D0 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorIOSBatchUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		6E1E26D883FA3F273F535B56 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = MirrorMacBatchUITests.xctest;
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
 		77BB0A0DD12CE614CF80E316 = {
 			isa = PBXGroup;
 			children = (
@@ -771,6 +800,8 @@
 				A5FB5F6A0A5D9578D1E6119A,
 				CB14298BB5BD06504C98D69C,
 				FFDD504E334D3346450E7E52,
+				6CBDA054AF8F0C4ABFB6C6D0,
+				6E1E26D883FA3F273F535B56,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -790,6 +821,7 @@
 				0E76ACFD3A99B2E37B5109BB,
 				8E25E1F96F6C72C0D46C4F17,
 				25C3E98656BE362070848933,
+				ADF4E6CBFD07D04E2E5DADD1,
 				18FD7FD8A86AE7DB07FFE101,
 				22D02A9EFAC9B3FBBAEBE062,
 				77BB0A0DD12CE614CF80E316,
@@ -3534,6 +3566,230 @@
 			productReference = FFDD504E334D3346450E7E52;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		7989F325ADBC395979582C04 = {
+			isa = PBXBuildFile;
+			fileRef = 4FC8A9FB33CA290610D264B3;
+		};
+		AC0D3163007C8DF4BD76DF77 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7989F325ADBC395979582C04,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		797093473C75CFC0FC7FBA6F = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B56CB8BC96C05AAEE893A744 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		51EB6F6C4A29874B6A1C1260 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 6D966BF1135AC5B72C078FD9;
+			remoteInfo = MirrorIOS;
+		};
+		33A22996FBA7E4EA473D35DA = {
+			isa = PBXTargetDependency;
+			target = 6D966BF1135AC5B72C078FD9;
+			targetProxy = 51EB6F6C4A29874B6A1C1260;
+		};
+		3F5129AA03184F1D9E73B97E = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirroriosbatchuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorIOS;
+			};
+			name = Debug;
+		};
+		59124A0A2B3479B1A89E8E40 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirroriosbatchuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorIOS;
+			};
+			name = Release;
+		};
+		D514DAB94767F3696FC473A5 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3F5129AA03184F1D9E73B97E,
+				59124A0A2B3479B1A89E8E40,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A23634810F07DC60C8E8DF4F = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D514DAB94767F3696FC473A5;
+			buildPhases = (
+				AC0D3163007C8DF4BD76DF77,
+				797093473C75CFC0FC7FBA6F,
+				B56CB8BC96C05AAEE893A744,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				33A22996FBA7E4EA473D35DA,
+			);
+			name = MirrorIOSBatchUITests;
+			productName = MirrorIOSBatchUITests;
+			productReference = 6CBDA054AF8F0C4ABFB6C6D0;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		589CE80F526D6BCB9551B11F = {
+			isa = PBXBuildFile;
+			fileRef = 4FC8A9FB33CA290610D264B3;
+		};
+		92A35FDA5163C19BFB328A90 = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				589CE80F526D6BCB9551B11F,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D842594073F8558EA194493 = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		02B64AA00AA72ADA271C5A6D = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D2E1D77760DC433D94884DDA = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 98F54143AB4E86B28C3AFEE0;
+			proxyType = 1;
+			remoteGlobalIDString = 583C3B36359F849E61F1240E;
+			remoteInfo = MirrorMac;
+		};
+		B4BFFD89E6F5E741B978FA2B = {
+			isa = PBXTargetDependency;
+			target = 583C3B36359F849E61F1240E;
+			targetProxy = D2E1D77760DC433D94884DDA;
+		};
+		AF044A0F267671A88081D698 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrormacbatchuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorMac;
+			};
+			name = Debug;
+		};
+		99495ED42B850CC3B86AE1FE = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				CURRENT_PROJECT_VERSION = 1;
+				MARKETING_VERSION = 0.1.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				ENABLE_HARDENED_RUNTIME = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.baserize.mirror.tests.mirrormacbatchuitests;
+				SKIP_INSTALL = YES;
+				TEST_TARGET_NAME = MirrorMac;
+			};
+			name = Release;
+		};
+		2F22617687E168FFE54231DD = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AF044A0F267671A88081D698,
+				99495ED42B850CC3B86AE1FE,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3A50E4703B458DBCA796D71F = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2F22617687E168FFE54231DD;
+			buildPhases = (
+				92A35FDA5163C19BFB328A90,
+				6D842594073F8558EA194493,
+				02B64AA00AA72ADA271C5A6D,
+			);
+			buildRules = (
+
+			);
+			dependencies = (
+				B4BFFD89E6F5E741B978FA2B,
+			);
+			name = MirrorMacBatchUITests;
+			productName = MirrorMacBatchUITests;
+			productReference = 6E1E26D883FA3F273F535B56;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		98F54143AB4E86B28C3AFEE0 = {
 			isa = PBXProject;
 			attributes = {
@@ -3596,6 +3852,14 @@
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 583C3B36359F849E61F1240E;
 					};
+					A23634810F07DC60C8E8DF4F = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 6D966BF1135AC5B72C078FD9;
+					};
+					3A50E4703B458DBCA796D71F = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 583C3B36359F849E61F1240E;
+					};
 				};
 			};
 			buildConfigurationList = 4BA304E783CFBB9FA6E56552;
@@ -3629,6 +3893,8 @@
 				5211D665102AB37A1A8DFCEB,
 				8E324BB2EF7B04AE3277A2A2,
 				EBA578FDBEB466FDD0C68953,
+				A23634810F07DC60C8E8DF4F,
+				3A50E4703B458DBCA796D71F,
 			);
 		};
 	};

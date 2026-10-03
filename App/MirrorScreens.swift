@@ -231,6 +231,11 @@ struct MirrorCaptureView: View {
                     .accessibilityIdentifier("capture.more")
                     .padding(16)
                     .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
+                    if !more, let initialPlan {
+                        Text(planLabel(initialPlan))
+                            .font(.callout).fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("capture.planCollapsedSummary")
+                    }
                     if lines.count > 1 {
                         Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }.disabled(model.isSaving || model.projectionPending)
                             .buttonStyle(.borderless).frame(minHeight: 44)
@@ -301,7 +306,9 @@ struct MirrorCaptureView: View {
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { splitPreview = false } } }
                 }.tint(MirrorPalette.accent)
             }
-            .sheet(isPresented: $showDatePicker) {
+            .sheet(isPresented: $showDatePicker, onDismiss: {
+                if model.showCapture { focusedField = .title }
+            }) {
                 if let datePickerContext {
                     MirrorCaptureDatePicker(context: datePickerContext) { target in
                         initialPlan = target
@@ -870,6 +877,8 @@ struct MirrorPlanPicker: View {
                         DisclosureGroup("선택한 작업 \(request.taskIDs.count)개", isExpanded: $showTaskTitles) {
                             taskTitles
                         }
+                        .accessibilityIdentifier("plan.tasksDisclosure")
+                        .accessibilityValue(showTaskTitles ? "펼쳐짐" : "접힘")
                     } else {
                         taskTitles
                     }
@@ -944,10 +953,10 @@ struct MirrorPlanPicker: View {
     @ViewBuilder private var taskTitles: some View {
         ForEach(request.taskIDs, id: \.self) { id in
             let title = model.tasks.first { $0.taskID == id }?.title ?? "작업을 찾을 수 없어요"
-            Text(title)
-                .lineLimit(2)
-                .accessibilityLabel(title)
-                .accessibilityIdentifier("plan.task.\(id.uuidString)")
+            ExpandableText(title, lineLimit: 2, togglesOnTap: false,
+                           style: .init(link: MirrorPalette.accent),
+                           paragraphAccessibilityIdentifier: "plan.task.\(id.uuidString)")
+                .id(id)
         }
     }
     private func weekDateGrid(_ week: WeekRange) -> some View {
@@ -1039,7 +1048,7 @@ struct MirrorMonthGrid: View {
                 Button { moveMonth(1) } label: { Image(systemName: "chevron.right").frame(minWidth: 44, minHeight: 44) }.accessibilityLabel("다음 달")
             }
             if typeSize.isAccessibilitySize {
-                ForEach(days, id: \.self) { date in dateButton(date, fullLabel: true) }
+                availableDateList
             } else {
                 ViewThatFits(in: .horizontal) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 44), spacing: 0), count: 7), spacing: 4) {
@@ -1049,10 +1058,21 @@ struct MirrorMonthGrid: View {
                     }
                     .frame(minWidth: 308)
                     VStack(spacing: 12) {
-                        ForEach(days, id: \.self) { date in dateButton(date, fullLabel: true) }
+                        availableDateList
                     }
                 }
             }
+        }
+    }
+    @ViewBuilder private var availableDateList: some View {
+        let availableDates = days.filter { $0 >= minimum }
+        if availableDates.isEmpty {
+            Text("이 달에는 선택할 수 있는 날짜가 없어요.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            ForEach(availableDates, id: \.self) { date in dateButton(date, fullLabel: true) }
         }
     }
     private func dateButton(_ date: LocalDate, fullLabel: Bool) -> some View {

@@ -20,3 +20,5 @@ FormField와 TrackingTabs 원본도 검토했다. FormField는 UIKit 키보드·
 상세 제목도 기존 ExpandableText의 실제 폭·글자 크기 측정을 재사용해 기본 3줄 미리 보기를 제공한다. String·AttributedString 초기화의 새 식별자 기본값은 nil이며 기존 메모 호출의 기본 동작은 유지한다. 상세는 레이아웃·잘림·접근성 액션을 적용한 표시 paragraph Text chain에만 detail.contentTitle을 지정하고 제목 원문·전체 접근성 내용·선택·편집은 보존한다. 기존 더 보기·접기 Button과 접근성 동작은 별개로 유지하고, 제목 본문 탭에 의한 펼침은 끄며 새 작업 선택 때 접힘 상태를 초기화한다. 측정 복사본·임계 높이·라이선스는 변경하지 않았다. 새 원격 SDK·실제 접근성·화면 배치 검증은 아직 수행하지 않았다.
 
 정리 카드 제목도 같은 측정 기반 3줄 미리 보기와 명시적 더 보기·접기를 사용한다. 원문·review.card 식별자를 유지하며 선택적 AccessibilityFocusState<Bool>.Binding을 레이아웃이 끝난 실제 표시 paragraph에 직접 적용한다. 접근성 포커스를 부모 Group이나 측정 복사본에 지정하지 않는다. 새 작업에서는 taskID로 접힘 상태를 초기화하고 본문 탭 펼침은 끈다. String·AttributedString 초기화의 포커스 기본값은 nil이고 기존 상세·메모 표시 체인은 유지한다. SwiftUI SDK의 해당 포커스 API와 실제 VoiceOver 이동·원문·펼침 버튼 동작은 원격 검증 대상으로 남는다.
+
+후속 보완: 실제 상세 제목 펼침 검사에서 `expandableText.expand` 누락을 확인했다. 실제 더 보기·접기 Button을 식별자와 포커스를 가진 표시 paragraph의 아래 형제로 분리하고 label의 최소44×44pt 레이아웃과 직사각형 터치 영역을 제공한다. 문단 안의 마지막 줄 fade는 장식만 남기고 hit testing과 접근성에서 제외한다. 실제 잘림 조건·expanded/showsLess·원문 접근성·측정·링크·애니메이션·원저작권은 유지한다. 정확한 SDK 원인과 새 소스의 실제 해결 여부는 Actions 결과로 확인한다.

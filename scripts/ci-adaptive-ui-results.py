@@ -476,6 +476,158 @@ def progress_diagnostics(directory, expected):
     print('::notice::Adaptive UI progress diagnostics: ' + json.dumps(report, sort_keys=True))
 
 
+CASE_DIAGNOSTIC_MARKER = 'UI adaptive case diagnostic: '
+AUDIT_BOUNDARY_MARKER = 'UI adaptive audit boundary: '
+CASE_DIAGNOSTIC_NAMES = {
+    'testMaximumTypeCaptureValidationAndRecovery': 'captureValidation',
+    'testMaximumTypeReviewAndWeekPicker': 'reviewWeek',
+    'testMaximumTypeSearchDetailCompletionAndUndo': 'searchDetailUndo',
+    'testMaximumTypePlannedCaptureKeepsUnassignedDefault': 'plannedCapture',
+    'testNarrowMacWindowCaptureAndRequestedDetail': 'narrowMac',
+}
+CASE_SHARED_ELEMENTS = frozenset(('todayList', 'appliedDynamicType', 'nativeStatusBar',
+                                 'captureOpen', 'captureTitle', 'captureSave', 'captureFeedback',
+                                 'captureClose', 'keyboardContinue', 'selectAll'))
+CASE_REQUESTED_ELEMENTS = {
+    'captureValidation': frozenset(('captureMoreButton', 'captureMoreDisclosure', 'captureNote',
+                                   'stateError', 'destinationLibrary', 'taskRow')),
+    'reviewWeek': frozenset(('destinationLibrary', 'destinationToday', 'todayReview', 'reviewCard',
+                            'reviewToday', 'reviewTomorrow', 'reviewNextWeek', 'reviewFinish',
+                            'librarySearch', 'planDay', 'taskRow')),
+    'searchDetailUndo': frozenset(('destinationLibrary', 'destinationToday', 'taskRow', 'taskPostpone',
+                                  'planTomorrow', 'librarySearch', 'settingsButton', 'detailContentTitle',
+                                  'detailPlan', 'taskComplete', 'taskUndo')),
+    'plannedCapture': frozenset(('destinationLibrary', 'destinationToday', 'taskRow', 'captureMoreButton',
+                                 'captureMoreDisclosure', 'capturePlanToday', 'capturePlanSummary')),
+    'narrowMac': frozenset(('destinationLibrary', 'todayReview', 'settingsButton', 'taskRow',
+                           'detailContentTitle', 'detailClose', 'detailPostponeTomorrow', 'taskComplete')),
+}
+CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary)\b')
+
+
+def case_requested_elements(case, platform):
+    elements = CASE_SHARED_ELEMENTS | CASE_REQUESTED_ELEMENTS[CASE_DIAGNOSTIC_NAMES[case]]
+    return elements - ({'nativeStatusBar', 'keyboardContinue', 'selectAll'} if platform == 'macos'
+                       else {'captureMoreDisclosure'})
+
+
+def xctest_case_diagnostics(log, expected, entries):
+    """고정 case별 조회 요청과 audit 반환 경계만 보관한다. 결과·오류 원인을 추론하지 않는다."""
+    if xctest_progress_diagnostics(log, expected, entries) is None:
+        return None
+    cases = required_cases(expected['platform'])
+    owner = base_context(expected)['bundle'] + '.' + CLASS
+    active, sequence, reports = None, 0, {}
+    for text in log.splitlines():
+        if re.search(r'\bTest\s+Case\b', text):
+            if CASE_DIAGNOSTIC_SIGNAL.search(text) or re.search(r'\bUI\s+adaptive\s+(?:progress|(?:configuration|resize)\s+measurement)\b', text):
+                return None
+            event = UI_CASE_EVENT.match(text)
+            if event is None or len(list(UI_CASE_EVENT.finditer(text))) != 1 or text.count('Test Case ') != 1:
+                return None
+            if event[1] != owner or event[2] not in cases:
+                return None
+            active, sequence = (event[2], 0) if event[3] == 'started' else (None, 0)
+            continue
+        progress_signal = re.search(r'\bUI\s+adaptive\s+progress\b', text)
+        signal = CASE_DIAGNOSTIC_SIGNAL.search(text)
+        if not progress_signal and not signal:
+            continue
+        if len(text.encode('utf-8')) > 2048 or active is None:
+            return None
+        if progress_signal:
+            if signal or active not in reports:
+                # 새 source의 entry가 없는 legacy log에 대한 새 진단은 내보내지 않는다.
+                return None
+            value = strict_json(text[len(PROGRESS_MARKER):])
+            sequence += 1
+            report = reports[active]
+            if report['auditBoundaries'] and report['auditBoundaries'][-1]['outcome'] == 'threw':
+                return None
+            if value['phase'] == 'auditComplete':
+                if not (report['auditBoundaries'] and report['auditBoundaries'][-1]
+                        == {'auditSequence': value['step'], 'outcome': 'returned'}):
+                    return None
+            report['lastProgress'] = {key: value[key] for key in ('phase', 'sequence', 'step')}
+            continue
+        marker = CASE_DIAGNOSTIC_MARKER if text.startswith(CASE_DIAGNOSTIC_MARKER) else AUDIT_BOUNDARY_MARKER
+        if not text.startswith(marker) or text.count(marker) != 1:
+            return None
+        try:
+            value = strict_json(text[len(marker):])
+        except (AdaptiveError, ValueError, TypeError, RecursionError):
+            return None
+        if not (isinstance(value, dict) and type(value.get('schemaVersion')) is int
+                and value['schemaVersion'] == 1 and value.get('case') == CASE_DIAGNOSTIC_NAMES[active]):
+            return None
+        if marker == CASE_DIAGNOSTIC_MARKER:
+            if (set(value) != {'schemaVersion', 'case', 'requestSequence', 'requestedElement'}
+                    or type(value['requestSequence']) is not int or not 0 <= value['requestSequence'] <= 10_000):
+                return None
+            if value['requestSequence'] == 0:
+                if active in reports or sequence != 0 or value['requestedElement'] is not None:
+                    return None
+                reports[active] = {'case': value['case'], 'method': active,
+                                   'sourceFile': UI_FAILURE_SOURCE_FILE, 'entryLine': entries[active],
+                                   'lastProgress': None, 'requestSequence': 0,
+                                   'requestedElement': None, 'auditBoundaries': []}
+            else:
+                if active not in reports:
+                    return None
+                report = reports[active]
+                if (sequence == 0 or value['requestSequence'] != report['requestSequence'] + 1
+                        or not isinstance(value['requestedElement'], str)
+                        or value['requestedElement'] not in case_requested_elements(active, expected['platform'])
+                        or (report['auditBoundaries'] and report['auditBoundaries'][-1]['outcome'] == 'threw')):
+                    return None
+                report.update({key: value[key] for key in ('requestSequence', 'requestedElement')})
+        else:
+            if (set(value) != {'schemaVersion', 'case', 'auditSequence', 'outcome'}
+                    or type(value['auditSequence']) is not int or not isinstance(value['outcome'], str)
+                    or value['outcome'] not in ('returned', 'threw') or active not in reports):
+                return None
+            report = reports[active]
+            last = report['lastProgress']
+            audits = report['auditBoundaries']
+            maximum = sum(phase == 'auditStarted' for phase, _ in PROGRESS_PROTOCOL[active])
+            if not (last is not None and last['phase'] == 'auditStarted'
+                    and value['auditSequence'] == last['step'] == len(audits) + 1
+                    and len(audits) < maximum
+                    and (not audits or audits[-1]['outcome'] == 'returned')):
+                return None
+            audits.append({key: value[key] for key in ('auditSequence', 'outcome')})
+    if len(reports) > len(cases):
+        return None
+    return list(reports.values())
+
+
+def case_progress_diagnostics(directory, expected):
+    report = {**expected, 'schemaVersion': 1, 'scope': 'stdoutOnly',
+              'semantics': 'reachedCodeBoundaryAndLookupRequestOnly', 'cases': []}
+    try:
+        context_for(directory, expected)
+    except (AdaptiveError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        report['status'] = 'contextUnavailable'
+    else:
+        try:
+            require(source_location(UI_FAILURE_SOURCE_FILE, 1, 1, ROOT) is not None, 'invalidSourceEntries')
+            entries = source_method_entries(read_regular(ROOT / UI_FAILURE_SOURCE_FILE, MAX_JSON).decode('utf-8'),
+                                            expected['platform'])
+            require(entries is not None, 'invalidSourceEntries')
+        except (AdaptiveError, OSError, UnicodeError):
+            report['status'] = 'sourceUnavailable'
+        else:
+            try:
+                log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8')
+            except (AdaptiveError, OSError, UnicodeError):
+                report['status'] = 'testLogUnavailable'
+            else:
+                observed = xctest_case_diagnostics(log, expected, entries)
+                report.update({'status': 'observedCaseBoundariesOnly', 'cases': observed} if observed
+                              else {'status': 'noAcceptedCaseDiagnostics'})
+    print('::notice::Adaptive UI per-case diagnostics: ' + json.dumps(report, sort_keys=True))
+
+
 def configuration_measurement_fields(value):
     keys = {'method', 'valueKind', 'castKind', 'castName', 'environmentKind', 'environmentName'}
     if not (isinstance(value, dict) and set(value) == keys
@@ -994,6 +1146,7 @@ def main():
         test_diagnostics(directory, expected)
     elif args.command == 'progress':
         progress_diagnostics(directory, expected)
+        case_progress_diagnostics(directory, expected)
     elif args.command == 'measurements':
         measurement_diagnostics(directory, expected)
     else:

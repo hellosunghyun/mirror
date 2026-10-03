@@ -1,6 +1,12 @@
 # 미러 요구사항·QA 추적표
 
-## 최신 상태 · 2026-10-01
+## 후속 구현과 검증 · 2026-10-03
+
+간편 입력은 제목만 저장하는 기본 경로와 접힌 메모·링크·날짜를 사용한다. 사용자가 날짜를 선택하면 제목과 계획을 `captureWithPlan`으로 원자 저장하고, 취소·실패 때 입력을 보존한다. FR-001/006/009의 생성·재시도·재시작 회귀와 최대 글자 입력 사례를 작성했으며 원격 수용을 코드 작성과 구분한다. 목록의 미루기와 요청 상세, 기본 숨긴 iPad 보조 일정, 긴 제목의 명시적 펼침은 [간편 UX](SIMPLE_UX.md)와 [UI 검토](UI_REVIEW.md)에서 추적한다.
+
+FR-027의 실제 두 개·스무 개 선택·날짜 변경은 [별도 batch UI 검증](BATCH_UI_REVIEW.md)으로 확인한다. 작성한 두 사례·결과 게이트 회귀15개는 실행 결과가 아니다. 원래 제목·UUID·미완료·선택하지 않은 작업을 실제 UI에서 검사하고, Q-080의 stale 전체 거부는 별도 조건으로 유지한다. 전체 FR30·NFR12·QA87과 물리 기기·Widget/Share·CloudKit·사용자 게이트의 미완료 상태를 유지한다.
+
+## 이전 검증 기준 · 2026-10-01
 
 `d7a3630`의 [Actions 실행 36867363304](https://github.com/hellosunghyun/mirror/actions/runs/36867363304)은 준비 회귀 85개·SwiftPM 159개·Mac 단위 159개/UI 6개·iPhone/iPad 각각 단위 156개/UI 6개를 통과했다. 실패·skip은 0개이며 [동일 실행의 Release](https://github.com/hellosunghyun/mirror/releases/tag/adhoc-36867363304)에 iOS IPA와 Developer ID 서명·공증·staple·Gatekeeper를 확인한 macOS DMG가 게시됐다. 이전 인증서 불일치·IPA 미게시 기록은 아래의 과거 증거다.
 

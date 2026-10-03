@@ -1,5 +1,11 @@
 # iPhone·iPad·Mac UI 검토
 
+2026-10-03 소스 `d13e636`의 [PR Swift200](https://github.com/hellosunghyun/mirror/actions/runs/37112766038)에서 iPhone SDK 빌드·단위 단계는 성공했지만 UI는 실패했다. 소스에 귀속된 최초 고정 실패 위치는 상세의 500자 제목을 확인한 뒤 `expandableText.expand`를 활성화하는 호출이며, 기존 허용 enum의 실제 진단은 `missingElement`다. 펼침 Button을 찾지 못했음을 확인했지만 측정·접근성 트리·SDK의 정확한 원인은 아직 미확정이다. 같은 소스의 [추가 UI11](https://github.com/hellosunghyun/mirror/actions/runs/37112763939) iPad system도 SDK 빌드 후 UI가 실패했고 검색 화면의 첫 접근성 audit 시작까지 도달했다. 이 경계는 audit 종류·사례 통과·실패 원인을 증명하지 않는다. 같은 실행의 Mac system SDK 빌드도 실제 성공해 d13의 coordinate click·drag API 컴파일을 확인했고 UI는 진행 중이다. 최신 원본 시각 검토와 세 플랫폼 전체 수용은 미완료다.
+
+후속 진단은 원래 접근성 `.all` 검사와 오류를 그대로 유지하고 사례별 마지막 고정 조회 요청 및 audit의 반환·throw 경계만 기록한다. 이 기록은 마지막 요청이 실패 요소이거나 audit 반환이 통과라는 뜻이 아니다. 원문·AX·오류 문자열을 공개하지 않고 source/run/attempt·사례 소유와 순서를 검증한다. 기존43개 결과 회귀를 보존하고12개를 더해55개를 작성했으며 실제 실행 수와 구분한다.
+
+후속 화면 보완은 미루기 제목의 실제 펼침·접기, 좁은 화면과 큰 글자 달력의 선택 가능한 날짜 우선 표시다. 다중 선택의 제목 목록은 기본 접힘을 유지하고 현재 펼침 상태를 접근성에 제공한다. 실제 두 개·스무 개 선택·날짜 저장·원문과 완료 불변식은 [전용 batch 사례](BATCH_UI_REVIEW.md)에서 확인하며 작성된 검사·정적 검토를 원격 통과로 기록하지 않는다.
+
 2026-10-03 최신 관측: 소스 `ed384fb`의 추가 UI8 Mac에서는 실제 큰 글자 환경은 `accessibility5`였지만 접근성 그룹의 값이 빈 문자열이어서 네 비교가 실패했다. 실제 창도 드래그 전후1024×674로 원래 resize 대기를 통과하지 못했다. 다음 보완은 Mac의 실제 환경 이름과 창 두 가장자리의 직접 조작으로 검증하며, iOS 값·전체 audit·최종 크기 범위·시간 제한을 유지한다. 정적 보완과 실제 SDK·조작·시각 수용을 구분한다.
 
 이전 소스 `9f125a5`의 기본82는 SwiftPM184 / Mac184+UI6 / iPhone181+UI6 / iPad181+UI6의 네 native 경로와 집계·화면 취합을 통과했다. GitHub 화면 게시는 `processingFailed`로 실패했다. 같은 실행의 IPA archive와 Mac 서명·공증·Gatekeeper 검증은 통과했지만 Release 게시 POST가 HTTP403으로 거절됐다. 정확한 소스의 배포 태그를 먼저 만든 뒤 게시 job만 다시 실행한 attempt2도 POST403으로 실패했고, native 검사는 재실행되지 않았다. 태그 선행 생성은 게시 문제를 해결하지 못했으며 권한 거절의 원인은 미확정이다. 게시 helper의 API·검증·종료 결과를 보존하고 실제 loader·호출·출력 경계의 고정 단계, 허용 예외 분류, 직접 HTTPError의 알려진 상태 코드만 추가 관측한다. 12개 회귀를 작성했으며 로컬에서 실행하지 않았다. unsigned 화면 artifact 세 개의 다운로드도 HTTP403·0bytes로 거절되어 해당 원본의 새 시각 검토를 완료로 표시하지 않는다. 게시 실패의 실제 원인과 최신 소스의 UI 통과는 아직 별도로 확인해야 한다.
