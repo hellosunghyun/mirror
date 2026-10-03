@@ -482,6 +482,8 @@ struct MirrorLibraryView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var filter: LibraryFilter = .inbox
     @State private var selecting = false
+    @State private var selectedTaskIDs: Set<UUID> = []
+    @State private var pendingBatchPickerID: UUID?
     @FocusState private var searchFocused: Bool
     private var filtered: [TaskProjection] {
         model.tasks.filter { task in
@@ -512,7 +514,7 @@ struct MirrorLibraryView: View {
     var body: some View {
         @Bindable var model = model
         let eligibleTaskIDs = filtered.filter { $0.status == .open }.map(\.taskID)
-        let selectedIDs = model.selectedTaskIDs.intersection(Set(eligibleTaskIDs))
+        let selectedIDs = selectedTaskIDs.intersection(Set(eligibleTaskIDs))
         let bulkTaskIDs = Set(eligibleTaskIDs.prefix(20))
         let bulkSelected = !bulkTaskIDs.isEmpty && selectedIDs == bulkTaskIDs
         let bulkLabel = bulkSelected ? "선택 해제" : eligibleTaskIDs.count > 20 ? "앞 20개 선택" : "모두 선택"
@@ -545,7 +547,8 @@ struct MirrorLibraryView: View {
                             .accessibilityLabel(searchesWholeLibrary ? "검색 범위, 전체" : "목록")
                             .frame(minHeight: 44)
                         Button {
-                            model.selectedTaskIDs.removeAll()
+                            selectedTaskIDs.removeAll()
+                            pendingBatchPickerID = nil
                             selecting.toggle()
                         } label: {
                             Text(selecting ? "선택 마치기" : "선택")
@@ -569,8 +572,8 @@ struct MirrorLibraryView: View {
                         MirrorActionGroup {
                             if !bulkTaskIDs.isEmpty {
                                 Button {
-                                    if bulkSelected { model.selectedTaskIDs.removeAll() }
-                                    else { model.selectedTaskIDs = bulkTaskIDs }
+                                    if bulkSelected { selectedTaskIDs.removeAll() }
+                                    else { selectedTaskIDs = bulkTaskIDs }
                                 } label: {
                                     Text(bulkLabel)
                                         #if os(iOS)
@@ -596,14 +599,14 @@ struct MirrorLibraryView: View {
                             Button {
                                 toggleSelection(task)
                             } label: {
-                                Image(systemName: model.selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square")
+                                Image(systemName: selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square")
                                     #if os(iOS)
                                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                                     #endif
                             }
                                 .buttonStyle(.plain).frame(minWidth: 44, minHeight: 44)
                                 .accessibilityLabel("\(task.title), 배치 대상 선택")
-                                .accessibilityValue(model.selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")
+                                .accessibilityValue(selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")
                                 .accessibilityIdentifier("task.select.\(task.taskID.uuidString)")
                         }
                         if selecting {
@@ -629,7 +632,16 @@ struct MirrorLibraryView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if selecting {
                 VStack(spacing: 0) {
-                    Button { model.makePicker(taskIDs: eligibleTaskIDs.filter(selectedIDs.contains)) } label: {
+                    Button {
+                        let taskIDs = eligibleTaskIDs.filter(selectedIDs.contains)
+                        let previousPickerID = model.picker?.id
+                        model.makePicker(taskIDs: taskIDs)
+                        if let request = model.picker, request.id != previousPickerID, request.taskIDs == taskIDs,
+                           request.review == nil, request.widgetState == nil {
+                            pendingBatchPickerID = request.id
+                            model.registerLibraryBatchPicker(request)
+                        }
+                    } label: {
                         Text("선택한 \(selectedIDs.count)개 날짜 배치")
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(minWidth: 44, maxWidth: .infinity, minHeight: 44)
@@ -651,8 +663,12 @@ struct MirrorLibraryView: View {
                 .accessibilityIdentifier("library.batchFooter")
             }
         }
+        .onChange(of: model.completedBatchPickerID) { _, receipt in
+            guard let pendingBatchPickerID, let receipt, receipt == pendingBatchPickerID else { return }
+            selecting = false; selectedTaskIDs.removeAll(); self.pendingBatchPickerID = nil
+        }
         .onChange(of: selectableTaskIDs) { _, visibleIDs in
-            model.selectedTaskIDs.formIntersection(visibleIDs)
+            selectedTaskIDs.formIntersection(visibleIDs)
         }
         .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
         .onChange(of: searchFocused) { _, focused in model.isTextEditing = focused }
@@ -660,8 +676,8 @@ struct MirrorLibraryView: View {
     }
     private func toggleSelection(_ task: TaskProjection) {
         guard task.status == .open else { return }
-        if model.selectedTaskIDs.contains(task.taskID) { model.selectedTaskIDs.remove(task.taskID) }
-        else if model.selectedTaskIDs.count < 20 { model.selectedTaskIDs.insert(task.taskID) }
+        if selectedTaskIDs.contains(task.taskID) { selectedTaskIDs.remove(task.taskID) }
+        else if selectedTaskIDs.count < 20 { selectedTaskIDs.insert(task.taskID) }
         else { model.problem = "한 번에 최대 20개를 선택해 주세요." }
     }
     private func selectionRow(_ task: TaskProjection) -> some View {
@@ -678,7 +694,7 @@ struct MirrorLibraryView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(task.title)
         .accessibilityValue(task.status == .open
-            ? "\(status), 배치: \(planLabel(task.plan.target)), \(model.selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")"
+            ? "\(status), 배치: \(planLabel(task.plan.target)), \(selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")"
             : "\(status), 배치: \(planLabel(task.plan.target))")
         .accessibilityHint(task.status == .open ? "일괄 날짜 배치 대상을 선택하거나 해제해요." : "미완료 작업만 선택할 수 있어요.")
         .accessibilityIdentifier("task.row.\(task.taskID.uuidString)")

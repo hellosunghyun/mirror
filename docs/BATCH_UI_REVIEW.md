@@ -53,3 +53,5 @@ Batch query 실패 진단은 기존 source notice와 별도의 `Batch UI query f
 모바일 notice는 승인된 실제 source-bound 위치가 있을 때만 추가하여 기존 query/빈 진단 notice 수와 원21 회귀를 그대로 유지한다. assertMobileTarget 함수와 모든 호출을 유지하며 iOS에서 element.identifier property를 정확 한 번 읽는다. matching/count/snapshot API를 추가하지 않지만 이 property의 native AX 비용과 실제 시간은 미검증이다.
 
 선택 모드의 큰 제목 Button에도 현재 선택됨·선택 안 됨을 알린다. 기존 미완료·계획 값 전체를 앞에 유지하고 완료·휴지통 작업은 기존 상태와 계획을 표시한다. 검증의 초기 일반 행 두 경로는 원래 값을 유지하며, 날짜 배치 뒤 대상·대조 작업과 전체 선택·해제의 일곱 경로는 fixture에서 아는 선택 기대값을 명시한다. 전체 문자열의 정확한 비교·제목·ID·현재 날짜 명령·도달 조건·기존53개 assertion·8개 실패 조건·두 사례를 유지하며 앱의 실제 선택값으로 기대값을 만들지 않는다. 실제 VoiceOver 안내와 새 소스의 Actions 통과는 별도로 확인한다.
+
+성공 후 일반 목록 복귀 후보에 맞춰 기존 두 사례만 조정했다. 두 작업 사례는 첫 날짜 선택 전에 실제 picker 취소 후 원래 미지정 계획·선택된 두 행·선택 안 된 대조행을 고정 전체 값으로 검증하고 같은 picker를 다시 연다. Today 성공 뒤 정상 행의 전체 값과 기존 gone helper를 통한 footer 부재를 확인하고 다시 같은 두 작업만 선택하여 원래 Tomorrow 변경 목적을 유지한다. Tomorrow 및 20개 배치 성공 뒤에도 정상 전체 값과 footer 부재를 확인한다. bulk 선택·해제 단계의 정확한 선택 suffix, 원본 제목·ID·계획·명령·15초 helper·모든 기존 assertion과 실패 판정·두 사례는 보존한다. 추가 취소·재열기·재선택·조회·대기의 실제 실행 비용은 미검증이며, 이 후보로 새로운 런타임 PASS나 취소/확인/재시도 성공을 주장하지 않는다.

@@ -81,6 +81,8 @@ final class AppModel {
     var showReview = false
     var picker: PlanPickerRequest?
     var completedWidgetPickerID: UUID?
+    var completedBatchPickerID: UUID?
+    @ObservationIgnored private var batchPickerOwner: (id: UUID, token: String, observationID: UUID)?
     @ObservationIgnored private var widgetNextDestination: (resume: Bool, observationID: UUID)?
     var isLoading = true
     var isSaving = false
@@ -587,6 +589,18 @@ final class AppModel {
                                    displayedContext: reviewCard == nil ? context : (reviewSession?.context ?? context),
                                    token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week)
     }
+    func registerLibraryBatchPicker(_ request: PlanPickerRequest) {
+        guard picker?.id == request.id, request.review == nil, request.widgetState == nil else { return }
+        batchPickerOwner = (request.id, request.token, storeObservationID)
+    }
+    private func completeLibraryBatchPicker(_ envelope: CommandEnvelope) -> Bool {
+        guard let owner = batchPickerOwner, owner.observationID == storeObservationID,
+              !isSaving, !projectionPending, envelope.source == .app, envelope.idempotencyKey == owner.token,
+              let request = picker, request.id == owner.id, request.token == owner.token,
+              request.review == nil, request.widgetState == nil else { return false }
+        completedBatchPickerID = owner.id; batchPickerOwner = nil; picker = nil
+        return true
+    }
     /// 전송에는 작업 ID를 싣지 않는다. 표시한 원본 버전·날짜는 프로세스 안에 고정한다.
     func beginCalendarDrag(_ task: TaskProjection, context displayedContext: PlanningContext) -> UUID? {
         guard !isSaving, !projectionPending, !isDetailEditing, !showReview, !showCapture, !showSettings,
@@ -650,7 +664,10 @@ final class AppModel {
         } else { payload = .batchSetPlan(items: request.expected, target: target) }
         let envelope = makeEnvelope(payload, context: request.displayedContext, token: request.token)
         guard let envelope else { return }
-        if await execute(envelope, success: "\(planLabel(target))로 보냈어요.") { picker = nil }
+        if await execute(envelope, success: "\(planLabel(target))로 보냈어요.") {
+            if !completeLibraryBatchPicker(envelope), batchPickerOwner?.id != request.id,
+               picker?.id == request.id { picker = nil }
+        }
     }
 
     func decide(_ target: PlanTarget, card: ReviewCard, session: AppReviewSession) async {
@@ -757,7 +774,11 @@ final class AppModel {
         confirmation = nil
         let confirmed = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: envelope.idempotencyKey,
                                         source: .app, context: envelope.context, workspaceEpoch: envelope.workspaceEpoch, payload: payload)
-        if await execute(confirmed, success: "마감은 유지하고 선택한 날짜로 보냈어요.") { picker = nil }
+        let pickerID = picker?.id
+        if await execute(confirmed, success: "마감은 유지하고 선택한 날짜로 보냈어요.") {
+            if !completeLibraryBatchPicker(confirmed), let pickerID, batchPickerOwner?.id != pickerID,
+               picker?.id == pickerID, picker?.token == confirmed.idempotencyKey { picker = nil }
+        }
     }
 
     func changeTimeZone(_ zone: String) async {
@@ -875,7 +896,9 @@ final class AppModel {
 
     func retry() async {
         if let widgetDecision { _ = await commitWidget(widgetDecision.request, target: widgetDecision.target) }
-        else if let retryEnvelope { _ = await execute(retryEnvelope, success: "이 기기에 저장했어요.") }
+        else if let retryEnvelope {
+            if await execute(retryEnvelope, success: "이 기기에 저장했어요.") { _ = completeLibraryBatchPicker(retryEnvelope) }
+        }
         else if store == nil { await start() }
         else {
             if let store, canonicalObservation == nil || recoveryConfigurationBlocked,
@@ -1435,6 +1458,7 @@ final class AppModel {
         activeReviewMilliseconds = 0; reviewExposures = []
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
         completedWidgetPickerID = nil; widgetNextDestination = nil
+        completedBatchPickerID = nil; batchPickerOwner = nil
         projectionRecovery = nil; recoveryConfigurationBlocked = false
         lamportByOperationID = [:]
         retryEnvelope = nil; widgetDecision = nil; archiveData = nil; importData = nil

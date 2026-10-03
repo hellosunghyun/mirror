@@ -30,15 +30,23 @@ final class MirrorBatchUITests: XCTestCase {
         let control = originals[2]
         try beginSelection(selected, control: control, in: app)
         try verifyPicker(selected, in: app)
+        try activate("plan.cancel", surface: .planner, in: app)
+        try gone("plan.cancel", in: app)
+        try verifyRows(selected, plan: unassigned, selection: "선택됨", in: app)
+        try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
+        try verifyPicker(selected, in: app)
         try activate("plan.today", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
-        try verifyRows(selected, plan: today, selection: "선택됨", in: app)
-        try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
+        try verifyRows(selected, plan: today, in: app)
+        try verifyRows([control], plan: unassigned, in: app)
+        try gone("library.batchPlan", in: app)
+        try beginSelection(selected, control: control, in: app)
         try verifyPicker(selected, in: app)
         try activate("plan.tomorrow", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
-        try verifyRows(selected, plan: tomorrow, selection: "선택됨", in: app)
-        try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
+        try verifyRows(selected, plan: tomorrow, in: app)
+        try verifyRows([control], plan: unassigned, in: app)
+        try gone("library.batchPlan", in: app)
     }
 
     func testTwentyTaskBatchKeepsEveryOriginalAndUsesTomorrow() throws {
@@ -55,7 +63,8 @@ final class MirrorBatchUITests: XCTestCase {
         try verifyPicker(originals, in: app)
         try activate("plan.tomorrow", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
-        try verifyRows(originals, plan: tomorrow, selection: "선택됨", in: app)
+        try verifyRows(originals, plan: tomorrow, in: app)
+        try gone("library.batchPlan", in: app)
         XCTAssertEqual(Set(originals.map(\.identifier)).count, 20)
     }
 
