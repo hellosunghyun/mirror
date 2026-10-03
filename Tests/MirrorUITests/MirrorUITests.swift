@@ -99,6 +99,74 @@ final class MirrorUITests: XCTestCase {
         try verifyPhoneNavigation(in: app, stage: .todayPopulated, requiresFeedback: true)
         recordCapturePhase(.todayNavigationVerified)
         try recordUI("today-populated", in: app, identifiers: ["today.list", "today.review", "capture.open", "task.undo"])
+
+        // 같은 입력 창에서 2줄 저장 뒤 다음 제목만 넣어도 이전의 숨은 메모·링크가 붙지 않는다.
+        let firstSplitTitle = "UI split first line"
+        let secondSplitTitle = "UI split second line"
+        let followingTitle = "UI follow-up title only"
+        let splitNote = "UI split saved note"
+        let splitURL = "https://example.com/mirror-split-source"
+        try activate("capture.open", in: app)
+        let continuousTitle = try requireElement("capture.title", in: app)
+        try replaceText(in: continuousTitle, with: firstSplitTitle + "\n" + secondSplitTitle, app: app)
+        try activate("capture.more", in: app)
+        try replaceText(in: requireElement("capture.note", in: app), with: splitNote, app: app)
+        try replaceText(in: requireElement("capture.url", in: app), with: splitURL, app: app)
+        try activate("capture.more", in: app)
+        try requireNoElement("capture.note", in: app)
+        let splitPreviewButtons = app.buttons.matching(NSPredicate(format: "label == %@", "줄마다 나누기 · 2개 미리 보기"))
+        XCTAssertTrue(splitPreviewButtons.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(splitPreviewButtons.count, 1, "여러 줄 미리 보기는 고유한 실제 Button으로 연다.")
+        guard splitPreviewButtons.count == 1 else { throw UIHarnessError.missingElement("splitCapturePreviewButton") }
+        try interact(with: splitPreviewButtons.firstMatch, in: app)
+        let splitSaveButtons = app.buttons.matching(NSPredicate(format: "label == %@", "2개를 각각 저장"))
+        XCTAssertTrue(splitSaveButtons.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(splitSaveButtons.count, 1, "두 줄을 실제 저장하는 고유한 Button을 사용한다.")
+        guard splitSaveButtons.count == 1 else { throw UIHarnessError.missingElement("splitCaptureSaveButton") }
+        try interact(with: splitSaveButtons.firstMatch, in: app)
+        try waitForValue("", element: continuousTitle)
+        try requireNoElement("capture.note", in: app)
+        XCTAssertEqual(displayedText(of: try requireElement("capture.feedback", in: app)), "보관함에 넣었어요.")
+        // sheet를 닫거나 옵션을 다시 열지 않는다. 다음 작업에는 제목만 입력한다.
+        try replaceText(in: continuousTitle, with: followingTitle, app: app)
+        try activate("capture.save", in: app)
+        try waitForValue("", element: continuousTitle)
+        try activate("capture.close", in: app)
+        try requireNoElement("capture.title", in: app)
+
+        try showLibrary(in: app)
+        let continuousSearch = try requireElement("library.search", in: app)
+        try activate("library.clearSearch", in: app)
+        try waitForValue("", element: continuousSearch)
+        let firstSplitRow = try requireRow(firstSplitTitle, in: app)
+        let secondSplitRow = try requireRow(secondSplitTitle, in: app)
+        let followingRow = try requireRow(followingTitle, in: app)
+        let followingID = followingRow.identifier
+        XCTAssertEqual(Set([firstSplitRow.identifier, secondSplitRow.identifier, followingID]).count, 3,
+                       "두 줄과 다음 입력은 서로 다른 실제 작업으로 저장한다.")
+        XCTAssertTrue(value(of: followingRow).contains("아직 정하지 않음"))
+        XCTAssertTrue(value(of: followingRow).contains("미완료"))
+        try replaceText(in: continuousSearch, with: splitNote, app: app)
+        continuousSearch.typeText("\n")
+        try requireNoElement(followingID, in: app)
+        _ = try requireRow(firstSplitTitle, in: app)
+        _ = try requireRow(secondSplitTitle, in: app)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: followingID).firstMatch.exists,
+                       "메모는 두 줄 작업에만 저장되고 다음 제목 입력으로 누출되지 않는다.")
+        // 새 작업이 실제로 다시 보이는 상태에서 링크 검색도 독립적으로 검사한다.
+        try activate("library.clearSearch", in: app)
+        try waitForValue("", element: continuousSearch)
+        XCTAssertEqual(try requireRow(followingTitle, in: app).identifier, followingID)
+        try replaceText(in: continuousSearch, with: splitURL, app: app)
+        continuousSearch.typeText("\n")
+        try requireNoElement(followingID, in: app)
+        _ = try requireRow(firstSplitTitle, in: app)
+        _ = try requireRow(secondSplitTitle, in: app)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: followingID).firstMatch.exists,
+                       "원문 링크는 두 줄 작업에만 저장되고 다음 제목 입력으로 누출되지 않는다.")
+        try activate("library.clearSearch", in: app)
+        try waitForValue("", element: continuousSearch)
+        XCTAssertEqual(try requireRow(followingTitle, in: app).identifier, followingID)
         recordCapturePhase(.complete)
     }
 

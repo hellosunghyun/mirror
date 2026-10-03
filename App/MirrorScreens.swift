@@ -457,6 +457,7 @@ struct MirrorCaptureView: View {
         let single = model.captureIsSingle
         savedFeedback = model.feedback ?? "보관함에 넣었어요."
         if !single { showSavedFeedback = true }
+        note = ""; sourceURL = ""
         more = false
         focusedField = single ? nil : .title
         model.finishCapture()
