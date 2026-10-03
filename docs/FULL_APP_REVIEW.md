@@ -23,9 +23,11 @@
 | 문서·준비233/234 | push/PR 성공. Swift/native UI 수용을 대신하지 않는다. |
 | [Adaptive21](https://github.com/hellosunghyun/mirror/actions/runs/37139729038) | iPhone/iPad/Mac system SDK·앱/runner 빌드 성공 뒤 UI 실패. 고정 사례·조회·audit 경계와 실제 큰 글자 환경을 확인했으나 공식 case counts·AX issue·실패 원인은 미확정이다. |
 | [Batch10](https://github.com/hellosunghyun/mirror/actions/runs/37139729014) | iPhone/iPad/Mac SDK 빌드 성공 뒤 UI 실패. Mac 두 method는 close query matching snapshot 경계, iPad 진단은 빈 배열이다. typed2·실패0·skip0 수용은 확보하지 못했다. |
-| [Dark55](https://github.com/hellosunghyun/mirror/actions/runs/37139729237) | Domain과 세 플랫폼 native 빌드/단위·통합·구성 단계 성공 뒤 Mac·iPad UI 실패. iPhone UI는 진행 중이며 사진·실제 단위 수·UI 실패 원인은 별도 확인 중이다. |
-| [Basic98](https://github.com/hellosunghyun/mirror/actions/runs/37139729196) | 준비·Secret presence와 iOS/Developer ID 서명 material 사전검사, iPad native 빌드/단위·통합·구성 단계 성공. iPad UI는 진행 중이며 최신 IPA·공증 DMG·Release 자산은 미관측이다. |
-| [성능6](https://github.com/hellosunghyun/mirror/actions/runs/37139859105) | 동일 소스 run/job은 queued, 실제 baseline 미시작이며 새 측정값은 없다. |
+| [Dark55](https://github.com/hellosunghyun/mirror/actions/runs/37139729237) | Domain과 세 플랫폼 native 빌드/단위·통합·구성 단계 성공 뒤 세 UI 모두 실패했다. 게시 단계는 skipped이며 공식 UI 수·사진·접근성 원인은 미확정이다. |
+| [Basic98](https://github.com/hellosunghyun/mirror/actions/runs/37139729196) | 준비·Secret presence와 iOS/Developer ID 사전검사 성공. 도메인190개와 iPad 단위·통합187개 통과, iPad UI는 명시적20분 timeout으로 실패했다. Mac/iPhone의 native 단계도 성공했으나 UI·현재 자산 수용은 별도 확인한다. |
+| [성능6](https://github.com/hellosunghyun/mirror/actions/runs/37139859105) | 동일 소스의 실제 SQLite baseline 완료·PASS. 명령20회 모두 locallyCommitted/500ms 미만, command p95 392.144084ms·snapshot p95 77.794667ms·export p95 21142.986916ms와232052338byte. 원본·상태 왕복과 중복 import를 확인했으나 앱 UI·실기기·Widget·EventKit·Q086 수용은 별도다. |
+
+후속 입력 owner·메뉴 소스 `414f7b5695d9958fd094cd21d7032a78b479c965`에서는 Adaptive22 iPhone/iPad/Mac 앱과 UI 러너 빌드가 실제 성공하고 UI 검사가 시작됐다. Dark56 Mac·iPhone의 native 단위 검사 단계는 `cannot use mutating member on immutable value`와 고정 operand `$0` compiler 오류로 실패했고 UI는 skipped다. annotations의 행 번호는 로그 위치이며 Swift source 행으로 쓰지 않는다. 새 pure state 회귀의16개 mutating 호출이 `#expect` 안에 있었다. 각 호출을 별도 Bool로 계산한 뒤 동일한 기대값을 검사하도록 분리하며 호출 순서·인자·횟수·테스트16개과 기존 테스트를 유지한다. 이 수정 후 실제 SDK·단위·UI 수용은 후속 소스의 Actions에서 확인해야 한다.
 
 불투명 sRGB 팔레트의 기본 전경/배경10조합은 정적 계산에서 모두 대비4.5 이상이었다. 실제 투명도·시스템 제어·렌더링 배경과 native audit 통과를 대신하지 않는다.
 
@@ -42,6 +44,6 @@ Native6사례·46장과 기존 assertion/실패 조건, Batch2사례의 typed ga
 | 전체 Cloud 삭제 | 서버의 권위 있는 삭제 세대, 소유 zone 삭제와 구세대 offline exporter 차단이 미구현이다. 상태 안내만 지원하며 blocked를 유지한다. 실제 사용자 데이터를 임의 삭제하지 않는다. |
 | 대용량·배포 | cold open/paging·Spotlight 증분·실기기 메모리와 큰 백업 UI를 측정해야 한다. 새 소스의 UI gate·서명·공증·게시 성공과 공개 자산의 source/checksum을 확인해야 한다. |
 
-이전 성능5의 실제 SQLite1만작업·10만원본 측정은 command p95 249.236375ms, 첫 command 1455.864959ms, snapshot p95 708.51775ms, export p95 14246.83775ms와232052338byte였다. 전체100020기록 복원과 두 번째 import0inserted는 확인했으나 후속 캐시의 성능 효과나 실제 앱 UI/메모리 수용으로 대신하지 않는다. 현재 앱에는 예전32MiB 복원 상한이 없다.
+이전 성능5의 실제 SQLite1만작업·10만원본 측정은 command p95 249.236375ms, 첫 command 1455.864959ms, snapshot p95 708.51775ms, export p95 14246.83775ms와232052338byte였다. 전체100020기록 복원과 두 번째 import0inserted는 확인했으나 실제 앱 UI/메모리 수용으로 대신하지 않는다. 성능6의 반복 snapshot 측정은 낮았지만 command/export p95는 이전 run보다 높았으며, 서로 다른 runner 실행만으로 모든 동작의 개선이나 원인을 확정하지 않는다. 현재 앱에는 예전32MiB 복원 상한이 없다.
 
 [전체 제작 계획](COMPLETION_PLAN.md), [요구사항 추적표](REQUIREMENTS_TRACEABILITY.md), [간편 UX](SIMPLE_UX.md), [UI 검토](UI_REVIEW.md), [일괄 배치](BATCH_UI_REVIEW.md)를 함께 따른다. 코드 수정·부분 Actions 성공·과거 자산을 전체 제품 또는 QA87개 수용 완료로 표현하지 않는다.

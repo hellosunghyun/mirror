@@ -2,6 +2,8 @@
 
 ## 후속 구현과 검증 · 2026-10-03
 
+입력 owner pure state 회귀의16개 mutating 호출은 결과를 지역 Bool로 계산한 뒤 원래 #expect 조건을 검사하도록 분리했다. 실제 414 소스 Dark56 Mac/iPhone native 단계의 immutable `$0` compiler 오류에 대한 최소 보완이며, 호출 순서·인자·UUID 생성·테스트16개·expect126개와 기존10개/coordinator2개를 보존한다. 실제 수정 후 단위 컴파일·실행은 새 Actions에서 검증한다. 캐시 소스10d의 성능6은 실제1만작업·10만원본 baseline PASS이며 snapshot p95 77.794667ms·command p95 392.144084ms/20개 모두500ms 미만·232052338byte 왕복을 관측했다. export p95 21142.986916ms 및 실기기·Widget·EventKit/Q086 미측정을 함께 남기며 전체 성능 수용으로 확대하지 않는다.
+
 [전체 앱 재검토](FULL_APP_REVIEW.md)는 전체 FR30·QA87·D-01~D-16와 네 게이트를 유지하며 코드 수정·실제 Actions·실기기 수용을 구분한다. FR-001/006/030의 메뉴 막대 재시도는 등록된 입력 token 하나의 canonical 성공 제목을 전용 receipt로 보존한다. 다른 창 성공이 이를 덮지 않으며 기존 제목의 재시도 성공이 새 입력을 지우지 않는다. 원래 명령·멱등성·pending·Undo·기존 성공 token 소비자를 보존하고, Mac 실제 재시도·popover 상태·관측 전달과 SDK compile은 미검증으로 남긴다.
 
 FR-001/006/009의 입력·복구 보호를 scene owner와 불변 presentation/context로 보완했다. 다른 owner·오래된 닫기와 완료, 같은 owner의 입력 방식 변경, 공간 교체 후 원문 저장을 거절한다. 기존 canonical payload·멱등성·pending 재시도·부분 split과 Undo 계약은 유지한다. SystemNavigationTests에 pure4+MainActor coordinator2의 의미 있는 상태 회귀를 작성하고 알림 capture 거부 assertion2개를 더했다. 작성 수는 실제 실행 수가 아니며 SDK compile·startup·실제 Mac/iPad 다중 창·owner 수명·focused command·dismiss는 별도 검증 대상이다. 전체 FR30·QA87·D-01~D-16와 네 게이트를 유지한다.
