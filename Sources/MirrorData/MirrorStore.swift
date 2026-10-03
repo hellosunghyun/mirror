@@ -445,7 +445,7 @@ public actor MirrorStore {
         try CanonicalDigest.data(rotated).write(to: configuration.directory.appendingPathComponent("StorageIdentity.json"), options: .atomic)
         deleted = true
         try await persistence.destroyLocalStores()
-        for name in ["WidgetSnapshot.json", "NotificationLedger.json"] {
+        for name in ["WidgetSnapshot.json", "NotificationLedger.json", "MigrationBackups", "ProjectionQuarantine"] {
             let url = configuration.directory.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
         }

@@ -442,6 +442,62 @@ struct StoreIntegrationTests {
         after.release()
     }
 
+    @Test("기기 내 삭제는 앱 소유 복구 자료만 지우고 다른 파일을 보존한다")
+    func localDeleteRemovesOwnedRecoveryArtifacts() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        #expect(await store.execute(try capture(context: context), at: context.capturedAt).state == .locallyCommitted)
+        for (directory, filename) in [("MigrationBackups", "Canonical.sqlite"), ("ProjectionQuarantine", "LocalProjection.sqlite")] {
+            let nested = configuration.directory.appendingPathComponent(directory).appendingPathComponent("owned-fixture")
+            try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+            try Data("owned recovery content".utf8).write(to: nested.appendingPathComponent(filename))
+        }
+        let unrelated = configuration.directory.appendingPathComponent("UserExports", isDirectory: true)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        let retained = unrelated.appendingPathComponent("keep.json")
+        let retainedBytes = Data("unrelated user export".utf8)
+        try retainedBytes.write(to: retained)
+        let sibling = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: sibling.directory) }
+        try FileManager.default.createDirectory(at: sibling.directory, withIntermediateDirectories: true)
+        let siblingFile = sibling.directory.appendingPathComponent("Canonical.sqlite")
+        try retainedBytes.write(to: siblingFile)
+        let deletion = try await store.deleteLocalData()
+        #expect(deletion.deleted)
+        for directory in ["MigrationBackups", "ProjectionQuarantine"] {
+            #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent(directory).path))
+        }
+        #expect(try Data(contentsOf: retained) == retainedBytes)
+        #expect(try Data(contentsOf: siblingFile) == retainedBytes)
+        let replacement = try await MirrorStore(configuration: #require(deletion.newConfiguration))
+        #expect(try await replacement.snapshot().tasks.isEmpty)
+        #expect(try await replacement.snapshot().records.isEmpty)
+    }
+
+    @Test("복구 자료 이름이 symlink여도 기기 내 삭제는 다른 공간의 대상 파일을 지우지 않는다")
+    func localDeleteDoesNotFollowRecoveryArtifactSymlinks() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let other = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: other.directory) }
+        try FileManager.default.createDirectory(at: other.directory, withIntermediateDirectories: true)
+        let retained = other.directory.appendingPathComponent("keep.sqlite")
+        let retainedBytes = Data("other space data".utf8)
+        try retainedBytes.write(to: retained)
+        for name in ["MigrationBackups", "ProjectionQuarantine"] {
+            try FileManager.default.createSymbolicLink(at: configuration.directory.appendingPathComponent(name),
+                                                      withDestinationURL: other.directory)
+        }
+        #expect(try await store.deleteLocalData().deleted)
+        #expect(try Data(contentsOf: retained) == retainedBytes)
+        for name in ["MigrationBackups", "ProjectionQuarantine"] {
+            #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent(name).path))
+        }
+    }
+
     @Test("기기 내 삭제는 원본과 캐시를 지우고 구 writer를 차단한다", arguments: [false, true])
     func localDeleteBlocksOldWriter(secondConnection: Bool) async throws {
         let configuration = temporaryConfiguration()
