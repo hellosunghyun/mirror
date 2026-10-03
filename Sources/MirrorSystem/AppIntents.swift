@@ -30,32 +30,45 @@ public struct MirrorTaskEntity: AppEntity, Sendable {
         DisplayRepresentation(title: "\(title)", subtitle: "\(planSummary) · \(deadlineSummary)")
     }
     public init(task: TaskProjection, hideTitle: Bool) {
-        id = task.taskID; title = hideTitle ? "할 일" : task.title; completed = task.status == .completed
+        let entityID = task.taskID
+        let entityTitle = hideTitle ? "할 일" : task.title
+        let isCompleted = task.status == .completed
+        let resolvedPlanSummary: String
         switch task.plan.target {
-        case .unassigned: planSummary = "날짜 미정"
-        case let .day(date): planSummary = "계획 \(date)"
-        case let .week(start, _): planSummary = "\(start) 주, 요일 미정"
-        case .parked: planSummary = "보관"
+        case .unassigned: resolvedPlanSummary = "날짜 미정"
+        case let .day(date): resolvedPlanSummary = "계획 \(date)"
+        case let .week(start, _): resolvedPlanSummary = "\(start) 주, 요일 미정"
+        case .parked: resolvedPlanSummary = "보관"
         }
+        let resolvedDeadlineKind: MirrorDeadlineKind
+        let resolvedDeadlineDay: String?
+        let resolvedDeadlineInstant: Date?
+        let resolvedDeadlineTimeZoneID: String?
+        let resolvedDeadlineSummary: String
         switch task.deadline {
         case nil:
-            deadlineKind = .notSet; deadlineDay = nil; deadlineInstant = nil; deadlineTimeZoneID = nil
-            deadlineSummary = "실제 마감 없음"
+            resolvedDeadlineKind = .notSet; resolvedDeadlineDay = nil; resolvedDeadlineInstant = nil; resolvedDeadlineTimeZoneID = nil
+            resolvedDeadlineSummary = "실제 마감 없음"
         case let .day(date, timeZoneID):
-            deadlineKind = .day; deadlineDay = date.description; deadlineInstant = nil; deadlineTimeZoneID = timeZoneID
-            deadlineSummary = "실제 마감 \(date) (\(timeZoneID))"
+            resolvedDeadlineKind = .day; resolvedDeadlineDay = date.description; resolvedDeadlineInstant = nil; resolvedDeadlineTimeZoneID = timeZoneID
+            resolvedDeadlineSummary = "실제 마감 \(date) (\(timeZoneID))"
         case let .instant(timestamp, timeZoneID):
-            deadlineKind = .instant; deadlineDay = nil; deadlineInstant = timestamp; deadlineTimeZoneID = timeZoneID
+            resolvedDeadlineKind = .instant; resolvedDeadlineDay = nil; resolvedDeadlineInstant = timestamp; resolvedDeadlineTimeZoneID = timeZoneID
             if let timeZone = TimeZone(identifier: timeZoneID) {
                 let formatter = DateFormatter()
                 formatter.calendar = Calendar(identifier: .gregorian)
                 formatter.locale = Locale(identifier: "ko_KR")
                 formatter.timeZone = timeZone; formatter.dateFormat = "yyyy-MM-dd HH:mm"
-                deadlineSummary = "실제 마감 \(formatter.string(from: timestamp)) (\(timeZoneID))"
+                resolvedDeadlineSummary = "실제 마감 \(formatter.string(from: timestamp)) (\(timeZoneID))"
             } else {
-                deadlineSummary = "실제 마감 \(ISO8601DateFormatter().string(from: timestamp)) (\(timeZoneID))"
+                resolvedDeadlineSummary = "실제 마감 \(ISO8601DateFormatter().string(from: timestamp)) (\(timeZoneID))"
             }
         }
+        // @Property의 setter가 self를 사용하기 전에 일반 저장 프로퍼티를 모두 초기화한다.
+        id = entityID; title = entityTitle; completed = isCompleted
+        planSummary = resolvedPlanSummary; deadlineSummary = resolvedDeadlineSummary
+        deadlineKind = resolvedDeadlineKind; deadlineDay = resolvedDeadlineDay
+        deadlineInstant = resolvedDeadlineInstant; deadlineTimeZoneID = resolvedDeadlineTimeZoneID
     }
 }
 

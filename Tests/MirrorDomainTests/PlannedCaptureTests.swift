@@ -46,7 +46,7 @@ struct PlannedCaptureTests {
         .unassigned, .parked
     ])
     func rejectsInvalidInitialPlan(_ target: PlanTarget) throws {
-        guard case let .rejected(error) = CommandValidator.prepare(try command(target), snapshot: CommandTestData.snapshot()) else {
+        guard case let .rejected(error) = CommandValidator.prepare(try command(target), snapshot: try CommandTestData.snapshot()) else {
             Issue.record("잘못된 첫 날짜는 생성 기록을 만들면 안 된다.")
             return
         }
