@@ -258,10 +258,18 @@ struct StoreIntegrationTests {
             context: old, workspaceEpoch: configuration.workspaceEpoch,
             payload: .setPlan(item: PlanCommandItem(taskID: task.taskID, expected: ExpectedVersions(task)), target: .day(old.planningDay), review: nil))
         #expect(await store.execute(plan, at: tomorrow.capturedAt).state == .staleContext)
+        let reader = try await MirrorStore(configuration: configuration)
+        let initialContext = try await reader.currentContext(at: old.capturedAt)
+        #expect(initialContext == old)
         let settings = CommandEnvelope(requestID: "settings", idempotencyKey: "settings-key", source: .app,
             context: old, workspaceEpoch: configuration.workspaceEpoch,
             payload: .settings(policy: try PlanningPolicy(timeZoneID: "America/New_York", revision: "policy-v2"), expectedRevision: "policy-v1"))
         #expect(await store.execute(settings, at: old.capturedAt).state == .locallyCommitted)
+        let refreshedContext = try await reader.currentContext(at: old.capturedAt)
+        #expect(refreshedContext.timeZoneID == "America/New_York")
+        #expect(refreshedContext.policyRevision == "policy-v2")
+        #expect(refreshedContext.planningDay == (try LocalDate("2026-09-29")))
+        #expect(refreshedContext.capturedAt == old.capturedAt)
         let reopened = try await MirrorStore(configuration: configuration)
         #expect(try await reopened.snapshot().policy.timeZoneID == "America/New_York")
         #expect(try await reopened.currentContext(at: old.capturedAt).policyRevision == "policy-v2")
@@ -523,6 +531,10 @@ struct StoreIntegrationTests {
         }
         for name in ["WidgetSnapshot.json", "NotificationLedger.json"] {
             #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent(name).path))
+        }
+        await #expect(throws: StoreError.obsoleteEpoch) { try await first.currentContext(at: context.capturedAt) }
+        if let oldWriter {
+            await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.currentContext(at: context.capturedAt) }
         }
         if let oldWriter { await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.snapshot() } }
         let replacementConfiguration = try #require(deletion.newConfiguration)

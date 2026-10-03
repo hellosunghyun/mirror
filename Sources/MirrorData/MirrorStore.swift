@@ -156,8 +156,9 @@ public actor MirrorStore {
     }
 
     public func currentContext(at instant: Date) async throws -> PlanningContext {
-        let current = try await snapshot()
-        return try PlanningContext.capture(at: instant, timeZoneID: current.policy.timeZoneID, policyRevision: current.policy.revision)
+        try assertIdentity()
+        try await refresh()
+        return try PlanningContext.capture(at: instant, timeZoneID: policy.timeZoneID, policyRevision: policy.revision)
     }
 
     /// 카드의 frozen context와 구분한 서비스의 현재 시각을 주입한다.
