@@ -121,6 +121,20 @@ struct MirrorRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     @ViewBuilder private var compactNavigation: some View {
+        if usesPhoneTabs {
+            VStack(spacing: 0) {
+                phoneHeader(model.destination)
+                    .fixedSize(horizontal: false, vertical: true)
+                compactTabs
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(MirrorPalette.canvas)
+        } else {
+            compactTabs
+        }
+    }
+    private var compactTabs: some View {
         TabView(selection: destinationSelection) {
             ForEach(MirrorDestination.allCases) { destination in
                 Tab(destination.title, systemImage: destination.symbol, value: destination) {
@@ -131,9 +145,6 @@ struct MirrorRootView: View {
                     }
                 }
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if usesPhoneTabs { phoneHeader(model.destination) }
         }
     }
     private var isTaskInspectorVisible: Bool {

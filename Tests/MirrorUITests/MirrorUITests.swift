@@ -1364,6 +1364,10 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func element(_ identifier: String, in app: XCUIApplication, preferButtons: Bool = false) -> XCUIElement {
+        // 검색 입력은 클릭 가능한 래퍼가 아니라 실제 단일 줄 TextField를 찾는다.
+        if identifier == "library.search" {
+            return app.textFields.matching(identifier: identifier).firstMatch
+        }
         // 고유한 후보는 sheet 우선·hittable 선택을 거쳐도 같은 요소다.
         // Button role을 먼저 확인하며, 중복 오류/Undo는 기존 modal 검색을 유지한다.
         if identifier != "state.error" && identifier != "task.undo" {
