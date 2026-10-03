@@ -1249,6 +1249,44 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func settingsCloseButton(in app: XCUIApplication) throws -> XCUIElement {
+        #if os(macOS)
+        let deadline = Date().addingTimeInterval(15)
+        let buttons = app.buttons.matching(identifier: "settings.close")
+        func hasArea(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        for attempt in 0..<12 {
+            guard app.state == .runningForeground, Date() < deadline else { break }
+            guard buttons.element(boundBy: 0).waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow)),
+                  app.state == .runningForeground, Date() < deadline else { break }
+            guard buttons.count == 1 else { break }
+            let windows = app.windows.containing(.button, identifier: "settings.close")
+            guard windows.count == 1 else { break }
+            let window = windows.element(boundBy: 0)
+            let sheets = window.sheets.containing(.button, identifier: "settings.close")
+            let sheetCount = sheets.count
+            guard sheetCount <= 1 else { break }
+            let owner = sheetCount == 1 ? sheets.element(boundBy: 0) : window
+            let ownedButtons = owner.buttons.matching(identifier: "settings.close")
+            guard ownedButtons.count == 1 else { break }
+            let close = ownedButtons.element(boundBy: 0)
+            if window.exists, owner.exists, close.exists, close.elementType == .button,
+               close.label == "닫기", close.isEnabled, close.isHittable {
+                let windowFrame = window.frame
+                let ownerFrame = owner.frame
+                let buttonFrame = close.frame
+                if hasArea(windowFrame), hasArea(ownerFrame), hasArea(buttonFrame),
+                   windowFrame.contains(ownerFrame), windowFrame.contains(buttonFrame), ownerFrame.contains(buttonFrame),
+                   app.state == .runningForeground, Date() < deadline {
+                    return close
+                }
+            }
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            guard remaining > 0 else { break }
+            RunLoop.current.run(until: min(Date().addingTimeInterval(remaining / Double(12 - attempt)), deadline))
+        }
+        #else
         let label = NSPredicate(format: "label == %@", "닫기")
         let deadline = Date().addingTimeInterval(15)
         repeat {
@@ -1261,6 +1299,7 @@ final class MirrorUITests: XCTestCase {
             if let close = controls.first(where: { $0.exists && $0.isHittable }) { return close }
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
+        #endif
         XCTFail("실제 설정 sheet 또는 앱 toolbar의 닫기 버튼이 있어야 한다.")
         throw UIHarnessError.missingElement("settingsCloseButton")
     }

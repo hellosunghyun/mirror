@@ -460,7 +460,7 @@ struct MirrorSettingsView: View {
             .frame(maxWidth: .infinity)
             .background(MirrorPalette.canvas)
             .navigationTitle("설정")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.accessibilityIdentifier("settings.close") } }
             .fileExporter(isPresented: $exporting, document: MirrorArchiveDocument(data: model.archiveData ?? Data()), contentType: .json, defaultFilename: model.exportFileName) { result in
                 if case .failure = result { model.problem = "내보내기 파일을 저장하지 못했어요. 원본은 유지했어요." }
                 model.archiveData = nil
