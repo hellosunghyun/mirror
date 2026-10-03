@@ -63,6 +63,9 @@ jobs:
           python3 scripts/ci-adaptive-ui-results.py progress \
             --directory ".build/ci-adaptive-ui/$MIRROR_ADAPTIVE_PLATFORM-$MIRROR_UI_APPEARANCE" \
             --platform "$MIRROR_ADAPTIVE_PLATFORM" --appearance "$MIRROR_UI_APPEARANCE" || true
+          python3 scripts/ci-adaptive-ui-results.py measurements \
+            --directory ".build/ci-adaptive-ui/$MIRROR_ADAPTIVE_PLATFORM-$MIRROR_UI_APPEARANCE" \
+            --platform "$MIRROR_ADAPTIVE_PLATFORM" --appearance "$MIRROR_UI_APPEARANCE" || true
       - name: 고정 요약의 현재 실행 소유와 schema 검증
         id: summary
         if: always()

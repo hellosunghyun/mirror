@@ -78,6 +78,24 @@ private struct MirrorAppliedDynamicType: ViewModifier {
         content.accessibilityElement(children: .contain)
             .accessibilityIdentifier("ui.appliedDynamicType")
             .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
+            .accessibilityLabel(appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경")
+    }
+    private var appliedTypeName: String? {
+        switch dynamicTypeSize {
+        case .xSmall: "xSmall"
+        case .small: "small"
+        case .medium: "medium"
+        case .large: "large"
+        case .xLarge: "xLarge"
+        case .xxLarge: "xxLarge"
+        case .xxxLarge: "xxxLarge"
+        case .accessibility1: "accessibility1"
+        case .accessibility2: "accessibility2"
+        case .accessibility3: "accessibility3"
+        case .accessibility4: "accessibility4"
+        case .accessibility5: "accessibility5"
+        @unknown default: nil
+        }
     }
 }
 #endif

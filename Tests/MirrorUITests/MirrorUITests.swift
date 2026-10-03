@@ -403,6 +403,46 @@ final class MirrorUITests: XCTestCase {
         XCTAssertTrue(value(of: remaining).contains("아직 정하지 않음"), "Q-016: 주 패널 취소는 계획을 바꾸지 않는다.")
         try interact(with: remaining, in: app)
         XCTAssertEqual(displayedText(of: try requireElement("detail.plan", in: app)), "아직 정하지 않음")
+
+        // Q-021: 남은 정리 큐에 새 입력을 끼우지 않고, 원문과 기존 카드의 대상을 보존한다.
+        try activate("detail.close", in: app)
+        let remainingIdentifier = try requireRow(remainingTitle, in: app).identifier
+        let newTitle = "UI captured during partial review"
+        try capture(newTitle, in: app)
+        try showLibrary(in: app)
+        let inserted = try requireRow(newTitle, in: app)
+        let insertedIdentifier = inserted.identifier
+        XCTAssertEqual(displayedText(of: inserted), newTitle)
+        XCTAssertTrue(value(of: inserted).contains("아직 정하지 않음"))
+        XCTAssertTrue(value(of: inserted).contains("미완료"))
+        XCTAssertEqual(try requireRow(remainingTitle, in: app).identifier, remainingIdentifier)
+
+        try showToday(in: app)
+        XCTAssertFalse(taskRow(newTitle, in: app).exists, "새 입력은 미검토 상태로 Today에 들어가지 않는다.")
+        XCTAssertFalse(taskRow(remainingTitle, in: app).exists)
+        try waitForLabel("이어서 정리, 남은 일 1개",
+                         element: requireElement("today.review", in: app, preferButtons: true), in: app)
+        try activate("today.review", in: app)
+        try waitForLabel(remainingTitle, element: requireElement("review.card", in: app), in: app)
+        XCTAssertEqual(displayedText(of: try requireElement("review.card", in: app)), remainingTitle,
+                       "이어 정리는 새 입력 대신 기존 남은 카드를 그대로 보여 준다.")
+        try activate("review.tomorrow", in: app)
+        try requireNoElement("review.card", in: app)
+        try activate("review.finish", in: app)
+        try requireNoElement("review.finish", in: app)
+
+        try showLibrary(in: app)
+        let preserved = try requireRow(newTitle, in: app)
+        XCTAssertEqual(preserved.identifier, insertedIdentifier)
+        XCTAssertEqual(displayedText(of: preserved), newTitle, "새 입력의 원문을 정리 뒤에도 다시 찾을 수 있다.")
+        XCTAssertTrue(value(of: preserved).contains("아직 정하지 않음"), "새 입력은 기존 큐의 결정에 함께 배치되지 않는다.")
+        XCTAssertTrue(value(of: preserved).contains("미완료"))
+        try replaceText(in: requireElement("library.search", in: app), with: remainingTitle, app: app)
+        let postponed = try requireRow(remainingTitle, in: app)
+        XCTAssertEqual(postponed.identifier, remainingIdentifier, "표시한 기존 카드의 작업만 내일로 배치한다.")
+        XCTAssertTrue(value(of: postponed).contains("10월 1일"))
+        XCTAssertTrue(value(of: postponed).contains("미완료"))
+        // Q-021 추가 검증 끝.
     }
 
     @MainActor

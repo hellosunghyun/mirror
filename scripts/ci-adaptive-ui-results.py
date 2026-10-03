@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import plistlib
@@ -107,6 +108,11 @@ PROGRESS_PROTOCOL = {
         ('recordStarted', 2), ('recordComplete', 2), ('auditStarted', 2), ('auditComplete', 2),
     ),
 }
+CONFIGURATION_MEASUREMENT_MARKER = 'UI adaptive configuration measurement: '
+RESIZE_MEASUREMENT_MARKER = 'UI adaptive resize measurement: '
+MEASUREMENT_FONTS = frozenset(('xSmall', 'small', 'medium', 'large', 'xLarge', 'xxLarge', 'xxxLarge',
+                              'accessibility1', 'accessibility2', 'accessibility3', 'accessibility4', 'accessibility5'))
+MEASUREMENT_WAIT_RESULTS = frozenset(('completed', 'timedOut', 'incorrectOrder', 'invertedFulfillment', 'interrupted'))
 
 
 class AdaptiveError(Exception):
@@ -468,6 +474,113 @@ def progress_diagnostics(directory, expected):
                 report.update({'status': 'observed', 'progress': observed} if observed is not None
                               else {'status': 'noAcceptedProgressDiagnostics'})
     print('::notice::Adaptive UI progress diagnostics: ' + json.dumps(report, sort_keys=True))
+
+
+def configuration_measurement_fields(value):
+    keys = {'method', 'valueKind', 'castKind', 'castName', 'environmentKind', 'environmentName'}
+    if not (isinstance(value, dict) and set(value) == keys
+            and isinstance(value['valueKind'], str) and value['valueKind'] in ('nil', 'string', 'number', 'other')
+            and isinstance(value['castKind'], str) and value['castKind'] in ('nil', 'empty', 'enum', 'otherString')
+            and isinstance(value['environmentKind'], str) and value['environmentKind'] in ('enum', 'empty', 'unrecognized')):
+        return None
+    if (value['valueKind'] == 'string') != (value['castKind'] in ('empty', 'enum', 'otherString')):
+        return None
+    for kind_key, name_key in (('castKind', 'castName'), ('environmentKind', 'environmentName')):
+        if value[kind_key] == 'enum':
+            if not isinstance(value[name_key], str) or value[name_key] not in MEASUREMENT_FONTS:
+                return None
+        elif value[name_key] is not None:
+            return None
+    return {key: value[key] for key in ('valueKind', 'castKind', 'castName', 'environmentKind', 'environmentName')}
+
+
+def measurement_frame(value, *, positive):
+    if not isinstance(value, list) or len(value) != 4 or any(type(number) not in (int, float) for number in value):
+        return False
+    try:
+        return all(math.isfinite(number) for number in value) and all(
+            number > 0 if positive else number >= 0 for number in value[2:])
+    except (OverflowError, ValueError):
+        return False
+
+
+def resize_measurement_fields(value):
+    keys = {'method', 'beforeFrame', 'observedFrame', 'samples', 'waitResult', 'waitCompleted'}
+    if not (isinstance(value, dict) and set(value) == keys and type(value['samples']) is int
+            and 0 <= value['samples'] <= 10_000 and isinstance(value['waitResult'], str)
+            and value['waitResult'] in MEASUREMENT_WAIT_RESULTS and type(value['waitCompleted']) is bool
+            and value['waitCompleted'] == (value['waitResult'] == 'completed')
+            and measurement_frame(value['beforeFrame'], positive=True)):
+        return None
+    if value['samples'] == 0:
+        if value['observedFrame'] is not None:
+            return None
+    elif not measurement_frame(value['observedFrame'], positive=False):
+        return None
+    return {key: value[key] for key in ('beforeFrame', 'observedFrame', 'samples', 'waitResult', 'waitCompleted')}
+
+
+def xctest_measurement_diagnostics(log, expected, entries):
+    """실제 소유 instance에서 관측한 고정 범주·좌표만 정제한다. 결과·원인을 추론하지 않는다."""
+    if xctest_progress_diagnostics(log, expected, entries) is None:
+        return None
+    active, seen, reports = None, set(), []
+    markers = ((CONFIGURATION_MEASUREMENT_MARKER, 'configuration', configuration_measurement_fields),
+               (RESIZE_MEASUREMENT_MARKER, 'resize', resize_measurement_fields))
+    for text in log.splitlines():
+        event = UI_CASE_EVENT.match(text)
+        if event is not None:
+            if re.search(r'\bUI\s+adaptive\s+(?:progress|(?:configuration|resize)\s+measurement)\b', text):
+                return None
+            active = event[2] if event[3] == 'started' else None
+            continue
+        if not re.search(r'\bUI\s+adaptive\s+(?:configuration|resize)\s+measurement\b', text):
+            continue
+        marker = next((item for item in markers if text.startswith(item[0])), None)
+        if marker is None or active is None or text.count(marker[0]) != 1:
+            return None
+        prefix, kind, sanitize = marker
+        try:
+            value = strict_json(text[len(prefix):])
+        except (AdaptiveError, ValueError, TypeError, RecursionError):
+            return None
+        if not isinstance(value, dict) or value.get('method') != active + '()' or (active, kind) in seen:
+            return None
+        if kind == 'resize' and (active != NARROW or expected['platform'] != 'macos'):
+            return None
+        fields = sanitize(value)
+        if fields is None:
+            return None
+        seen.add((active, kind))
+        reports.append({'kind': kind, 'method': active, 'sourceFile': UI_FAILURE_SOURCE_FILE,
+                        'entryLine': entries[active], **fields})
+    return reports
+
+
+def measurement_diagnostics(directory, expected):
+    report = {**expected, 'scope': 'stdoutOnly', 'semantics': 'observedMeasurementsOnly'}
+    try:
+        context_for(directory, expected)
+    except (AdaptiveError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        report['status'] = 'contextUnavailable'
+    else:
+        try:
+            require(source_location(UI_FAILURE_SOURCE_FILE, 1, 1, ROOT) is not None, 'invalidSourceEntries')
+            entries = source_method_entries(read_regular(ROOT / UI_FAILURE_SOURCE_FILE, MAX_JSON).decode('utf-8'),
+                                            expected['platform'])
+            require(entries is not None, 'invalidSourceEntries')
+        except (AdaptiveError, OSError, UnicodeError):
+            report['status'] = 'sourceUnavailable'
+        else:
+            try:
+                log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8')
+            except (AdaptiveError, OSError, UnicodeError):
+                report['status'] = 'testLogUnavailable'
+            else:
+                observed = xctest_measurement_diagnostics(log, expected, entries)
+                report.update({'status': 'observed', 'measurements': observed} if observed
+                              else {'status': 'noAcceptedMeasurementDiagnostics'})
+    print('::notice::Adaptive UI measurement diagnostics: ' + json.dumps(report, sort_keys=True))
 
 
 def file_record(path, products):
@@ -841,7 +954,7 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'adaptiveRemoteOnly')
     parser = SafeParser()
-    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'failure'))
+    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure'))
     parser.add_argument('--directory', required=True)
     parser.add_argument('--platform', required=True)
     parser.add_argument('--appearance', required=True)
@@ -881,6 +994,8 @@ def main():
         test_diagnostics(directory, expected)
     elif args.command == 'progress':
         progress_diagnostics(directory, expected)
+    elif args.command == 'measurements':
+        measurement_diagnostics(directory, expected)
     else:
         require(args.phase in ('build', 'test') and type(args.exit_code) is int and 1 <= args.exit_code <= 255
                 and -1 <= args.native_exit_code <= 255, 'invalidArguments')

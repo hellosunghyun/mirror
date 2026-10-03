@@ -407,6 +407,173 @@ class AdaptiveResultGateTests(unittest.TestCase):
                 helper.progress_diagnostics(root, expected)
                 self.assertIn('sourceUnavailable', output.call_args[0][0])
 
+    def configuration_measurement_row(self, case=CASE, **changes):
+        value = {'method': case + '()', 'valueKind': 'string', 'castKind': 'enum', 'castName': 'accessibility5',
+                 'environmentKind': 'enum', 'environmentName': 'accessibility5', **changes}
+        return helper.CONFIGURATION_MEASUREMENT_MARKER + json.dumps(value)
+
+    def resize_measurement_row(self, **changes):
+        value = {'method': helper.NARROW + '()', 'beforeFrame': [-20, 40, 1200, 800],
+                 'observedFrame': [-20, 40, 780, 600], 'samples': 17,
+                 'waitResult': 'timedOut', 'waitCompleted': False, **changes}
+        return helper.RESIZE_MEASUREMENT_MARKER + json.dumps(value)
+
+    def test_measurements_accept_only_fixed_categories_and_font_names_without_raw_text(self):
+        _, entries = self.progress_fixture()
+        variations = ({}, {'valueKind': 'nil', 'castKind': 'nil', 'castName': None,
+                           'environmentKind': 'empty', 'environmentName': None},
+                      {'valueKind': 'number', 'castKind': 'nil', 'castName': None},
+                      {'valueKind': 'other', 'castKind': 'nil', 'castName': None},
+                      {'castKind': 'empty', 'castName': None, 'environmentKind': 'unrecognized', 'environmentName': None},
+                      {'castKind': 'otherString', 'castName': None})
+        for changes in variations:
+            log = '\n'.join((event(), self.configuration_measurement_row(**changes)))
+            reports = helper.xctest_measurement_diagnostics(log, EXPECTED, entries)
+            self.assertEqual(len(reports), 1)
+            self.assertEqual((reports[0]['kind'], reports[0]['method'], reports[0]['entryLine']), ('configuration', CASE, 5))
+            for key, value in changes.items():
+                self.assertEqual(reports[0][key], value)
+            self.assertNotIn(PRIVATE, json.dumps(reports))
+        for name in ('xSmall', 'small', 'medium', 'large', 'xLarge', 'xxLarge', 'xxxLarge',
+                     'accessibility1', 'accessibility2', 'accessibility3', 'accessibility4', 'accessibility5'):
+            log = '\n'.join((event(), self.configuration_measurement_row(castName=name, environmentName=name)))
+            self.assertEqual(helper.xctest_measurement_diagnostics(log, EXPECTED, entries)[0]['castName'], name)
+
+    def test_measurements_reject_unknown_names_categories_keys_and_nonnull_unclassified_strings(self):
+        _, entries = self.progress_fixture()
+        invalid = ({'valueKind': PRIVATE}, {'castKind': PRIVATE}, {'castName': PRIVATE},
+                   {'environmentKind': PRIVATE}, {'environmentName': PRIVATE},
+                   {'castKind': 'otherString', 'castName': PRIVATE},
+                   {'environmentKind': 'unrecognized', 'environmentName': PRIVATE},
+                   {'castName': None}, {'castName': []}, {'environmentName': {}},
+                   {'valueKind': False}, {'environmentKind': 'empty', 'environmentName': 'large'},
+                   {'valueKind': 'string', 'castKind': 'nil', 'castName': None},
+                   {'valueKind': 'nil'}, {'valueKind': 'number', 'castKind': 'empty', 'castName': None},
+                   {'valueKind': 'other', 'castKind': 'otherString', 'castName': None},
+                   {'private': PRIVATE}, {'method': 'test' + PRIVATE + '()'})
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                log = '\n'.join((event(), self.configuration_measurement_row(**changes), event(state='failed')))
+                self.assertIsNone(helper.xctest_measurement_diagnostics(log, EXPECTED, entries))
+        duplicate = helper.CONFIGURATION_MEASUREMENT_MARKER + ('{"method":"' + CASE + '()",'
+                    '"valueKind":"string","valueKind":"nil","castKind":"nil","castName":null,'
+                    '"environmentKind":"empty","environmentName":null}')
+        self.assertIsNone(helper.xctest_measurement_diagnostics('\n'.join((event(), duplicate)), EXPECTED, entries))
+
+    def test_measurements_require_unique_owned_native_instances_and_a_valid_progress_prefix(self):
+        _, entries = self.progress_fixture()
+        row = self.configuration_measurement_row()
+        for state in ('passed', 'failed', 'skipped'):
+            reports = helper.xctest_measurement_diagnostics('\n'.join((event(), row, event(state=state))), EXPECTED, entries)
+            self.assertEqual(len(reports), 1)
+            self.assertNotIn('nativeState', reports[0])
+        invalid = ((row,), (event(state='failed'), row), (event(), row, row),
+                   (event(), row, event(state='failed'), row),
+                   (event(), row, event(state='failed'), event()),
+                   (event(owner='MirrorIOSUITests.MirrorUITests'), row),
+                   (event(), event('testMaximumTypeReviewAndWeekPicker'), row),
+                   ('prefix ' + event(), row), (event(), 'prefix ' + row),
+                   (event(), 'UI adaptive configuration measurement ' + PRIVATE),
+                   (event() + ' ' + self.progress_row(), row),
+                   (event() + ' UI adaptive progress: not-json', row),
+                   (event() + ' ' + row, row),
+                   (event() + ' UI adaptive configuration measurement: not-json', row),
+                   (event() + ' ' + self.resize_measurement_row(), row),
+                   (event() + ' UI adaptive resize measurement: not-json', row),
+                   (event(), row, event(state='failed') + ' ' + row),
+                   (event(), self.progress_row(), self.progress_row(), row),
+                   (event(), self.resize_measurement_row(method=CASE + '()')))
+        for lines in invalid:
+            with self.subTest(lines=lines):
+                self.assertIsNone(helper.xctest_measurement_diagnostics('\n'.join(lines), EXPECTED, entries))
+        with mock.patch.object(helper, 'MAX_LOG', 32), self.assertRaises(helper.AdaptiveError):
+            helper.xctest_measurement_diagnostics('x' * 33, EXPECTED, entries)
+
+    def test_resize_measurements_preserve_finite_frames_sample_counts_and_observed_wait_result_only(self):
+        source, _ = self.progress_fixture()
+        expected = {'platform': 'macos', 'appearance': 'dark'}
+        entries = helper.source_method_entries(source, 'macos')
+        owner = 'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'
+        for result in ('completed', 'timedOut', 'incorrectOrder', 'invertedFulfillment', 'interrupted'):
+            row = self.resize_measurement_row(waitResult=result, waitCompleted=result == 'completed')
+            log = '\n'.join((event(helper.NARROW, owner), row))
+            reports = helper.xctest_measurement_diagnostics(log, expected, entries)
+            self.assertEqual(reports[0]['beforeFrame'], [-20, 40, 1200, 800])
+            self.assertEqual(reports[0]['observedFrame'], [-20, 40, 780, 600])
+            self.assertEqual(reports[0]['samples'], 17)
+            self.assertEqual(reports[0]['waitResult'], result)
+        for changes in ({'samples': 0, 'observedFrame': None}, {'samples': 10_000, 'observedFrame': [0, -40, 0, 0]}):
+            log = '\n'.join((event(helper.NARROW, owner), self.resize_measurement_row(**changes)))
+            self.assertEqual(len(helper.xctest_measurement_diagnostics(log, expected, entries)), 1)
+        rows = []
+        for case in helper.required_cases('macos'):
+            rows.append(event(case, owner))
+            if case == helper.NARROW:
+                rows.append(self.resize_measurement_row())
+            rows.extend((self.configuration_measurement_row(case), event(case, owner, 'passed')))
+        self.assertEqual(len(helper.xctest_measurement_diagnostics('\n'.join(rows), expected, entries)), 6)
+
+    def test_resize_measurements_reject_invalid_frames_bounds_boolean_numbers_and_wait_inconsistency(self):
+        source, _ = self.progress_fixture()
+        expected = {'platform': 'macos', 'appearance': 'system'}
+        entries = helper.source_method_entries(source, 'macos')
+        owner = 'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'
+        invalid = ({'beforeFrame': [0, 0, 0, 800]}, {'beforeFrame': [0, 0, -1, 800]},
+                   {'beforeFrame': [False, 0, 1200, 800]}, {'beforeFrame': [0, 0, 1200]},
+                   {'beforeFrame': [0, 0, '1200', 800]}, {'beforeFrame': [0, 0, 10 ** 500, 800]},
+                   {'observedFrame': [0, 0, -1, 600]}, {'observedFrame': [0, 0, 780, float('inf')]},
+                   {'observedFrame': None}, {'samples': 0}, {'samples': True}, {'samples': -1},
+                   {'samples': 10_001}, {'waitResult': PRIVATE}, {'waitCompleted': True}, {'waitCompleted': 0},
+                   {'private': PRIVATE}, {'method': CASE + '()'})
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                log = '\n'.join((event(helper.NARROW, owner), self.resize_measurement_row(**changes)))
+                self.assertIsNone(helper.xctest_measurement_diagnostics(log, expected, entries))
+        row = self.resize_measurement_row()
+        self.assertIsNone(helper.xctest_measurement_diagnostics('\n'.join((event(helper.NARROW, owner), row, row)),
+                                                              expected, entries))
+        self.assertIsNone(helper.xctest_measurement_diagnostics('\n'.join((event(helper.NARROW, owner), row)),
+                                                              EXPECTED, self.progress_fixture()[1]))
+
+    def test_measurement_notices_preserve_pinned_context_and_reject_unsafe_or_missing_evidence(self):
+        source, _ = self.progress_fixture()
+        expected = {**EXPECTED, 'commitSHA': 'a' * 40, 'buildNumber': '12', 'runID': '34', 'runAttempt': '1'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / helper.UI_FAILURE_SOURCE_FILE
+            path.parent.mkdir(parents=True)
+            path.write_text(source)
+            with mock.patch.object(helper, 'context_for', side_effect=helper.AdaptiveError(PRIVATE)), \
+                    mock.patch.object(helper, 'read_regular') as read, mock.patch('builtins.print') as output:
+                helper.measurement_diagnostics(root, expected)
+            read.assert_not_called()
+            self.assertIn('contextUnavailable', output.call_args[0][0])
+            self.assertNotIn(PRIVATE, output.call_args[0][0])
+            with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'context_for'), \
+                    mock.patch('builtins.print') as output:
+                helper.measurement_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                log = root / 'test.log'
+                log.write_text('\n'.join((event(), self.configuration_measurement_row())))
+                helper.measurement_diagnostics(root, expected)
+                notice = output.call_args[0][0]
+                self.assertIn('observedMeasurementsOnly', notice)
+                self.assertIn(expected['commitSHA'], notice)
+                for forbidden in (str(root), PRIVATE, 'xcodebuildExitCode', 'passedTests', 'failedTests', 'message'):
+                    self.assertNotIn(forbidden, notice)
+                log.rename(root / 'original.log')
+                log.symlink_to(root / 'original.log')
+                helper.measurement_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                log.unlink()
+                log.write_text(PRIVATE)
+                with mock.patch.object(helper, 'MAX_LOG', 1):
+                    helper.measurement_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                path.unlink()
+                helper.measurement_diagnostics(root, expected)
+                self.assertIn('sourceUnavailable', output.call_args[0][0])
+
     def test_shell_preserves_original_native_failure_even_when_diagnostics_fail(self):
         self.run_stubbed_shell('build', native=65, receipt=0, expected_exit=65, expected_diagnostics=True)
 

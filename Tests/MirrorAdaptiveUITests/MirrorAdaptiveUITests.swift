@@ -318,12 +318,18 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let resizeDestination = window.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: 780, dy: 600))
         corner.press(forDuration: 0.1, thenDragTo: resizeDestination)
+        let resizeObservations = ResizeObservations()
         let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let frame = window.frame
+            resizeObservations.record(frame)
             return Self.hasArea(frame) && frame.width >= 760 && frame.width <= 800
                 && frame.height >= 520 && frame.height <= 640 && frame.width < before.width
         }, object: window)
-        XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 15), .completed,
+        let resizeResult = XCTWaiter.wait(for: [resized], timeout: 15)
+        let resizeSnapshot = resizeObservations.snapshot()
+        resizeMeasurement(method: #function, before: before, observed: resizeSnapshot.frame,
+                          samples: resizeSnapshot.samples, result: resizeResult)
+        XCTAssertEqual(resizeResult, .completed,
                        "현재 화면의 실제 창이 지원하는 좁은 폭과 높이로 줄어야 한다.")
         try configuration(in: app, viewport: "narrow")
         progress(.windowResizeVerified)
@@ -362,7 +368,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
     #endif
 
     @MainActor
-    private func launchApp(recordConfiguration: Bool = true) throws -> XCUIApplication {
+    private func launchApp(recordConfiguration: Bool = true, method: String = #function) throws -> XCUIApplication {
         continueAfterFailure = false
         screenshotSequence = 0
         let app = XCUIApplication()
@@ -374,7 +380,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         app.launch()
         do {
             _ = try find("today.list", in: app, timeout: 30)
-            if recordConfiguration { try configuration(in: app, viewport: "standard") }
+            if recordConfiguration { try configuration(in: app, viewport: "standard", method: method) }
             return app
         } catch {
             app.terminate()
@@ -393,9 +399,12 @@ final class MirrorAdaptiveUITests: XCTestCase {
     }
 
     @MainActor
-    private func configuration(in app: XCUIApplication, viewport: String) throws {
+    private func configuration(in app: XCUIApplication, viewport: String, method: String = #function) throws {
         let applied = try find("ui.appliedDynamicType", in: app)
-        XCTAssertEqual(applied.value as? String, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
+        let appliedValue = applied.value
+        let appliedString = appliedValue as? String
+        configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: applied.label)
+        XCTAssertEqual(appliedString, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
         XCTAssertEqual(app.state, .runningForeground)
         #if os(iOS)
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
@@ -692,6 +701,76 @@ final class MirrorAdaptiveUITests: XCTestCase {
         attachment.name = "mirror-adaptive-\(stage)-\(screenshotSequence)"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    private func configurationMeasurement(method: String, value: Any?, string: String?, label: String) {
+        let valueKind = value == nil ? "nil" : value is String ? "string" : value is NSNumber ? "number" : "other"
+        let castName = string.flatMap { Self.fontEnvironmentNames.contains($0) ? $0 : nil }
+        let castKind = string.map { $0.isEmpty ? "empty" : castName == nil ? "otherString" : "enum" } ?? "nil"
+        let prefix = "글자 크기 환경: "
+        let environmentName = label.hasPrefix(prefix) ? String(label.dropFirst(prefix.count)) : ""
+        let environmentKind = Self.fontEnvironmentNames.contains(environmentName) ? "enum"
+            : label.isEmpty ? "empty" : "unrecognized"
+        emitMeasurement("UI adaptive configuration measurement:", fields: [
+            "method": method, "valueKind": valueKind, "castKind": castKind,
+            "castName": castName.map { $0 as Any } ?? NSNull(),
+            "environmentKind": environmentKind,
+            "environmentName": environmentKind == "enum" ? environmentName as Any : NSNull(),
+        ])
+    }
+
+    @MainActor
+    private func resizeMeasurement(method: String, before: CGRect, observed: CGRect?,
+                                   samples: Int, result: XCTWaiter.Result) {
+        let resultName: String
+        switch result {
+        case .completed: resultName = "completed"
+        case .timedOut: resultName = "timedOut"
+        case .incorrectOrder: resultName = "incorrectOrder"
+        case .invertedFulfillment: resultName = "invertedFulfillment"
+        case .interrupted: resultName = "interrupted"
+        @unknown default: return
+        }
+        let frame = { (value: CGRect) in [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)] }
+        let beforeFrame = frame(before)
+        let observedFrame = observed.map(frame)
+        guard beforeFrame.allSatisfy({ $0.isFinite }), observedFrame?.allSatisfy({ $0.isFinite }) ?? true,
+              (0...10_000).contains(samples) else { return }
+        emitMeasurement("UI adaptive resize measurement:", fields: [
+            "method": method, "beforeFrame": beforeFrame,
+            "observedFrame": observedFrame.map { $0 as Any } ?? NSNull(), "samples": samples,
+            "waitResult": resultName, "waitCompleted": result == .completed,
+        ])
+    }
+
+    @MainActor
+    private func emitMeasurement(_ marker: String, fields: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
+        print("\(marker) \(String(decoding: data, as: UTF8.self))")
+    }
+
+    private static let fontEnvironmentNames: Set<String> = [
+        "xSmall", "small", "medium", "large", "xLarge", "xxLarge", "xxxLarge",
+        "accessibility1", "accessibility2", "accessibility3", "accessibility4", "accessibility5",
+    ]
+
+    /// XCTest의 predicate callback과 대기 종료 시점 사이의 관측 snapshot을 함께 보호한다.
+    private final class ResizeObservations: @unchecked Sendable {
+        private let lock = NSLock()
+        private var frame: CGRect?
+        private var samples = 0
+        func record(_ value: CGRect) {
+            lock.lock()
+            defer { lock.unlock() }
+            frame = value
+            samples += 1
+        }
+        func snapshot() -> (frame: CGRect?, samples: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (frame, samples)
+        }
     }
 
     @MainActor
