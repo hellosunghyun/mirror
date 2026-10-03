@@ -161,16 +161,16 @@ struct MirrorRootView: View {
         switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
     }
     private func phoneNavigation(_ destination: MirrorDestination) -> some View {
-        VStack(spacing: 0) {
-            NavigationStack {
-                content(destination)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    #if os(iOS)
-                    .toolbar(.hidden, for: .navigationBar)
-                    #endif
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            statusBar.fixedSize(horizontal: false, vertical: true)
+        NavigationStack {
+            content(destination)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // 안내와 되돌리기 공간을 본문의 탭·키보드 안전 영역에서 확보한다.
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    statusBar.fixedSize(horizontal: false, vertical: true)
+                }
+                #if os(iOS)
+                .toolbar(.hidden, for: .navigationBar)
+                #endif
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MirrorPalette.canvas)
