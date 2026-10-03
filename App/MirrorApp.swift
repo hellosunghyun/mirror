@@ -108,17 +108,19 @@ struct MirrorMenuBarContent: View {
     @State private var title = ""
     @FocusState private var focused: Bool
     @State private var captureFlowStarted = false
+    @State private var captureRequestToken = UUID().uuidString
+    @State private var submittedTitle: String?
+    @State private var submittingCapture = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("일단 넣고, 나중에 정하세요").font(.headline)
             TextField("할 일 제목", text: $title, axis: .vertical).focused($focused)
                 .lineLimit(1...4)
-                .disabled(model.isSaving || model.projectionPending)
+                .disabled(submittingCapture || model.isSaving || model.projectionPending)
                 .accessibilityIdentifier("menuBar.title")
-            Button("보관함에 넣기") {
-                startCaptureFlow()
-                Task { if await model.capture(title: title, note: "", sourceURL: "") { title = ""; focused = true; captureFlowStarted = false } }
-            }.disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("menuBar.save")
+            Button("보관함에 넣기") { saveCapture() }
+                .disabled(submittingCapture || model.isSaving || model.projectionPending)
+                .accessibilityIdentifier("menuBar.save")
             if model.isSaving {
                 Text("저장 중…")
             } else if model.projectionPending {
@@ -137,7 +139,41 @@ struct MirrorMenuBarContent: View {
             .task { await model.start() }
             .onChange(of: focused) { _, value in model.isTextEditing = value }
             .onChange(of: title) { _, value in if !value.isEmpty { startCaptureFlow() } }
+            .onChange(of: model.menuBarCaptureCommittedReceipt, initial: true) { _, receipt in acceptCaptureReceipt(receipt) }
             .onDisappear { model.isTextEditing = false }
+    }
+    private func saveCapture() {
+        guard !submittingCapture, !model.isSaving, !model.projectionPending else { return }
+        // onChange가 전달되기 전 자기 성공을 먼저 수용하고, 비운 입력으로 새 저장을 하지 않는다.
+        if acceptCaptureReceipt(model.menuBarCaptureCommittedReceipt), title.isEmpty {
+            focused = true
+            return
+        }
+        startCaptureFlow()
+        let capturedTitle = title
+        let token = captureRequestToken
+        submittedTitle = capturedTitle
+        submittingCapture = true
+        model.registerMenuBarCapture(token: token)
+        Task {
+            defer { submittingCapture = false }
+            if await model.capture(title: capturedTitle, note: "", sourceURL: "", requestToken: token) {
+                acceptCaptureReceipt(CaptureCommittedReceipt(token: token,
+                    title: capturedTitle.trimmingCharacters(in: .whitespacesAndNewlines)))
+                focused = true
+            }
+        }
+    }
+    @discardableResult
+    private func acceptCaptureReceipt(_ receipt: CaptureCommittedReceipt?) -> Bool {
+        guard let receipt, receipt.token == captureRequestToken, let submittedTitle else { return false }
+        if title == submittedTitle,
+           submittedTitle.trimmingCharacters(in: .whitespacesAndNewlines) == receipt.title { title = "" }
+        self.submittedTitle = nil
+        captureRequestToken = UUID().uuidString
+        captureFlowStarted = false
+        if !title.isEmpty { startCaptureFlow() }
+        return true
     }
     private func startCaptureFlow() {
         guard !captureFlowStarted else { return }

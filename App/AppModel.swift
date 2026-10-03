@@ -12,6 +12,11 @@ enum MirrorDestination: String, CaseIterable, Identifiable {
     var symbol: String { switch self { case .today: "sun.max"; case .calendar: "calendar"; case .library: "tray" } }
 }
 
+nonisolated struct CaptureCommittedReceipt: Equatable, Sendable {
+    let token: String
+    let title: String
+}
+
 struct ReviewCard: Codable, Identifiable {
     let id: String
     let taskID: UUID
@@ -115,6 +120,8 @@ final class AppModel {
     var projectionPending = false
     var projectionRecovery: ProjectionRecoveryNotice?
     var lastCaptureCommittedToken: String?
+    @ObservationIgnored private var menuBarCaptureToken: String?
+    var menuBarCaptureCommittedReceipt: CaptureCommittedReceipt?
     var confirmation: CommandEnvelope?
     var lastUndo: SafeUndo?
     var review: AppReviewSession?
@@ -523,6 +530,11 @@ final class AppModel {
             guard storeObservationID == identity else { return }
             systemProblem = "복구 상태를 확인하지 못했어요. 외부 노출과 알림은 계속 꺼져 있어요."
         }
+    }
+    func registerMenuBarCapture(token: String) {
+        guard menuBarCaptureToken != token else { return }
+        menuBarCaptureToken = token
+        menuBarCaptureCommittedReceipt = nil
     }
     func capturePresentation(for ownerSceneID: UUID) -> CapturePresentationRequest? {
         capturePresentationCoordinator.presentation(for: ownerSceneID)
@@ -1047,7 +1059,16 @@ final class AppModel {
             feedback = success
             advanceReview(envelope, result: result)
             recordUndo(envelope, result: result)
-            if envelope.kind == .capture { lastCaptureCommittedToken = envelope.idempotencyKey }
+            if envelope.kind == .capture {
+                if envelope.idempotencyKey == menuBarCaptureToken {
+                    switch envelope.payload {
+                    case let .capture(_, content), let .captureWithPlan(_, content, _):
+                        menuBarCaptureCommittedReceipt = CaptureCommittedReceipt(token: envelope.idempotencyKey, title: content.title)
+                    default: break
+                    }
+                }
+                lastCaptureCommittedToken = envelope.idempotencyKey
+            }
             return true
         case .committedProjectionPending:
             projectionPending = true; feedback = "저장했어요. 화면을 갱신하고 있어요."
@@ -1542,6 +1563,7 @@ final class AppModel {
         endReviewExposureSegment()
         activeReviewMilliseconds = 0; reviewExposures = []
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
+        menuBarCaptureToken = nil; menuBarCaptureCommittedReceipt = nil
         completedWidgetPickerID = nil; widgetNextDestination = nil
         completedBatchPickerID = nil; batchPickerOwner = nil
         projectionRecovery = nil; recoveryConfigurationBlocked = false

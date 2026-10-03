@@ -2,6 +2,8 @@
 
 ## 후속 구현과 검증 · 2026-10-03
 
+[전체 앱 재검토](FULL_APP_REVIEW.md)는 전체 FR30·QA87·D-01~D-16와 네 게이트를 유지하며 코드 수정·실제 Actions·실기기 수용을 구분한다. FR-001/006/030의 메뉴 막대 재시도는 등록된 입력 token 하나의 canonical 성공 제목을 전용 receipt로 보존한다. 다른 창 성공이 이를 덮지 않으며 기존 제목의 재시도 성공이 새 입력을 지우지 않는다. 원래 명령·멱등성·pending·Undo·기존 성공 token 소비자를 보존하고, Mac 실제 재시도·popover 상태·관측 전달과 SDK compile은 미검증으로 남긴다.
+
 FR-001/006/009의 입력·복구 보호를 scene owner와 불변 presentation/context로 보완했다. 다른 owner·오래된 닫기와 완료, 같은 owner의 입력 방식 변경, 공간 교체 후 원문 저장을 거절한다. 기존 canonical payload·멱등성·pending 재시도·부분 split과 Undo 계약은 유지한다. SystemNavigationTests에 pure4+MainActor coordinator2의 의미 있는 상태 회귀를 작성하고 알림 capture 거부 assertion2개를 더했다. 작성 수는 실제 실행 수가 아니며 SDK compile·startup·실제 Mac/iPad 다중 창·owner 수명·focused command·dismiss는 별도 검증 대상이다. 전체 FR30·QA87·D-01~D-16와 네 게이트를 유지한다.
 
 간편 입력은 제목만 저장하는 기본 경로와 접힌 메모·링크·날짜를 사용한다. 사용자가 날짜를 선택하면 제목과 계획을 `captureWithPlan`으로 원자 저장하고, 취소·실패 때 입력을 보존한다. FR-001/006/009의 생성·재시도·재시작 회귀와 최대 글자 입력 사례를 작성했으며 원격 수용을 코드 작성과 구분한다. 목록의 미루기와 요청 상세, 기본 숨긴 iPad 보조 일정, 긴 제목의 명시적 펼침은 [간편 UX](SIMPLE_UX.md)와 [UI 검토](UI_REVIEW.md)에서 추적한다.
