@@ -370,8 +370,9 @@ struct MirrorRootView: View {
                 Button {
                     guard model.problem == nil, !model.isSaving, !model.projectionPending else { return }
                     model.feedback = nil
+                    model.detailEditingFeedback = nil
                 } label: {
-                    Label("저장 안내 닫기", systemImage: "xmark")
+                    Label("안내 닫기", systemImage: "xmark")
                         .labelStyle(.iconOnly)
                         #if os(iOS)
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -385,7 +386,7 @@ struct MirrorRootView: View {
             isTaskInspectorVisible
         }, set: { shown in
             guard !shown, !model.showReview, !model.isSaving else { return }
-            if let id = model.selectedTaskID, detailDraftTaskID == id { detailCloseRequestedID = id }
+            if let id = model.selectedTaskID, (detailDraftTaskID == id || model.isDetailEditing) { detailCloseRequestedID = id }
             else { model.selectedTaskID = nil }
         })
     }
@@ -401,7 +402,7 @@ struct MirrorRootView: View {
     }
     private func requestTaskSelection(_ id: UUID) {
         guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
-        if let owner = model.selectedTask, detailDraftTaskID == owner.taskID {
+        if let owner = model.selectedTask, (detailDraftTaskID == owner.taskID || model.isDetailEditing) {
             guard id != owner.taskID, !model.projectionPending,
                   target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
             detailSelectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,

@@ -843,7 +843,7 @@ struct MirrorReviewView: View {
             .sheet(item: Binding(get: { model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })) { MirrorPlanPicker(request: $0) }
             .sheet(item: Binding(get: { model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: {
                 guard $0 == nil, model.showReview, !model.isSaving else { return }
-                if let id = model.selectedTaskID, detailDraftTaskID == id { detailCloseRequestedID = id }
+                if let id = model.selectedTaskID, (detailDraftTaskID == id || model.isDetailEditing) { detailCloseRequestedID = id }
                 else { model.selectedTaskID = nil }
             })) { detail in
                 NavigationStack {
@@ -865,7 +865,7 @@ struct MirrorReviewView: View {
 
     private func requestTaskSelection(_ id: UUID) {
         guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
-        if let owner = model.selectedTask, detailDraftTaskID == owner.taskID {
+        if let owner = model.selectedTask, (detailDraftTaskID == owner.taskID || model.isDetailEditing) {
             guard id != owner.taskID, !model.projectionPending,
                   target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
             detailSelectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
@@ -1294,6 +1294,8 @@ struct MirrorTaskDetail: View {
     @State private var link = ""
     @State private var editing = false
     @State private var editingSnapshot: TaskProjection?
+    @State private var detailEditorOwnerID = UUID()
+    @State private var editingClaim: AppModel.DetailEditingClaim?
     @State private var showDeadline = false
     @State private var showHistory = false
     @State private var showNotes = false
@@ -1307,6 +1309,10 @@ struct MirrorTaskDetail: View {
         guard let original = editingSnapshot, original.taskID == task.taskID else { return true }
         return title != original.title || note != (original.content.note ?? "") || link != (original.content.sourceURL ?? "")
     }
+    private func finishEditing() {
+        model.endDetailEditing(ownerID: detailEditorOwnerID, claim: editingClaim)
+        editingClaim = nil; editing = false; editingSnapshot = nil
+    }
     private func requestClose() {
         guard model.selectedTaskID == task.taskID, !model.isSaving,
               !editing || editingSnapshot?.taskID == task.taskID else { return }
@@ -1316,7 +1322,7 @@ struct MirrorTaskDetail: View {
             if selectionRequested?.ownerID == task.taskID { selectionRequested = nil }
             discardRequestedID = task.taskID; showDiscardConfirmation = true
         }
-        else { model.selectedTaskID = nil }
+        else { finishEditing(); model.selectedTaskID = nil }
     }
     private func selectionIsCurrent(_ request: MirrorTaskSelectionRequest) -> Bool {
         selectionRequested == request && request.ownerID == task.taskID && model.selectedTaskID == task.taskID
@@ -1383,6 +1389,8 @@ struct MirrorTaskDetail: View {
                                 }.font(.callout)
                             }
                             Button("내용 편집") {
+                                guard let claim = model.beginDetailEditing(ownerID: detailEditorOwnerID, task: task) else { return }
+                                editingClaim = claim
                                 editingSnapshot = task
                                 title = task.title; note = task.content.note ?? ""; link = task.content.sourceURL ?? ""; editing = true
                             }.buttonStyle(.borderless).frame(minHeight: 44).accessibilityIdentifier("detail.edit")
@@ -1486,11 +1494,19 @@ struct MirrorTaskDetail: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             if editing {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let feedback = model.detailEditingFeedback {
+                        Text(feedback).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("detail.feedback")
+                    }
                     Button {
                         Task {
-                            guard let original = editingSnapshot, original.taskID == task.taskID else { return }
+                            let ownerID = detailEditorOwnerID
+                            guard let original = editingSnapshot, original.taskID == task.taskID, let claim = editingClaim,
+                                  model.canSaveDetailEditing(ownerID: ownerID, claim: claim) else { return }
                             if await model.edit(original, title: title, note: note, sourceURL: link) {
-                                editing = false; editingSnapshot = nil
+                                guard editingClaim == claim, model.canSaveDetailEditing(ownerID: ownerID, claim: claim) else { return }
+                                finishEditing()
                             }
                         }
                     } label: {
@@ -1507,7 +1523,7 @@ struct MirrorTaskDetail: View {
                     #endif
                     .disabled(editingSnapshot?.taskID != task.taskID)
                     .accessibilityIdentifier("detail.save")
-                    Button("편집 취소") { editing = false; editingSnapshot = nil }
+                    Button("편집 취소") { finishEditing() }
                         .buttonStyle(.borderless).frame(minHeight: 44)
                     if model.problem != nil || model.projectionPending {
                         Button { Task { await model.retry() } } label: {
@@ -1522,6 +1538,11 @@ struct MirrorTaskDetail: View {
                     .frame(maxWidth: .infinity, alignment: .leading).background(MirrorPalette.surface)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
+                    if let feedback = model.detailEditingFeedback {
+                        Text(feedback).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("detail.feedback")
+                    }
                     if let problem = model.problem {
                         Text(problem).font(.callout).foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1579,7 +1600,7 @@ struct MirrorTaskDetail: View {
             }
             if hasUnsavedChanges {
                 discardRequestedID = task.taskID; discardSelectionRequest = request; showDiscardConfirmation = true
-            } else { selectionRequested = nil; model.selectedTaskID = request.destinationID }
+            } else { finishEditing(); selectionRequested = nil; model.selectedTaskID = request.destinationID }
         }
         .alert(discardSelectionRequest == nil ? "편집한 내용을 버리고 닫을까요?" : "편집한 내용을 버리고 다른 일을 열까요?", isPresented: $showDiscardConfirmation) {
             Button(discardSelectionRequest == nil ? "버리고 닫기" : "버리고 다른 일 열기", role: .destructive) {
@@ -1587,10 +1608,10 @@ struct MirrorTaskDetail: View {
                       editingSnapshot?.taskID == task.taskID, !model.isSaving, !model.projectionPending else { return }
                 if let request = discardSelectionRequest {
                     guard selectionRequested == request, selectionIsCurrent(request) else { return }
-                    editing = false; editingSnapshot = nil; title = ""; note = ""; link = ""
+                    finishEditing(); title = ""; note = ""; link = ""
                     discardRequestedID = nil; discardSelectionRequest = nil; selectionRequested = nil
                     model.selectedTaskID = request.destinationID
-                } else { discardRequestedID = nil; model.selectedTaskID = nil }
+                } else { finishEditing(); discardRequestedID = nil; model.selectedTaskID = nil }
             }.accessibilityIdentifier("detail.discardEdit")
             Button("계속 편집", role: .cancel) {
                 if selectionRequested == discardSelectionRequest { selectionRequested = nil }
@@ -1600,11 +1621,11 @@ struct MirrorTaskDetail: View {
         }
         .disabled(model.isSaving)
         .onChange(of: editing) { _, value in
-            model.isDetailEditing = value
             model.isTextEditing = value
         }
         .onDisappear {
-            model.isDetailEditing = false; model.isTextEditing = false
+            model.endDetailEditing(ownerID: detailEditorOwnerID, claim: editingClaim)
+            editingClaim = nil; model.isTextEditing = false
             if draftTaskID == task.taskID { draftTaskID = nil }
             if closeRequestedID == task.taskID { closeRequestedID = nil }
             if selectionRequested?.ownerID == task.taskID { selectionRequested = nil }

@@ -69,11 +69,30 @@ struct MirrorPreferences: Codable {
 final class AppModel {
     var destination: MirrorDestination = .today
     var tasks: [TaskProjection] = []
-    var selectedTaskID: UUID?
+    private var selectedTaskIDBacking: UUID?
+    var selectedTaskID: UUID? {
+        get { selectedTaskIDBacking }
+        set {
+            guard newValue == selectedTaskIDBacking || !isDetailEditing else {
+                feedback = "편집 중인 내용을 먼저 저장하거나 편집을 취소한 뒤, 다른 일을 열거나 상세를 닫아 주세요."
+                detailEditingFeedback = feedback
+                return
+            }
+            selectedTaskIDBacking = newValue
+        }
+    }
     var search = ""
     var searchRequested = false
     var isTextEditing = false
-    var isDetailEditing = false
+    struct DetailEditingClaim: Equatable {
+        let id = UUID()
+        let observationID: UUID
+        let taskID: UUID
+        let workspaceKey: String
+        let workspaceEpoch: String
+    }
+    private var detailEditingOwners: [UUID: DetailEditingClaim] = [:]
+    var isDetailEditing: Bool { !detailEditingOwners.isEmpty }
     var selectedTaskIDs: Set<UUID> = []
     var showCapture = false
     var captureIsSingle = false
@@ -87,6 +106,7 @@ final class AppModel {
     var isLoading = true
     var isSaving = false
     var feedback: String?
+    var detailEditingFeedback: String?
     var problem: String? = nil {
         didSet { problemRevision += 1 }
     }
@@ -171,6 +191,39 @@ final class AppModel {
         canonicalObservation?.cancel()
         canonicalRefreshTask?.cancel()
         systemReconciliationTask?.cancel()
+    }
+
+    func beginDetailEditing(ownerID: UUID, task: TaskProjection) -> DetailEditingClaim? {
+        guard !isDetailEditing else {
+            feedback = "다른 창에서 편집 중이에요. 먼저 그 내용을 저장하거나 편집을 취소해 주세요."
+            detailEditingFeedback = feedback
+            return nil
+        }
+        guard store != nil, !isSaving, let configuration, selectedTaskID == task.taskID,
+              task.workspaceKey == configuration.workspaceKey, task.workspaceEpoch == configuration.workspaceEpoch,
+              tasks.contains(where: { $0.taskID == task.taskID && $0.workspaceKey == task.workspaceKey && $0.workspaceEpoch == task.workspaceEpoch }) else { return nil }
+        let claim = DetailEditingClaim(observationID: storeObservationID, taskID: task.taskID,
+                                       workspaceKey: task.workspaceKey, workspaceEpoch: task.workspaceEpoch)
+        detailEditingOwners[ownerID] = claim
+        detailEditingFeedback = nil
+        return claim
+    }
+    func endDetailEditing(ownerID: UUID, claim: DetailEditingClaim?) {
+        guard let claim, detailEditingOwners[ownerID] == claim else { return }
+        detailEditingOwners[ownerID] = nil
+        detailEditingFeedback = nil
+    }
+    func canSaveDetailEditing(ownerID: UUID, claim: DetailEditingClaim?) -> Bool {
+        guard let claim, detailEditingOwners[ownerID] == claim, claim.observationID == storeObservationID,
+              store != nil, selectedTaskID == claim.taskID, let configuration,
+              claim.workspaceKey == configuration.workspaceKey, claim.workspaceEpoch == configuration.workspaceEpoch,
+              tasks.contains(where: { $0.taskID == claim.taskID && $0.workspaceKey == claim.workspaceKey && $0.workspaceEpoch == claim.workspaceEpoch }) else {
+            feedback = "편집을 시작한 뒤 저장 공간 연결이 바뀌었어요. 입력한 내용을 유지했어요. 편집을 취소하고 최신 내용을 확인해 주세요."
+            detailEditingFeedback = feedback
+            return false
+        }
+        detailEditingFeedback = nil
+        return true
     }
 
     var selectedTask: TaskProjection? { tasks.first { $0.taskID == selectedTaskID } }
@@ -1196,6 +1249,17 @@ final class AppModel {
             if let expectedObservationID, expectedObservationID != storeObservationID { return }
             let validated = try MirrorDeepLink.validate(route, ownedTaskIDs: Set(tasks.map(\.taskID)), trustedCards: trustedCards)
             switch validated {
+            case let .task(id) where isDetailEditing && selectedTaskID != id:
+                feedback = "편집 중인 내용을 먼저 저장하거나 편집을 취소한 뒤, 알림이나 링크를 다시 열어 주세요."
+                detailEditingFeedback = feedback
+                return
+            case .schedule where isDetailEditing:
+                feedback = "편집 중인 내용을 먼저 저장하거나 편집을 취소한 뒤, 알림이나 링크를 다시 열어 주세요."
+                detailEditingFeedback = feedback
+                return
+            default: break
+            }
+            switch validated {
             case .capture: openCapture(single: true)
             case .today: destination = .today
             case let .review(weekly): beginReview(mode: .manualResume, weekly: weekly)
@@ -1464,8 +1528,10 @@ final class AppModel {
         retryEnvelope = nil; widgetDecision = nil; archiveData = nil; importData = nil
         pendingImportFeedback = nil; calendarDisplayRange = nil
         calendarLoadID = UUID()
-        importPreview = nil; archivePreview = nil; selectedTaskID = nil; selectedTaskIDs = []
+        detailEditingOwners.removeAll()
+        importPreview = nil; archivePreview = nil; selectedTaskIDBacking = nil; selectedTaskIDs = []
         calendarEvents = []; calendars = []; showReview = false; projectionPending = false
+        detailEditingFeedback = nil
         feedback = nil; problem = nil
         defaults.removeObject(forKey: sessionKey)
     }
