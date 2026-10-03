@@ -118,8 +118,9 @@ final class MirrorUITests: XCTestCase {
                 throw UIHarnessError.missingElement(identifier)
             }
             let button = buttons.firstMatch
-            XCTAssertTrue(windowFrame.contains(button.frame), "탭의 상단 버튼 전체가 실제 창 안에 있어야 한다.")
-            XCTAssertGreaterThanOrEqual(button.frame.minY, statusFrame.maxY, "탭 이동 후에도 상단 버튼은 상태 표시줄과 겹치지 않는다.")
+            let frame = button.frame
+            XCTAssertTrue(windowFrame.contains(frame), "탭의 상단 버튼 전체가 실제 창 안에 있어야 한다.")
+            XCTAssertGreaterThanOrEqual(frame.minY, statusFrame.maxY, "탭 이동 후에도 상단 버튼은 상태 표시줄과 겹치지 않는다.")
             XCTAssertTrue(button.isHittable, "탭 이동 후에도 상단 버튼을 사용할 수 있다.")
             XCTAssertTrue(button.isEnabled, "탭 이동 후에도 상단 버튼이 활성화되어 있다.")
         }
@@ -134,12 +135,13 @@ final class MirrorUITests: XCTestCase {
             }
             let tabFrame = tabs.firstMatch.frame
             for element in [feedback.firstMatch, undo.firstMatch] {
-                guard valid(element.frame) else {
+                let frame = element.frame
+                guard valid(frame) else {
                     XCTFail("저장 안내와 되돌리기의 실제 경계가 유효해야 한다.")
                     throw UIHarnessError.unexpectedValue("nativeTabFeedbackFrame")
                 }
-                XCTAssertTrue(windowFrame.contains(element.frame), "저장 안내와 되돌리기의 전체 경계가 실제 창 안에 있어야 한다.")
-                XCTAssertLessThanOrEqual(element.frame.maxY, tabFrame.minY, "저장 안내와 되돌리기는 시스템 탭에 가려지지 않는다.")
+                XCTAssertTrue(windowFrame.contains(frame), "저장 안내와 되돌리기의 전체 경계가 실제 창 안에 있어야 한다.")
+                XCTAssertLessThanOrEqual(frame.maxY, tabFrame.minY, "저장 안내와 되돌리기는 시스템 탭에 가려지지 않는다.")
             }
             XCTAssertTrue(undo.firstMatch.isHittable, "저장 안내의 되돌리기를 탭 위에서 사용할 수 있다.")
             XCTAssertTrue(undo.firstMatch.isEnabled, "저장 안내의 되돌리기가 활성화되어 있다.")
@@ -382,9 +384,10 @@ final class MirrorUITests: XCTestCase {
         try waitForLabel("완료 취소 · 다시 열기", element: requireElement("task.complete", in: app), in: app)
         #if os(macOS)
         let completionButton = try requireElement("task.complete", in: app)
-        XCTAssertLessThanOrEqual(completionButton.frame.width, 220,
+        let completionFrame = completionButton.frame
+        XCTAssertLessThanOrEqual(completionFrame.width, 220,
                                  "Mac 완료 버튼이 상세 패널 전체로 늘어나지 않는다.")
-        XCTAssertLessThanOrEqual(completionButton.frame.height, 46,
+        XCTAssertLessThanOrEqual(completionFrame.height, 46,
                                  "Mac 완료 버튼의 클릭 경계는 44pt와 렌더링 오차 이내다.")
         #endif
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"), "완료는 계획을 지우지 않는다.")
@@ -1393,9 +1396,12 @@ final class MirrorUITests: XCTestCase {
             candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: "detail.history").firstMatch.exists
         }
         guard control.exists, owners.count == 1,
-              let surface = scrollContainer(containing: control, in: app), surface.elementType == .scrollView,
-              [surface.frame.minX, surface.frame.minY, surface.frame.width, surface.frame.height].allSatisfy({ $0.isFinite }),
-              surface.frame.width > 0, surface.frame.height > 0 else {
+              let surface = scrollContainer(containing: control, in: app), surface.elementType == .scrollView else {
+            try failHistoryNavigation("이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다", in: app, file: file, line: line)
+        }
+        let frame = surface.frame
+        guard [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite }),
+              frame.width > 0, frame.height > 0 else {
             try failHistoryNavigation("이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다", in: app, file: file, line: line)
         }
         return surface
@@ -1431,13 +1437,16 @@ final class MirrorUITests: XCTestCase {
                 }
                 let validFrame = [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite })
                     && frame.width > 0 && frame.height > 0
-                if validFrame, rowCenterIsVisible(target, in: surface), target.isHittable, target.isEnabled {
+                // 같은 poll에서 읽은 경계로만 판정한다. 다음 poll·스크롤 뒤에는 새 경계를 읽는다.
+                let rowCenterIsInside = validFrame && !frame.isEmpty && !viewport.isEmpty
+                    && viewport.contains(CGPoint(x: frame.midX, y: frame.midY))
+                if validFrame, rowCenterIsInside, target.isHittable, target.isEnabled {
                     guard Date() < deadline else {
                         try failHistoryNavigation("이력 스크롤 탐색의 기존 15초 예산을 초과했다", in: app, file: file, line: line)
                     }
                     return deadline
                 }
-                if validFrame, rowCenterIsVisible(target, in: surface), target.isHittable {
+                if validFrame, rowCenterIsInside, target.isHittable {
                     RunLoop.current.run(until: min(Date().addingTimeInterval(0.1), deadline))
                     continue
                 }

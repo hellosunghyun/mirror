@@ -737,6 +737,7 @@ struct MirrorReviewView: View {
 struct MirrorPlanPicker: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let request: PlanPickerRequest
     @State private var monthAnchor: LocalDate?
     @State private var useWeek = false
@@ -755,17 +756,7 @@ struct MirrorPlanPicker: View {
                 }
                 if let week = request.week {
                     Section(weekLabel(week)) {
-                        ForEach(0..<7) { offset in
-                            if let date = try? week.startDate.addingDays(offset) {
-                                Button { choose(.day(date)) } label: {
-                                    Text(AppDate.label(date)).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                }
-                                    .buttonStyle(.borderless)
-                                    .disabled(date < request.displayedContext.planningDay)
-                                    .accessibilityLabel("\(AppDate.label(date)), \(date < request.displayedContext.planningDay ? "지나간 날짜라 선택할 수 없음" : "이 날짜로 배치")")
-                                    .accessibilityIdentifier("plan.day.\(date.iso8601)")
-                            }
-                        }
+                        weekDateGrid(week)
                         Button { choose(.week(startDate: week.startDate, endExclusiveDate: week.endExclusiveDate)) } label: {
                             Text("요일은 나중에 정하기").frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
@@ -824,10 +815,51 @@ struct MirrorPlanPicker: View {
         }
             .tint(MirrorPalette.accent)
             #if os(macOS)
-            .frame(minWidth: 300, idealWidth: 460, minHeight: 320, idealHeight: 400)
+            .frame(minWidth: 300, idealWidth: 460, minHeight: 320, idealHeight: request.week == nil ? 400 : 560)
             #endif
             .modifier(MirrorDeadlineConfirmation(enabled: true))
     }
+    private func weekDateGrid(_ week: WeekRange) -> some View {
+        let singleColumn = [GridItem(.flexible(), alignment: .leading)]
+        return Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                LazyVGrid(columns: singleColumn, alignment: .leading, spacing: 8) {
+                    weekDateButtons(week)
+                }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    LazyVGrid(columns: [
+                        GridItem(.flexible(minimum: 160), spacing: 8, alignment: .leading),
+                        GridItem(.flexible(minimum: 160), alignment: .leading)
+                    ], alignment: .leading, spacing: 8) {
+                        weekDateButtons(week)
+                    }
+                    .frame(minWidth: 328)
+                    LazyVGrid(columns: singleColumn, alignment: .leading, spacing: 8) {
+                        weekDateButtons(week)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func weekDateButtons(_ week: WeekRange) -> some View {
+        ForEach(0..<7) { offset in
+            if let date = try? week.startDate.addingDays(offset) {
+                Button { choose(.day(date)) } label: {
+                    Text(AppDate.label(date))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.borderless)
+                    .disabled(date < request.displayedContext.planningDay)
+                    .accessibilityLabel("\(AppDate.label(date)), \(date < request.displayedContext.planningDay ? "지나간 날짜라 선택할 수 없음" : "이 날짜로 배치")")
+                    .accessibilityIdentifier("plan.day.\(date.iso8601)")
+            }
+        }
+    }
+
     private func choose(_ target: PlanTarget) { Task { await model.choosePlan(request, target: target) } }
 }
 
