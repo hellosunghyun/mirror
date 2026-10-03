@@ -243,6 +243,44 @@ struct StoreIntegrationTests {
         #expect(try await writer.snapshot().tasks.first?.title == "다른 프로세스의 수정")
     }
 
+    @Test("작업 전용 읽기는 다른 SQLite writer의 변경과 원래 목록 순서를 유지한다")
+    func taskProjectionReadsRefreshAndPreserveOrdering() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let reader = try await MirrorStore(configuration: configuration)
+        let writer = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        let earlierID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+        let laterID = UUID(uuidString: "00000000-0000-4000-8000-000000000002")!
+        #expect(try await reader.taskProjections().isEmpty)
+        #expect(try await reader.taskProjection(earlierID) == nil)
+        // 같은 생성 시각의 반대 삽입 순서도 기존 UUID 정렬과 같아야 한다.
+        #expect(await writer.execute(try capture(id: laterID, title: "뒤 ID", context: context), at: context.capturedAt).state == .locallyCommitted)
+        #expect(await writer.execute(try capture(id: earlierID, title: "앞 ID", context: context), at: context.capturedAt).state == .locallyCommitted)
+        let initialTasks = try await reader.taskProjections()
+        #expect(initialTasks.map(\.taskID) == [earlierID, laterID])
+        #expect(initialTasks.first?.createdAt == initialTasks.last?.createdAt)
+        #expect(initialTasks == (try await reader.snapshot()).tasks)
+        let original = try #require(try await reader.taskProjection(earlierID))
+        #expect(original == initialTasks.first)
+        let edit = CommandEnvelope(requestID: "projection-read-edit", idempotencyKey: "projection-read-edit", source: .app,
+            context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .editContent(taskID: earlierID, content: try TaskContent(title: "다른 writer의 최신 제목"),
+                                  expectedContent: try #require(original.versions[.content]?.headsDigest)))
+        #expect(await writer.execute(edit, at: context.capturedAt).state == .locallyCommitted)
+        let edited = try #require(try await reader.taskProjection(earlierID))
+        #expect(edited.title == "다른 writer의 최신 제목")
+        #expect(edited == (try await writer.snapshot()).tasks.first)
+        let trash = CommandEnvelope(requestID: "projection-read-trash", idempotencyKey: "projection-read-trash", source: .app,
+            context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .trash(taskID: earlierID, expectedStatus: try #require(edited.versions[.status]?.headsDigest)))
+        #expect(await writer.execute(trash, at: context.capturedAt).state == .locallyCommitted)
+        #expect(try await reader.taskProjection(earlierID)?.status == .deleted)
+        // Store는 삭제 작업도 반환하고 SystemServices.task의 기존 노출 필터가 제외한다.
+        #expect(try await reader.taskProjections() == (try await writer.snapshot()).tasks)
+        #expect(try await reader.taskProjection(UUID()) == nil)
+    }
+
     @Test("저장한 계획 정책과 실제 현재 시각은 카드 context보다 우선한다")
     func staleClockAndPersistedPolicy() async throws {
         let configuration = temporaryConfiguration()
@@ -532,8 +570,12 @@ struct StoreIntegrationTests {
         for name in ["WidgetSnapshot.json", "NotificationLedger.json"] {
             #expect(!FileManager.default.fileExists(atPath: configuration.directory.appendingPathComponent(name).path))
         }
+        await #expect(throws: StoreError.obsoleteEpoch) { try await first.taskProjections() }
+        await #expect(throws: StoreError.obsoleteEpoch) { try await first.taskProjection(UUID()) }
         await #expect(throws: StoreError.obsoleteEpoch) { try await first.currentContext(at: context.capturedAt) }
         if let oldWriter {
+            await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.taskProjections() }
+            await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.taskProjection(UUID()) }
             await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.currentContext(at: context.capturedAt) }
         }
         if let oldWriter { await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.snapshot() } }

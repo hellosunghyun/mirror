@@ -307,7 +307,7 @@ final class AppModel {
             }
             let snapshot = try await store.snapshot()
             guard storeObservationID == identity else { return false }
-            tasks = snapshot.tasks.sorted { $0.createdAt < $1.createdAt }
+            tasks = snapshot.tasks
             records = snapshot.records
             lamportByOperationID = Dictionary(snapshot.records.map { ($0.operationID, $0.lamport) },
                                              uniquingKeysWith: { first, _ in first })

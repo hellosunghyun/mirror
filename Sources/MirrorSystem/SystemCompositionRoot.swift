@@ -244,7 +244,7 @@ public actor SystemServices {
     public func tasks() async throws -> [TaskProjection] {
         do {
             try await validateBoundary()
-            return try await store.snapshot().tasks
+            return try await store.taskProjections()
         }
         catch {
             if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
@@ -253,9 +253,15 @@ public actor SystemServices {
     }
 
     public func task(_ id: UUID) async throws -> TaskProjection {
-        guard let task = try await tasks().first(where: { $0.taskID == id }), task.status != .deleted,
-              task.isProjectionComplete else { throw SystemServiceError.missingTask }
-        return task
+        do {
+            try await validateBoundary()
+            guard let task = try await store.taskProjection(id), task.status != .deleted,
+                  task.isProjectionComplete else { throw SystemServiceError.missingTask }
+            return task
+        } catch {
+            if StoreError.classify(error) == .protectedDataUnavailable { throw SystemServiceError.privacyLocked }
+            throw error
+        }
     }
 
     public func todayTasks(on date: LocalDate? = nil, at now: Date = Date()) async throws -> [TaskProjection] {

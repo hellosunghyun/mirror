@@ -145,6 +145,7 @@ public actor MirrorStore {
     public func snapshot() async throws -> StoreSnapshot {
         try assertIdentity()
         try await refresh()
+        try assertIdentity()
         return StoreSnapshot(
             tasks: tasks.values.sorted { $0.createdAt == $1.createdAt ? $0.taskID.uuidString < $1.taskID.uuidString : $0.createdAt < $1.createdAt },
             records: records.sorted(by: Self.precedes), policy: policy,
@@ -155,9 +156,26 @@ public actor MirrorStore {
         )
     }
 
+    /// 현재 원본 변경을 소비한 작업만 읽는다. 전체 명령 이력의 정렬·복사는 수행하지 않는다.
+    public func taskProjections() async throws -> [TaskProjection] {
+        try assertIdentity()
+        try await refresh()
+        try assertIdentity()
+        return tasks.values.sorted { $0.createdAt == $1.createdAt ? $0.taskID.uuidString < $1.taskID.uuidString : $0.createdAt < $1.createdAt }
+    }
+
+    /// 삭제·불완전 상태도 원본 투영 그대로 반환한다. 외부 노출 가능 여부는 서비스에서 확인한다.
+    public func taskProjection(_ id: UUID) async throws -> TaskProjection? {
+        try assertIdentity()
+        try await refresh()
+        try assertIdentity()
+        return tasks[id]
+    }
+
     public func currentContext(at instant: Date) async throws -> PlanningContext {
         try assertIdentity()
         try await refresh()
+        try assertIdentity()
         return try PlanningContext.capture(at: instant, timeZoneID: policy.timeZoneID, policyRevision: policy.revision)
     }
 
