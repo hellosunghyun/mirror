@@ -61,6 +61,25 @@ KEYBOARD_INTRODUCTION_FIELDS = (
     'continueInIntroductionCount', 'introductionContextCount', 'introductionWindowCount',
     'introductionTextVisible', 'introductionContextValid', 'continueFrameInsideIntroduction',
 )
+UI_CAPTURE_PHASE_NOTICE = '::notice::UI capture phase diagnostic: '
+UI_CAPTURE_PHASE_REJECTED_NOTICE = '::notice::UI capture phase diagnostic rejected: '
+CAPTURE_PHASES = (
+    'started', 'launched', 'initialNavigationVerified', 'initialScreenshotRecorded', 'calendarSelected',
+    'calendarNavigationVerified', 'calendarScreenshotRecorded', 'settingsRecorded', 'captureSaved',
+    'libraryOpened', 'libraryNavigationVerified', 'libraryScreenshotRecorded', 'selectionRegressionStarted',
+    'selectionRegressionComplete', 'reviewOpened', 'todayAssigned', 'todayRowVerified',
+    'todayNavigationVerified', 'complete',
+)
+UI_NAVIGATION_GEOMETRY_NOTICE = '::notice::UI navigation geometry diagnostic: '
+UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE = '::notice::UI navigation geometry diagnostic rejected: '
+NAVIGATION_GEOMETRY_FIELDS = ('stage', 'identifier', 'statusFrame', 'windowFrame', 'buttonFrame')
+NAVIGATION_GEOMETRY_PREFIXES = {
+    METHODS[0]: tuple((stage, identifier)
+                      for stage in ('initial-today', 'calendar', 'library', 'today-populated')
+                      for identifier in ('capture.open', 'settings.button')),
+    METHODS[2]: (('validation-recovery', 'capture.open'),
+                 ('validation-recovery', 'settings.button')),
+}
 UI_VALIDATION_RECOVERY_NOTICE = '::notice::UI validation recovery diagnostic: '
 UI_VALIDATION_RECOVERY_REJECTED_NOTICE = '::notice::UI validation recovery diagnostic rejected: '
 VALIDATION_RECOVERY_METHOD = METHODS[2]
@@ -159,6 +178,21 @@ def validation_recovery_line(payload):
     return 'UI validation recovery diagnostic: ' + json.dumps(payload)
 
 
+def capture_phase_line(phase='started'):
+    return 'UI capture phase diagnostic: ' + json.dumps({'phase': phase})
+
+
+def navigation_geometry_payload(stage='initial-today', identifier='capture.open', **observations):
+    # 실패한 경계에서도 수치 자체는 관측이다. 아래 버튼은 status 영역 아래가 아니다.
+    return {'stage': stage, 'identifier': identifier, 'statusFrame': [0, 0, 390, 59],
+            'windowFrame': [0.0, 0.0, 390.0, 844.0], 'buttonFrame': [294, 12.5, 40, 40.0],
+            **observations}
+
+
+def navigation_geometry_line(payload):
+    return 'UI navigation geometry diagnostic: ' + json.dumps(payload)
+
+
 class CIResultsDiagnosticsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -176,6 +210,427 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_capture_phase_preserves_every_actual_prefix_and_complete_without_success_inference(self):
+        for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'):
+            for length in range(1, len(CAPTURE_PHASES) + 1):
+                with self.subTest(owner=owner, prefix_length=length):
+                    lines = [started_line(METHODS[0], owner)] + [
+                        'fatal: /private/' + PRIVATE + ' ' + capture_phase_line(phase)
+                        for phase in CAPTURE_PHASES[:length]]
+                    lines += [case_line(METHODS[0], event='failed').replace(
+                        'MirrorIOSUITests.MirrorUITests', owner)]
+                    output = self.capture(helper.report_ui_capture_phase_diagnostics, lines)
+                    self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': METHODS[0], 'phases': list(CAPTURE_PHASES[:length]),
+                    }])
+                    self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE), [])
+                    self.assertEqual(len(output.splitlines()), 1)
+                    for inferred in ('event', 'success', 'executedTests', '"result"'):
+                        self.assertNotIn(inferred, output)
+        self.assertEqual(self.capture(helper.report_ui_capture_phase_diagnostics, []), '')
+
+    def test_capture_phase_requires_fixed_order_unique_active_case_and_same_execution(self):
+        valid = capture_phase_line()
+        start = started_line(METHODS[0])
+        prefixes = [[], [started_line(METHODS[2])], [started_line(METHODS[0], 'OtherTests')],
+                    [start, started_line(METHODS[1])], [start, start],
+                    [start, start, case_line(METHODS[0]), start],
+                    [start, started_line(METHODS[0], 'MirrorMacUITests.MirrorUITests')],
+                    [start, "Test Case '-[broken]' started."],
+                    [start + ' ' + started_line(METHODS[2])]]
+        prefixes += [[start, case_line(METHODS[0], event=event)]
+                     for event in ('passed', 'failed', 'skipped')]
+        for prefix in prefixes:
+            output = self.capture(helper.report_ui_capture_phase_diagnostics, prefix + [valid])
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE), [])
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+        entries = [capture_phase_line(phase) for phase in CAPTURE_PHASES]
+        sequences = [([start, entries[1]], 1), ([start, entries[0], entries[2]], 1),
+                     ([start, valid, valid], 1), ([start] + entries + [entries[-1]], 1),
+                     ([start, entries[0], case_line(METHODS[0]), start, entries[1]], 1),
+                     ([valid, start, valid, case_line(METHODS[0]), entries[1]], 2)]
+        for lines, count in sequences:
+            with self.subTest(lines=lines):
+                output = self.capture(helper.report_ui_capture_phase_diagnostics, lines)
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE), [{'invalidCount': count}])
+                self.assertEqual(len(output.splitlines()), 1)
+        for prefix in ([start, started_line(METHODS[1]), case_line(METHODS[1])],
+                       [start, start, case_line(METHODS[0]), case_line(METHODS[0]), start]):
+            output = self.capture(helper.report_ui_capture_phase_diagnostics, prefix + [valid])
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE),
+                             [{'scope': 'stdoutOnly', 'method': METHODS[0], 'phases': ['started']}])
+
+    def test_capture_phase_rejects_nonexact_private_malformed_duplicate_and_oversize_payloads(self):
+        marker = 'UI capture phase diagnostic: '
+        encoded = json.dumps({'phase': 'started'})
+        invalid_payloads = [{'phase': value} for value in
+                            (PRIVATE, True, 1, None, [], {}, 'captureSaved', 'testCapture')]
+        invalid_payloads += [{'method': METHODS[0], 'phase': 'started'}, {'phase': 'started', 'private': PRIVATE},
+                             {}, [], None, True]
+        bad_lines = [marker + json.dumps(payload) for payload in invalid_payloads]
+        bad_lines += [marker + encoded + ' error: /private/' + PRIVATE,
+                      marker + encoded + ' ' + marker + PRIVATE,
+                      marker + '{"phase":"' + PRIVATE + '","phase":"started"}',
+                      marker + '{' + PRIVATE, marker + '[' * 1500 + '0' + ']' * 1500]
+        start = started_line(METHODS[0])
+        for bad in bad_lines:
+            for lines in ([start, bad], [start, capture_phase_line(), bad], [start, bad, capture_phase_line()]):
+                output = self.capture(helper.report_ui_capture_phase_diagnostics, lines)
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertEqual(len(output.splitlines()), 1)
+        at_limit = encoded[:-1] + ' ' * (4096 - len(encoded.encode('utf-8'))) + '}'
+        self.assertEqual(len(at_limit.encode('utf-8')), 4096)
+        output = self.capture(helper.report_ui_capture_phase_diagnostics, [start, marker + at_limit])
+        self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE),
+                         [{'scope': 'stdoutOnly', 'method': METHODS[0], 'phases': ['started']}])
+        over_limit = json.dumps({'phase': 'started', 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        for payload in (at_limit[:-1] + ' }', over_limit):
+            with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+                output = self.capture(helper.report_ui_capture_phase_diagnostics, [start, marker + payload])
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE), [])
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_capture_phase_rejects_mixed_channels_and_geometry_without_reinterpreting_private_events(self):
+        valid = capture_phase_line()
+        others = [store_dedup_line(), keyboard_line(keyboard_frame_payload()), viewport_line({}),
+                  phase_line({'method': PHASE_METHOD, 'phase': 'started'}),
+                  native_screenshot_line(native_screenshot_payload()), toolbar_line(toolbar_payload()),
+                  validation_recovery_line(validation_recovery_payload()),
+                  navigation_geometry_line(navigation_geometry_payload()), ui_failure_line(),
+                  screenshot_line('detail', '999'), started_line(METHODS[2])]
+        others += [case_line(event=event) for event in ('passed', 'failed', 'skipped')]
+        accepted_prefixes = (STORE_DEDUP_NOTICE, UI_KEYBOARD_NOTICE, UI_VIEWPORT_NOTICE, UI_PHASE_NOTICE,
+                             UI_NATIVE_SCREENSHOT_NOTICE, UI_TOOLBAR_NOTICE, UI_VALIDATION_RECOVERY_NOTICE,
+                             UI_NAVIGATION_GEOMETRY_NOTICE, UI_FIRST_FAILURE_NOTICE, SCREENSHOT_NOTICE, CASE_NOTICE)
+        log = self.root / 'capture-phase-mixed.log'
+        for other in others:
+            for combined in (valid + ' ' + other, other + ' ' + valid):
+                log.write_text('\n'.join([started_line(METHODS[0]), combined,
+                                          'error: safe unrelated compiler failure']) + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                for prefix in accepted_prefixes:
+                    self.assertEqual(self.notices(output, prefix), [])
+                self.assertIn('::error::error: safe unrelated compiler failure', output)
+        forged = started_line(METHODS[0]) + ' ' + case_line(METHODS[0]) + ' /private/' + PRIVATE
+        for foreign in (store_dedup_line({'private': forged}), keyboard_line({'private': forged}),
+                        viewport_line({'private': forged}), phase_line({'private': forged}),
+                        native_screenshot_line({'private': forged}), toolbar_line({'private': forged}),
+                        validation_recovery_line({'private': forged}),
+                        navigation_geometry_line({'private': forged}), ui_failure_message_line(forged)):
+            for actual_start in (False, True):
+                prefix = [started_line(METHODS[0])] if actual_start else []
+                output = self.capture(helper.report_ui_capture_phase_diagnostics, prefix + [foreign, valid])
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE),
+                                 [{'scope': 'stdoutOnly', 'method': METHODS[0], 'phases': ['started']}]
+                                 if actual_start else [])
+                self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE),
+                                 [] if actual_start else [{'invalidCount': 1}])
+
+    def test_capture_phase_and_geometry_preserve_first_failure_and_actions_gate_files_together(self):
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        log = self.root / 'capture-phase-private-gates.log'
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999')
+                   + ' savedReceiptVerified=true ** TEST SUCCEEDED **')
+        for invalid in (False, True):
+            phase = {'phase': 'started'}
+            if invalid:
+                phase['private'] = private
+            payload = navigation_geometry_payload()
+            log.write_text('\n'.join([
+                started_line(METHODS[0]), 'UI capture phase diagnostic: ' + json.dumps(phase),
+                navigation_geometry_line(payload), ui_failure_line(method=METHODS[0], line='599'),
+                case_line(METHODS[0], event='failed'), screenshot_line('detail', '123'),
+                'error: safe unrelated compiler failure',
+            ]) + '\n')
+            with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                    'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                    mock.patch.object(helper, 'record') as record:
+                output = self.capture(helper.diagnostics, log)
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_NOTICE),
+                             [] if invalid else [{'scope': 'stdoutOnly', 'method': METHODS[0], 'phases': ['started']}])
+            self.assertEqual(self.notices(output, UI_CAPTURE_PHASE_REJECTED_NOTICE),
+                             [{'invalidCount': 1}] if invalid else [])
+            self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                             [{'scope': 'stdoutOnly', 'method': METHODS[0], 'samples': [payload]}])
+            self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                'scope': 'stdoutOnly', 'method': METHODS[0], 'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift',
+                'line': 599, 'assertionKind': 'XCTAssertTrue',
+            }])
+            self.assertLess(output.index(UI_FIRST_FAILURE_NOTICE), output.index(UI_NAVIGATION_GEOMETRY_NOTICE))
+            for forbidden in ('/private/', 'savedReceiptVerified', 'UI row scroll owners:',
+                              'Swift Testing completion reports:', METHODS[1], 'executedTests', '"result": "pass"'):
+                self.assertNotIn(forbidden, output)
+            self.assertFalse(self.notices(output, '::notice::UI stdout diagnostics: ')[0]['xcodeCompletionReported'])
+            record.assert_not_called()
+            self.assertEqual(output_path.read_text(), 'previous=value\n')
+            self.assertEqual(summary_path.read_text(), 'previous summary\n')
+        log.write_text('UI capture phase diagnostic: ' + json.dumps({'private': private}) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(output.splitlines(), [UI_CAPTURE_PHASE_REJECTED_NOTICE + '{"invalidCount": 1}'])
+
+    def test_navigation_geometry_preserves_actual_failure_frames_and_every_observed_prefix(self):
+        for method, prefix in NAVIGATION_GEOMETRY_PREFIXES.items():
+            for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'):
+                for length in range(1, len(prefix) + 1):
+                    with self.subTest(method=method, owner=owner, prefix_length=length):
+                        payloads = [navigation_geometry_payload(stage, identifier)
+                                    for stage, identifier in prefix[:length]]
+                        # 객체 키 순서와 수치 int/float를 바꾸어도 값은 그대로 보존한다.
+                        lines = [started_line(method, owner)] + [
+                            'fatal: /private/' + PRIVATE + ' ' + navigation_geometry_line(
+                                dict(reversed(list(payload.items())))) for payload in payloads]
+                        lines += [case_line(method, event='failed', module=owner.rsplit('.', 1)[0])
+                                  if '.' in owner else case_line(method, event='failed').replace(
+                                      'MirrorIOSUITests.MirrorUITests', owner)]
+                        output = self.capture(helper.report_ui_navigation_geometry_diagnostics, lines)
+                        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                                         [{'scope': 'stdoutOnly', 'method': method, 'samples': payloads}])
+                        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [])
+                        self.assertEqual(len(output.splitlines()), 1)
+                        for inferred in ('belowStatus', 'frameInsideWindow', 'completed', 'success', 'event',
+                                         'executedTests', '"result"'):
+                            self.assertNotIn(inferred, output)
+        self.assertEqual(self.capture(helper.report_ui_navigation_geometry_diagnostics, []), '')
+        payload = navigation_geometry_payload(statusFrame=[-100000, 100000.0, 100000, 100000.0],
+                                              windowFrame=[0, -0.0, 0.5, 1],
+                                              buttonFrame=[1, -1, 1, 0.5])
+        output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                              [started_line(METHODS[0]), navigation_geometry_line(payload)])
+        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                         [{'scope': 'stdoutOnly', 'method': METHODS[0], 'samples': [payload]}])
+
+        for width, height in ((0, 40), (40, 0), (0, 0)):
+            with self.subTest(actual_zero_button=(width, height)):
+                payload = navigation_geometry_payload(buttonFrame=[-10, -20.5, width, height])
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                                      [started_line(METHODS[0]), navigation_geometry_line(payload)])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                                 [{'scope': 'stdoutOnly', 'method': METHODS[0], 'samples': [payload]}])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [])
+                self.assertNotIn('belowStatus', output)
+                self.assertNotIn('frameHasArea', output)
+
+    def test_navigation_geometry_requires_unique_actual_case_and_fixed_stage_owner(self):
+        valid = navigation_geometry_line(navigation_geometry_payload())
+        start = started_line(METHODS[0])
+        prefixes = [[], [started_line(METHODS[2])], [started_line(METHODS[0], 'OtherTests')],
+                    [start, started_line(METHODS[1])], [start, start],
+                    [start, start, case_line(METHODS[0]), start],
+                    [start, started_line(METHODS[0], 'MirrorMacUITests.MirrorUITests')],
+                    [start, "Test Case '-[broken]' started."],
+                    [start + ' ' + started_line(METHODS[2])]]
+        prefixes += [[start, case_line(METHODS[0], event=event)]
+                     for event in ('passed', 'failed', 'skipped')]
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics, prefix + [valid])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 1}])
+        recovery = navigation_geometry_line(navigation_geometry_payload('validation-recovery'))
+        for method, line in ((METHODS[0], recovery), (METHODS[2], valid), (METHODS[1], recovery)):
+            with self.subTest(wrong_stage_method=method):
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics, [started_line(method), line])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 1}])
+        for prefix in ([start, started_line(METHODS[1]), case_line(METHODS[1])],
+                       [start, start, case_line(METHODS[0]), case_line(METHODS[0]), start]):
+            output = self.capture(helper.report_ui_navigation_geometry_diagnostics, prefix + [valid])
+            self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                             [{'scope': 'stdoutOnly', 'method': METHODS[0],
+                               'samples': [navigation_geometry_payload()]}])
+
+    def test_navigation_geometry_rejects_duplicate_out_of_order_overcount_and_cross_execution_prefixes(self):
+        start = started_line(METHODS[0])
+        entries = [navigation_geometry_line(navigation_geometry_payload(stage, identifier))
+                   for stage, identifier in NAVIGATION_GEOMETRY_PREFIXES[METHODS[0]]]
+        invalid = navigation_geometry_line({**navigation_geometry_payload(), 'private': PRIVATE})
+        samples = [([start, entries[1]], 1), ([start, entries[0], entries[2]], 1),
+                   ([start, entries[0], entries[0]], 1), ([start] + entries + [entries[-1]], 1),
+                   ([start, entries[0], case_line(METHODS[0]), start, entries[1]], 1),
+                   ([start, entries[0], invalid], 1), ([start, invalid, entries[0]], 1),
+                   ([entries[0], start, entries[0], case_line(METHODS[0]), entries[1]], 2)]
+        recovery = [navigation_geometry_line(navigation_geometry_payload(stage, identifier))
+                    for stage, identifier in NAVIGATION_GEOMETRY_PREFIXES[METHODS[2]]]
+        samples += [([started_line(METHODS[2])] + recovery + [recovery[-1]], 1),
+                    ([start, entries[0], case_line(METHODS[0]), started_line(METHODS[2]),
+                      recovery[0], invalid], 1)]
+        for lines, invalid_count in samples:
+            with self.subTest(lines=lines):
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics, lines)
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE),
+                                 [{'invalidCount': invalid_count}])
+                self.assertEqual(len(output.splitlines()), 1)
+        output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                              [start] + entries + [case_line(METHODS[0], event='failed'),
+                                                    started_line(METHODS[2])] + recovery)
+        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [
+            {'scope': 'stdoutOnly', 'method': method,
+             'samples': [navigation_geometry_payload(stage, identifier) for stage, identifier in prefix]}
+            for method, prefix in NAVIGATION_GEOMETRY_PREFIXES.items()])
+        self.assertEqual(len(output.splitlines()), 2)
+
+    def test_navigation_geometry_rejects_nonexact_schema_and_invalid_frame_numbers_without_leak(self):
+        valid = navigation_geometry_payload()
+        invalid = [{key: value for key, value in valid.items() if key != missing} for missing in valid]
+        invalid += [{**valid, 'method': METHODS[0]}, {**valid, 'private': PRIVATE}, [], None, True]
+        for key, bad in (('stage', 'detail'), ('identifier', 'capture.submit')):
+            invalid += [{**valid, key: value} for value in (bad, PRIVATE, True, 1, None, [], {})]
+        for key in ('statusFrame', 'windowFrame', 'buttonFrame'):
+            invalid += [{**valid, key: value} for value in
+                        (None, True, PRIVATE, {}, [], [0, 0, 1], [0, 0, 1, 1, 1],
+                         {'minX': 0, 'minY': 0, 'width': 1, 'height': 1, 'private': PRIVATE})]
+            for index in range(4):
+                wrong_values = (True, False, None, PRIVATE, [], {}, float('nan'), float('inf'),
+                                float('-inf'), 100001, -100001, 10 ** 400)
+                if index >= 2:
+                    wrong_values += (-1,) if key == 'buttonFrame' else (0, -1)
+                for value in wrong_values:
+                    frame = list(valid[key])
+                    frame[index] = value
+                    invalid.append({**valid, key: frame})
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                                      [started_line(METHODS[0]), navigation_geometry_line(payload)])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertEqual(len(output.splitlines()), 1)
+
+    def test_navigation_geometry_rejects_duplicate_keys_trailing_raw_and_bounded_payload_before_parse(self):
+        marker = 'UI navigation geometry diagnostic: '
+        valid = navigation_geometry_payload()
+        encoded = json.dumps(valid)
+        bad_lines = [marker + encoded + ' error: /private/' + PRIVATE,
+                     marker + encoded + ' ' + marker + PRIVATE,
+                     marker + '{' + PRIVATE, marker + '[' * 1500 + '0' + ']' * 1500]
+        for key in valid:
+            duplicate = encoded.replace('"' + key + '":',
+                                        '"' + key + '": "' + PRIVATE + '", "' + key + '":', 1)
+            bad_lines.append(marker + duplicate)
+        for line in bad_lines:
+            output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                                  [started_line(METHODS[0]), line])
+            self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+            self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 1}])
+        at_limit = encoded[:-1] + ' ' * (4096 - len(encoded.encode('utf-8'))) + '}'
+        self.assertEqual(len(at_limit.encode('utf-8')), 4096)
+        output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                              [started_line(METHODS[0]), marker + at_limit])
+        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                         [{'scope': 'stdoutOnly', 'method': METHODS[0], 'samples': [valid]}])
+        over_limit = json.dumps({**valid, 'private': PRIVATE + '한' * 1400}, ensure_ascii=False)
+        self.assertLess(len(over_limit), 4096)
+        self.assertGreater(len(over_limit.encode('utf-8')), 4096)
+        for payload in (at_limit[:-1] + ' }', over_limit):
+            with mock.patch.object(helper.json, 'loads', side_effect=AssertionError('over-limit payload parsed')):
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics,
+                                      [started_line(METHODS[0]), marker + payload])
+            self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+            self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_navigation_geometry_rejects_mixed_channels_and_registers_marker_against_reinterpretation(self):
+        valid = navigation_geometry_line(navigation_geometry_payload())
+        other_lines = [store_dedup_line(), keyboard_line(keyboard_frame_payload()), viewport_line({}),
+                       phase_line({'method': PHASE_METHOD, 'phase': 'started'}),
+                       native_screenshot_line(native_screenshot_payload()), toolbar_line(toolbar_payload()),
+                       validation_recovery_line(validation_recovery_payload()), capture_phase_line(), ui_failure_line(),
+                       screenshot_line('detail', '999'), started_line(METHODS[2])]
+        other_lines += [case_line(event=event) for event in ('passed', 'failed', 'skipped')]
+        accepted_prefixes = (STORE_DEDUP_NOTICE, UI_KEYBOARD_NOTICE, UI_VIEWPORT_NOTICE, UI_PHASE_NOTICE,
+                             UI_NATIVE_SCREENSHOT_NOTICE, UI_TOOLBAR_NOTICE, UI_VALIDATION_RECOVERY_NOTICE,
+                             UI_CAPTURE_PHASE_NOTICE, UI_FIRST_FAILURE_NOTICE, SCREENSHOT_NOTICE, CASE_NOTICE)
+        log = self.root / 'navigation-geometry-mixed.log'
+        for other in other_lines:
+            for combined in (valid + ' ' + other, other + ' ' + valid):
+                with self.subTest(combined=combined):
+                    log.write_text('\n'.join([started_line(METHODS[0]), combined,
+                                              'error: safe unrelated compiler failure']) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+                    self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 1}])
+                    for prefix in accepted_prefixes:
+                        self.assertEqual(self.notices(output, prefix), [])
+                    self.assertIn('::error::error: safe unrelated compiler failure', output)
+        forged = (started_line(METHODS[0]) + ' ' + case_line(METHODS[0]) + ' /private/' + PRIVATE)
+        for foreign in (store_dedup_line({'private': forged}), keyboard_line({'private': forged}),
+                        viewport_line({'private': forged}), phase_line({'private': forged}),
+                        native_screenshot_line({'private': forged}), toolbar_line({'private': forged}),
+                        validation_recovery_line({'private': forged}),
+                        'UI capture phase diagnostic: ' + json.dumps({'private': forged}),
+                        ui_failure_message_line(forged)):
+            for actual_start in (False, True):
+                prefix = [started_line(METHODS[0])] if actual_start else []
+                output = self.capture(helper.report_ui_navigation_geometry_diagnostics, prefix + [foreign, valid])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                                 [{'scope': 'stdoutOnly', 'method': METHODS[0],
+                                   'samples': [navigation_geometry_payload()]}] if actual_start else [])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE),
+                                 [] if actual_start else [{'invalidCount': 1}])
+        own_forgery = navigation_geometry_line({**navigation_geometry_payload(), 'private': forged})
+        output = self.capture(helper.report_ui_navigation_geometry_diagnostics, [own_forgery, valid])
+        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE), [{'invalidCount': 2}])
+        self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE), [])
+
+    def test_navigation_geometry_preserves_first_failure_privacy_and_actions_gate_files(self):
+        private = ('UI row scroll owner: /private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999')
+                   + ' savedReceiptVerified=true ** TEST SUCCEEDED **')
+        log = self.root / 'navigation-geometry-private-gates.log'
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        for invalid in (False, True):
+            with self.subTest(invalid=invalid):
+                payload = navigation_geometry_payload()
+                if invalid:
+                    payload['private'] = private
+                log.write_text('\n'.join([
+                    started_line(METHODS[0]), navigation_geometry_line(payload),
+                    ui_failure_line(method=METHODS[0], line='599', kind='XCTAssertGreaterThanOrEqual'),
+                    case_line(METHODS[0], event='failed'), screenshot_line('detail', '123'),
+                    'error: safe unrelated compiler failure',
+                ]) + '\n')
+                with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                        'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper, 'record') as record:
+                    output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_NOTICE),
+                                 [] if invalid else [{'scope': 'stdoutOnly', 'method': METHODS[0], 'samples': [payload]}])
+                self.assertEqual(self.notices(output, UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE),
+                                 [{'invalidCount': 1}] if invalid else [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': METHODS[0], 'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift',
+                    'line': 599, 'assertionKind': 'XCTAssertGreaterThanOrEqual',
+                }])
+                self.assertLess(output.index(UI_FIRST_FAILURE_NOTICE),
+                                output.index(UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE if invalid
+                                             else UI_NAVIGATION_GEOMETRY_NOTICE))
+                self.assertEqual(self.notices(output, SCREENSHOT_NOTICE),
+                                 [{'scope': 'stdoutOnly', 'stage': 'detail', 'milliseconds': 123}])
+                for forbidden in ('/private/', 'savedReceiptVerified', 'UI row scroll owners:',
+                                  'Swift Testing completion reports:', METHODS[1], 'executedTests', '"result": "pass"'):
+                    self.assertNotIn(forbidden, output)
+                self.assertFalse(self.notices(output, '::notice::UI stdout diagnostics: ')[0]['xcodeCompletionReported'])
+                self.assertIn('::error::error: safe unrelated compiler failure', output)
+                record.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
+        log.write_text(navigation_geometry_line({'private': private}) + '\n')
+        output = self.capture(helper.diagnostics, log)
+        self.assertEqual(output.splitlines(), [UI_NAVIGATION_GEOMETRY_REJECTED_NOTICE + '{"invalidCount": 1}'])
 
     def test_validation_recovery_preserves_false_null_and_exact_safe_wrapper(self):
         log = self.root / 'validation-recovery-valid.log'

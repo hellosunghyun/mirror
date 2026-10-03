@@ -12,11 +12,15 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     func testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday() async throws {
+        recordCapturePhase(.started)
         let app = try launchApp()
+        recordCapturePhase(.launched)
         defer { app.terminate() }
         let title = "UI capture then today"
-        try verifyPhoneNavigation(in: app)
+        try verifyPhoneNavigation(in: app, stage: .initialToday)
+        recordCapturePhase(.initialNavigationVerified)
         try recordUI("initial-today", in: app, identifiers: ["today.list", "today.review", "capture.open"])
+        recordCapturePhase(.initialScreenshotRecorded)
         #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .pad {
             try await captureIPadLandscape(in: app)
@@ -24,23 +28,32 @@ final class MirrorUITests: XCTestCase {
         #endif
         try selectDestination("calendar", title: "일정", in: app)
         _ = try requireElement("calendar.date", in: app)
-        try verifyPhoneNavigation(in: app)
+        recordCapturePhase(.calendarSelected)
+        try verifyPhoneNavigation(in: app, stage: .calendar)
+        recordCapturePhase(.calendarNavigationVerified)
         try recordUI("calendar", in: app, identifiers: ["calendar.date", "capture.open", "settings.button"])
+        recordCapturePhase(.calendarScreenshotRecorded)
         try showToday(in: app)
         try captureSettings(in: app)
+        recordCapturePhase(.settingsRecorded)
         try capture(title, in: app, attachEvidence: true)
+        recordCapturePhase(.captureSaved)
 
         try showToday(in: app)
         XCTAssertFalse(taskRow(title, in: app).exists, "Q-001: 미검토 항목은 Today에 들어가지 않는다.")
         try showLibrary(in: app)
         let unassigned = try requireRow(title, in: app)
+        recordCapturePhase(.libraryOpened)
         XCTAssertTrue(value(of: unassigned).contains("아직 정하지 않음"))
         XCTAssertTrue(value(of: unassigned).contains("미완료"))
         XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "정하지 않은 일")
-        try verifyPhoneNavigation(in: app, requiresFeedback: true)
+        try verifyPhoneNavigation(in: app, stage: .library, requiresFeedback: true)
+        recordCapturePhase(.libraryNavigationVerified)
         try recordUI("library", in: app, identifiers: ["library.list", "library.search", "library.batchPlan"])
+        recordCapturePhase(.libraryScreenshotRecorded)
 
         // 검색으로 숨은 작업이 일괄 배치 대상으로 남거나 다음 선택에 되살아나면 안 된다.
+        recordCapturePhase(.selectionRegressionStarted)
         try activate("library.selectToggle", in: app)
         let selection = app.buttons.matching(NSPredicate(format: "label == %@", "\(title), 배치 대상 선택")).firstMatch
         XCTAssertTrue(selection.waitForExistence(timeout: 15))
@@ -63,28 +76,55 @@ final class MirrorUITests: XCTestCase {
         try waitForLabel("선택한 0개 날짜 배치", element: restartedSelection, in: app)
         XCTAssertFalse(restartedSelection.isEnabled, "새 선택은 이전의 숨은 대상을 다시 선택하지 않는다.")
         try activate("library.selectToggle", in: app)
+        recordCapturePhase(.selectionRegressionComplete)
 
         try showToday(in: app)
         try activate("today.review", in: app)
         let card = try requireElement("review.card", in: app)
         XCTAssertEqual(displayedText(of: card), title)
         try recordUI("review-card", in: app, identifiers: ["review.card", "review.today", "review.tomorrow", "review.thisWeek", "review.nextWeek", "review.other", "review.finish"])
+        recordCapturePhase(.reviewOpened)
         try activate("review.today", in: app)
         try requireNoElement("review.card", in: app)
         try activate("review.finish", in: app)
         try requireNoElement("review.finish", in: app)
+        recordCapturePhase(.todayAssigned)
         _ = try requireElement("today.list", in: app)
 
         let today = try requireRow(title, in: app)
         XCTAssertTrue(value(of: today).contains("9월 30일"))
         XCTAssertTrue(value(of: today).contains("미완료"), "Q-009: 오늘 배치는 완료가 아니다.")
-        try verifyPhoneNavigation(in: app, requiresFeedback: true)
+        recordCapturePhase(.todayRowVerified)
+        try verifyPhoneNavigation(in: app, stage: .todayPopulated, requiresFeedback: true)
+        recordCapturePhase(.todayNavigationVerified)
         try recordUI("today-populated", in: app, identifiers: ["today.list", "today.review", "capture.open", "task.undo"])
+        recordCapturePhase(.complete)
+    }
+
+    private enum CapturePhase: String {
+        case started, launched, initialNavigationVerified, initialScreenshotRecorded
+        case calendarSelected, calendarNavigationVerified, calendarScreenshotRecorded
+        case settingsRecorded, captureSaved, libraryOpened, libraryNavigationVerified, libraryScreenshotRecorded
+        case selectionRegressionStarted, selectionRegressionComplete, reviewOpened, todayAssigned
+        case todayRowVerified, todayNavigationVerified, complete
+    }
+
+    private func recordCapturePhase(_ phase: CapturePhase) {
+        // 도달한 고정 단계만 기록한다. 완료 단계도 사례 통과 판정으로 사용하지 않는다.
+        print("UI capture phase diagnostic: {\"phase\":\"\(phase.rawValue)\"}")
+    }
+
+    private enum PhoneNavigationStage: String {
+        case initialToday = "initial-today"
+        case calendar, library
+        case todayPopulated = "today-populated"
+        case validationRecovery = "validation-recovery"
     }
 
     /// 탭 이동 직후의 실제 시스템 경계와 비교한다. 검색 키보드 회귀는 별도로 유지한다.
     @MainActor
-    private func verifyPhoneNavigation(in app: XCUIApplication, requiresFeedback: Bool = false) throws {
+    private func verifyPhoneNavigation(in app: XCUIApplication, stage: PhoneNavigationStage,
+                                       requiresFeedback: Bool = false) throws {
         #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone else { return }
         let probes = app.descendants(matching: .any).matching(identifier: "ui.nativeStatusBar")
@@ -119,6 +159,8 @@ final class MirrorUITests: XCTestCase {
             }
             let button = buttons.firstMatch
             let frame = button.frame
+            recordPhoneNavigationGeometry(stage: stage, identifier: identifier,
+                                          statusFrame: statusFrame, windowFrame: windowFrame, buttonFrame: frame)
             XCTAssertTrue(windowFrame.contains(frame), "탭의 상단 버튼 전체가 실제 창 안에 있어야 한다.")
             XCTAssertGreaterThanOrEqual(frame.minY, statusFrame.maxY, "탭 이동 후에도 상단 버튼은 상태 표시줄과 겹치지 않는다.")
             XCTAssertTrue(button.isHittable, "탭 이동 후에도 상단 버튼을 사용할 수 있다.")
@@ -147,6 +189,22 @@ final class MirrorUITests: XCTestCase {
             XCTAssertTrue(undo.firstMatch.isEnabled, "저장 안내의 되돌리기가 활성화되어 있다.")
         }
         #endif
+    }
+
+    private func recordPhoneNavigationGeometry(stage: PhoneNavigationStage, identifier: String,
+                                               statusFrame: CGRect, windowFrame: CGRect, buttonFrame: CGRect) {
+        // 같은 검사에서 이미 읽은 좌표만 기록한다. 추가 AX 조회·대기·원문 출력은 없다.
+        guard identifier == "capture.open" || identifier == "settings.button" else { return }
+        let diagnostic: [String: Any] = [
+            "stage": stage.rawValue, "identifier": identifier,
+            "statusFrame": [statusFrame.minX, statusFrame.minY, statusFrame.width, statusFrame.height],
+            "windowFrame": [windowFrame.minX, windowFrame.minY, windowFrame.width, windowFrame.height],
+            "buttonFrame": [buttonFrame.minX, buttonFrame.minY, buttonFrame.width, buttonFrame.height],
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            print("UI navigation geometry diagnostic: \(json)")
+        }
     }
 
     @MainActor
@@ -309,7 +367,7 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.row.")).count, 0)
 
         // 오류 뒤에도 상단 행동이 실제 창과 시스템 상태 표시줄 아래에 남아야 한다.
-        try verifyPhoneNavigation(in: app)
+        try verifyPhoneNavigation(in: app, stage: .validationRecovery)
         // 오류 뒤 정상 입력도 실제 원본 저장 경로로 복구되어야 한다.
         try capture("UI corrected after validation", in: app, observeValidationRecovery: true)
         try showLibrary(in: app)

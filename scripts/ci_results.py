@@ -63,15 +63,34 @@ UI_PHASE_DIAGNOSTIC_MARKER = 'UI test phase diagnostic:'
 UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER = 'UI native screenshot diagnostic:'
 UI_TOOLBAR_DIAGNOSTIC_MARKER = 'UI search toolbar diagnostic:'
 UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER = 'UI validation recovery diagnostic:'
+UI_NAVIGATION_GEOMETRY_DIAGNOSTIC_MARKER = 'UI navigation geometry diagnostic:'
+UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER = 'UI capture phase diagnostic:'
 STRUCTURED_DIAGNOSTIC_MARKERS = frozenset({
     STORE_DEDUP_DIAGNOSTIC_MARKER, UI_VIEWPORT_DIAGNOSTIC_MARKER,
     UI_KEYBOARD_DIAGNOSTIC_MARKER, UI_PHASE_DIAGNOSTIC_MARKER,
     UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER, UI_TOOLBAR_DIAGNOSTIC_MARKER,
-    UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER,
+    UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER, UI_NAVIGATION_GEOMETRY_DIAGNOSTIC_MARKER,
+    UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER,
 })
 UI_PHASE_METHOD = 'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary'
 UI_TOOLBAR_IDENTIFIERS = ('capture.open', 'settings.button')
 UI_VALIDATION_RECOVERY_METHOD = 'testOverlongTitleShowsErrorAndPreservesEveryCharacter'
+UI_CAPTURE_PHASE_METHOD = 'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday'
+UI_CAPTURE_PHASE_NAMES = (
+    'started', 'launched', 'initialNavigationVerified', 'initialScreenshotRecorded', 'calendarSelected',
+    'calendarNavigationVerified', 'calendarScreenshotRecorded', 'settingsRecorded', 'captureSaved',
+    'libraryOpened', 'libraryNavigationVerified', 'libraryScreenshotRecorded', 'selectionRegressionStarted',
+    'selectionRegressionComplete', 'reviewOpened', 'todayAssigned', 'todayRowVerified',
+    'todayNavigationVerified', 'complete',
+)
+UI_NAVIGATION_GEOMETRY_FIELDS = ('stage', 'identifier', 'statusFrame', 'windowFrame', 'buttonFrame')
+UI_NAVIGATION_GEOMETRY_PREFIXES = {
+    UI_CAPTURE_PHASE_METHOD: tuple(
+        (stage, identifier) for stage in ('initial-today', 'calendar', 'library', 'today-populated')
+        for identifier in UI_TOOLBAR_IDENTIFIERS),
+    UI_VALIDATION_RECOVERY_METHOD: tuple(
+        ('validation-recovery', identifier) for identifier in UI_TOOLBAR_IDENTIFIERS),
+}
 UI_VALIDATION_RECOVERY_BOOL_FIELDS = (
     'identifierMatchesCaptureOpen', 'targetIsButton', 'exists', 'enabled', 'hittable',
     'frameHasArea', 'ownedBySingleWindow', 'keyboardPresent', 'alertPresent', 'sheetPresent',
@@ -233,6 +252,144 @@ def report_ui_validation_recovery_diagnostics(lines):
               + json.dumps({'invalidCount': invalid_count}))
     elif report is not None:
         print('::notice::UI validation recovery diagnostic: ' + json.dumps(report))
+
+
+def track_fixed_ui_case_instances(line, active_cases, depths, epochs, next_epoch, ambiguous):
+    # 다른 구조화 원문이나 assertion 안의 가짜 event는 소유자를 바꾸지 않는다.
+    if (any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)
+            or is_ui_failure_candidate(line)):
+        return next_epoch, ambiguous
+    events = list(UI_ANY_CASE_EVENT_PATTERN.finditer(line))
+    if len(events) > 1:
+        active_cases.clear()
+        depths.clear()
+        epochs.clear()
+        return next_epoch, True
+    if events:
+        event = events[0]
+        case = (event[1], event[2])
+        if event[3] == 'started':
+            if depths.get(case, 0):
+                ambiguous = True
+            else:
+                if not depths:
+                    ambiguous = False
+                next_epoch += 1
+                epochs[case] = next_epoch
+            depths[case] = depths.get(case, 0) + 1
+        elif depths.get(case, 0) > 1:
+            depths[case] -= 1
+        else:
+            depths.pop(case, None)
+            epochs.pop(case, None)
+    elif re.search(r'\bTest\s+Case\b', line):
+        depths.clear()
+        epochs.clear()
+    track_active_ui_cases(line, active_cases)
+    return next_epoch, ambiguous if depths else False
+
+
+def report_ui_capture_phase_diagnostics(lines):
+    active_cases = set()
+    active_case_depths = {}
+    active_case_epochs = {}
+    next_epoch = 0
+    ambiguous_active = False
+    phases = []
+    sample_epoch = None
+    invalid_count = 0
+    for line in lines:
+        if UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER not in line:
+            next_epoch, ambiguous_active = track_fixed_ui_case_instances(
+                line, active_cases, active_case_depths, active_case_epochs, next_epoch, ambiguous_active)
+            continue
+        try:
+            if 'UI screenshot timing:' in line:
+                raise ValueError('입력 사례 단계 진단과 screenshot timing을 연결하지 않습니다.')
+            candidate = fixed_diagnostic_json(line, UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER)
+            if (not isinstance(candidate, dict) or set(candidate) != {'phase'}
+                    or not isinstance(candidate['phase'], str)
+                    or ambiguous_active or not unique_active_ui_method(active_cases, UI_CAPTURE_PHASE_METHOD)
+                    or len(phases) >= len(UI_CAPTURE_PHASE_NAMES)
+                    or candidate['phase'] != UI_CAPTURE_PHASE_NAMES[len(phases)]):
+                raise ValueError('입력 사례 단계는 실제 유일한 baseline 사례의 고정 순서 prefix여야 합니다.')
+            epoch = active_case_epochs.get(next(iter(active_cases)))
+            if epoch is None or (sample_epoch is not None and sample_epoch != epoch):
+                raise ValueError('서로 다른 입력 사례 실행의 단계 prefix를 합치지 않습니다.')
+            sample_epoch = epoch
+            phases.append(candidate['phase'])
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    # complete는 실제 도달한 단계 이름이다. 사례 성공이나 뒤쪽 단계는 추정하지 않는다.
+    if invalid_count:
+        print('::notice::UI capture phase diagnostic rejected: ' + json.dumps({'invalidCount': invalid_count}))
+    elif phases:
+        print('::notice::UI capture phase diagnostic: ' + json.dumps({
+            'scope': 'stdoutOnly', 'method': UI_CAPTURE_PHASE_METHOD, 'phases': phases,
+        }))
+
+
+def report_ui_navigation_geometry_diagnostics(lines):
+    active_cases = set()
+    active_case_depths = {}
+    active_case_epochs = {}
+    next_epoch = 0
+    ambiguous_active = False
+    samples = {method: [] for method in UI_NAVIGATION_GEOMETRY_PREFIXES}
+    sample_epochs = {}
+    invalid_count = 0
+
+    def fixed_frame(value, allow_zero=False):
+        return (isinstance(value, list) and len(value) == 4
+                and all(type(number) in (int, float) for number in value)
+                and all(abs(number) <= 100000 for number in value[:2])
+                and all(0 <= number <= 100000 and (allow_zero or number > 0)
+                        for number in value[2:])
+                and all(math.isfinite(number) for number in value))
+
+    for line in lines:
+        if UI_NAVIGATION_GEOMETRY_DIAGNOSTIC_MARKER not in line:
+            next_epoch, ambiguous_active = track_fixed_ui_case_instances(
+                line, active_cases, active_case_depths, active_case_epochs, next_epoch, ambiguous_active)
+            continue
+        try:
+            if 'UI screenshot timing:' in line:
+                raise ValueError('화면 경계 진단과 screenshot timing을 연결하지 않습니다.')
+            candidate = fixed_diagnostic_json(line, UI_NAVIGATION_GEOMETRY_DIAGNOSTIC_MARKER)
+            if (not isinstance(candidate, dict) or set(candidate) != set(UI_NAVIGATION_GEOMETRY_FIELDS)
+                    or not isinstance(candidate['stage'], str)
+                    or not isinstance(candidate['identifier'], str)
+                    or any(not fixed_frame(candidate[key], allow_zero=(key == 'buttonFrame')) for key in
+                           ('statusFrame', 'windowFrame', 'buttonFrame'))):
+                raise ValueError('화면 경계 진단은 고정 stage·identifier와 유한한 frame 배열이어야 합니다.')
+            methods = [method for method, prefix in UI_NAVIGATION_GEOMETRY_PREFIXES.items()
+                       if any(stage == candidate['stage'] for stage, _ in prefix)]
+            if (len(methods) != 1 or ambiguous_active
+                    or not unique_active_ui_method(active_cases, methods[0])):
+                raise ValueError('화면 경계 진단은 실제 유일한 baseline 사례 소유여야 합니다.')
+            method = methods[0]
+            prefix = UI_NAVIGATION_GEOMETRY_PREFIXES[method]
+            case = next(iter(active_cases))
+            epoch = active_case_epochs.get(case)
+            if (epoch is None or len(samples[method]) >= len(prefix)
+                    or (candidate['stage'], candidate['identifier']) != prefix[len(samples[method])]
+                    or (method in sample_epochs and sample_epochs[method] != epoch)):
+                raise ValueError('화면 경계 진단은 동일한 실제 실행의 고정 순서 prefix여야 합니다.')
+            sample_epochs[method] = epoch
+            samples[method].append({key: candidate[key] for key in UI_NAVIGATION_GEOMETRY_FIELDS})
+        except (ValueError, TypeError, RecursionError):
+            invalid_count += 1
+    # 관측한 prefix만 보존한다. 사례 성공·실패 원인이나 누락된 뒤쪽 단계를 추정하지 않는다.
+    # 무효 원문이 섞이면 어떤 부분 관측도 공개하지 않는다.
+    if invalid_count:
+        print('::notice::UI navigation geometry diagnostic rejected: '
+              + json.dumps({'invalidCount': invalid_count}))
+    else:
+        for method, observed in samples.items():
+            if observed:
+                print('::notice::UI navigation geometry diagnostic: ' + json.dumps({
+                    'scope': 'stdoutOnly', 'method': method, 'samples': observed,
+                }))
 
 
 def report_ui_toolbar_diagnostics(lines):
@@ -656,6 +813,8 @@ def diagnostics(path):
              if not any(marker in line for marker in STRUCTURED_DIAGNOSTIC_MARKERS)]
     report_ui_first_failure(lines)
     report_ui_validation_recovery_diagnostics(raw_lines)
+    report_ui_navigation_geometry_diagnostics(raw_lines)
+    report_ui_capture_phase_diagnostics(raw_lines)
     report_ui_toolbar_diagnostics(raw_lines)
     report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)
