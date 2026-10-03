@@ -5,7 +5,7 @@ import os
 import re
 import sys
 
-PREFIX = '::notice title=Public SDK audit declarations::'
+PREFIX = '::notice::Public SDK audit declarations: '
 SYMBOLS = ('performAccessibilityAudit', 'XCUIAccessibilityAuditIssue', 'XCUIAccessibilityAuditType')
 MAX_INPUT, MAX_NOTICE = 64 * 1024, 64 * 1024
 PUBLIC_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')

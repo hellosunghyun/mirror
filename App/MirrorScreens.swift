@@ -25,6 +25,7 @@ struct MirrorTodayView: View {
                             .frame(minHeight: 44)
                             .accessibilityLabel(reviewButtonAccessibilityLabel)
                             .accessibilityIdentifier("today.review")
+                            .disabled(model.isDetailEditing)
                         Menu {
                             if let review = model.review, !review.cards.isEmpty {
                                 Button("이어서 정리") { model.beginReview(mode: .manualResume) }
@@ -39,6 +40,7 @@ struct MirrorTodayView: View {
                             #if os(macOS)
                             .menuStyle(.borderlessButton)
                             #endif
+                            .disabled(model.isDetailEditing)
                     }
                 }.padding(.vertical, 8)
             }
@@ -761,7 +763,7 @@ struct MirrorReviewView: View {
         }
         .buttonStyle(.borderedProminent)
         .accessibilityLabel("오늘, \(AppDate.label(day))에 배치, 완료 아님").accessibilityIdentifier("review.today")
-        .keyboardShortcut("1", modifiers: []).disabled(model.isTextEditing)
+        .keyboardShortcut("1", modifiers: []).disabled(model.isTextEditing || model.isDetailEditing)
     }
 
     private func tomorrowButton(_ day: LocalDate, card: ReviewCard, session: AppReviewSession) -> some View {
@@ -771,7 +773,7 @@ struct MirrorReviewView: View {
         }
         .buttonStyle(.bordered)
         .accessibilityLabel("내일, \(AppDate.label(day))에 배치").accessibilityIdentifier("review.tomorrow")
-        .keyboardShortcut("2", modifiers: []).disabled(model.isTextEditing)
+        .keyboardShortcut("2", modifiers: []).disabled(model.isTextEditing || model.isDetailEditing)
     }
 
     private func thisWeekButton(_ week: WeekRange, card: ReviewCard, session: AppReviewSession) -> some View {
@@ -780,7 +782,7 @@ struct MirrorReviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .keyboardShortcut("3", modifiers: []).disabled(model.isTextEditing)
+        .keyboardShortcut("3", modifiers: []).disabled(model.isTextEditing || model.isDetailEditing)
         .accessibilityLabel("이번 주, \(weekLabel(week)), 날짜 선택").accessibilityIdentifier("review.thisWeek")
         .help("이번 주 날짜 선택 · 키보드 3")
     }
@@ -791,7 +793,7 @@ struct MirrorReviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .keyboardShortcut("4", modifiers: []).disabled(model.isTextEditing)
+        .keyboardShortcut("4", modifiers: []).disabled(model.isTextEditing || model.isDetailEditing)
         .accessibilityLabel("다음 주, \(weekLabel(week)), 날짜 선택").accessibilityIdentifier("review.nextWeek")
         .help("다음 주 날짜 선택 · 키보드 4")
     }
@@ -802,7 +804,7 @@ struct MirrorReviewView: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.bordered)
-        .keyboardShortcut("5", modifiers: []).disabled(model.isTextEditing)
+        .keyboardShortcut("5", modifiers: []).disabled(model.isTextEditing || model.isDetailEditing)
         .accessibilityLabel("다른 날, 달력에서 날짜 선택").accessibilityIdentifier("review.other")
         .help("달력에서 날짜 선택 · 키보드 5")
     }

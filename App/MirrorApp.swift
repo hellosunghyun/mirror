@@ -118,11 +118,19 @@ struct MirrorMenuBarContent: View {
                 startCaptureFlow()
                 Task { if await model.capture(title: title, note: "", sourceURL: "") { title = ""; focused = true; captureFlowStarted = false } }
             }.disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("menuBar.save")
-            if let problem = model.problem { Text(problem).foregroundStyle(.red) }
-            if let feedback = model.feedback { Text(feedback).font(.caption) }
+            if model.isSaving {
+                Text("저장 중…")
+            } else if model.projectionPending {
+                Text("저장 결과를 확인하고 있어요")
+            } else if let problem = model.problem {
+                Text(problem).foregroundStyle(.red)
+            } else if title.isEmpty, let feedback = model.feedback {
+                Text(feedback).font(.caption)
+            }
             Divider()
             Button("오늘 목록 열기") { openWindow(id: "main"); model.destination = .today }
             Button("이어서 정리") { openWindow(id: "main"); model.beginReview(mode: .manualResume) }
+                .disabled(model.isDetailEditing)
             Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
         }.padding().frame(width: 320)
             .task { await model.start() }
@@ -155,10 +163,13 @@ struct MirrorCommands: Commands {
                 .disabled(model.lastUndo == nil || model.isTextEditing || model.isDetailEditing || model.isSaving)
         }
         CommandMenu("정리") {
-            Button("오늘 정리") { model.beginReview() }
+            Button("오늘 정리") { model.beginReview(mode: .manualResume) }
+                .disabled(model.isDetailEditing)
             Button("이어서 정리") { model.beginReview(mode: .manualResume) }
+                .disabled(model.isDetailEditing)
             Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
-            Button("오늘은 여기까지") { Task { await model.finishReview() } }.disabled(model.review == nil)
+                .disabled(model.isDetailEditing)
+            Button("오늘은 여기까지") { Task { await model.finishReview() } }.disabled(model.review == nil || model.isDetailEditing)
         }
         CommandGroup(replacing: .appSettings) {
             Button("미러 설정…") { model.showSettings = true }.keyboardShortcut(",", modifiers: .command)

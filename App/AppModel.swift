@@ -663,6 +663,7 @@ final class AppModel {
     }
 
     func beginReview(mode: ReviewMode = .automatic, includeNewInputs: Bool = false, weekly: Bool? = nil) {
+        guard !isDetailEditing else { return }
         guard let context, let configuration else { return }
         selectedTaskID = nil
         if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty,

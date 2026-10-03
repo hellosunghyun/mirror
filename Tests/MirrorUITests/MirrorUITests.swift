@@ -487,10 +487,18 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
                        "빠른 입력을 닫고 목록을 이동해도 미저장 상세 편집을 잃지 않는다.")
         try showToday(in: app)
+        let reviewWhileEditing = try requireElement("today.review", in: app, preferButtons: true)
+        XCTAssertFalse(reviewWhileEditing.isEnabled, "미저장 상세 편집 중에는 정리로 이동하지 않는다.")
+        XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
+                       "Today로 돌아와도 미저장 상세 제목을 그대로 유지한다.")
         #endif
         try recordUI("detail-edit", in: app, identifiers: ["detail.title", "detail.save", "detail.close"])
         try activate("detail.save", in: app)
         try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app), in: app)
+        #if os(macOS)
+        XCTAssertTrue(try requireElement("today.review", in: app, preferButtons: true).isEnabled,
+                      "상세 내용을 저장한 뒤에는 다시 정리를 시작할 수 있다.")
+        #endif
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("9월 30일"))
 
         try activate("task.complete", in: app)

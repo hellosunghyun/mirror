@@ -76,7 +76,11 @@ final class MirrorBatchUITests: XCTestCase {
         try activate("capture.open", in: app)
         for title in titles {
             let fields = app.textFields.matching(identifier: "capture.title")
-            let field = try unique(fields.firstMatch.exists ? fields : app.textViews.matching(identifier: "capture.title"))
+            let textViews = app.textViews.matching(identifier: "capture.title")
+            let query = fields.firstMatch.exists ? fields
+                : textViews.firstMatch.exists ? textViews
+                : app.descendants(matching: .any).matching(identifier: "capture.title")
+            let field = try unique(query)
             try waitValue("", element: field)
             try assertReachable(field, in: app)
             performActivation(field)
