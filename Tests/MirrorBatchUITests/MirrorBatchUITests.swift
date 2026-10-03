@@ -76,9 +76,14 @@ final class MirrorBatchUITests: XCTestCase {
         app.launchArguments = ["-AppleLanguages", "(ko)", "-AppleLocale", "ko_KR"]
         // 앱의 기존 UI 검증 경로가 launch마다 새 실제 임시 canonical store를 연다.
         app.launch()
-        _ = try unique(app.descendants(matching: .any).matching(identifier: "today.list"), timeout: 30)
-        _ = try unique(app.buttons.matching(identifier: "capture.open"))
-        return app
+        do {
+            _ = try unique(app.descendants(matching: .any).matching(identifier: "today.list"), timeout: 30)
+            _ = try unique(app.buttons.matching(identifier: "capture.open"))
+            return app
+        } catch {
+            app.terminate()
+            throw error
+        }
     }
 
     private func captureConsecutively(_ titles: [String], in app: XCUIApplication) throws {
