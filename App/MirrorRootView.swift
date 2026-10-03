@@ -147,19 +147,20 @@ struct MirrorRootView: View {
         switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
     }
     private func phoneNavigation(_ destination: MirrorDestination) -> some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                phoneHeader(destination)
+        VStack(spacing: 0) {
+            phoneHeader(destination)
+            NavigationStack {
                 content(destination)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                statusBar.fixedSize(horizontal: false, vertical: true)
+                    #if os(iOS)
+                    .toolbar(.hidden, for: .navigationBar)
+                    #endif
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(MirrorPalette.canvas)
-            #if os(iOS)
-            .toolbar(.hidden, for: .navigationBar)
-            #endif
+            statusBar.fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MirrorPalette.canvas)
     }
     private func phoneHeader(_ destination: MirrorDestination) -> some View {
         HStack(spacing: 12) {
