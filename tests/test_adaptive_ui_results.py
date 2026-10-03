@@ -1303,7 +1303,13 @@ class PublicSDKContractContextTests(unittest.TestCase):
                      '    public var element: XCUIElement? { get }', '}', swift_handler),
                     ('SyntheticIssue.h', '@interface XCUIAccessibilityAuditIssue : NSObject',
                      '@property (nonatomic, readonly) XCUIAccessibilityAuditType auditType;',
-                     '@property (nullable, nonatomic, readonly) XCUIElement *element;', '@end', objc_handler)]
+                     '@property (nullable, nonatomic, readonly) XCUIElement *element;', '@end', objc_handler),
+                    ('SyntheticCollectionHandler.swiftinterface', 'public class XCUIAccessibilityAuditIssue : NSObject {',
+                     '    public var auditType: XCUIAccessibilityAuditType { get }',
+                     '    public var element: XCUIElement? { get }', '}',
+                     ['public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType, '
+                      '_ metadata: [SyntheticKey: XCUIAccessibilityAuditIssue], '
+                      '_ issueHandler: ((XCUIAccessibilityAuditIssue) throws -> Bool)? = nil) throws'])]
         for name, owner, audit_type, element, end, handler in variants:
             with self.subTest(syntheticPublicFile=name):
                 first = 41
@@ -1369,12 +1375,24 @@ class PublicSDKContractContextTests(unittest.TestCase):
                          '- (void)unrelatedWithIssueHandler:(XCUIAccessibilityAuditIssue *)issueHandler;')
         nested_tuple = ('public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType, '
                         '_ callback: (issueHandler: XCUIAccessibilityAuditIssue) -> Void) throws')
-        # 인접 선언/닫힌 signature/속성의 이름을 감사 함수의 parameter로 합치지 않는다.
+        dictionary_type = ('public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType, '
+                           '_ callback: [issueHandler: XCUIAccessibilityAuditIssue]) throws')
+        array_type = ('public func performAccessibilityAudit(for types: XCUIAccessibilityAuditType, '
+                      '_ callback: [[issueHandler: XCUIAccessibilityAuditIssue]]) throws')
+        multiline_array_type = '\n'.join([
+            'public func performAccessibilityAudit(',
+            '    for types: XCUIAccessibilityAuditType,',
+            '    _ callback: [',
+            '        [issueHandler: XCUIAccessibilityAuditIssue]',
+            '    ]) throws'])
+        # 인접 선언/닫힌 signature/속성/collection 타입의 이름을 실제 handler parameter로 합치지 않는다.
         for kind, text in (('unrelatedAndCommented', unrelated), ('missing', missing), ('unfittable', oversized),
                            ('adjacentSwiftDeclaration', adjacent_swift), ('interruptedSwiftSignature', interrupted_swift),
                            ('adjacentObjectiveCDeclaration', adjacent_objc), ('closedSignatureThenParameter', closed_then_parameter),
                            ('attributeArgumentOnly', attribute_only), ('sameLineSwiftDeclaration', same_line_swift),
-                           ('sameLineObjectiveCDeclaration', same_line_objc), ('nestedTupleNameOnly', nested_tuple)):
+                           ('sameLineObjectiveCDeclaration', same_line_objc), ('nestedTupleNameOnly', nested_tuple),
+                           ('dictionaryTypeNameOnly', dictionary_type), ('arrayTypeNameOnly', array_type),
+                           ('multilineArrayTypeNameOnly', multiline_array_type)):
             with self.subTest(syntheticContext=kind):
                 value = {'status': 'found', 'files': [self.record(self.excerpt(31, text), name='SyntheticContext.swiftinterface')],
                          'auditContractContext': True}

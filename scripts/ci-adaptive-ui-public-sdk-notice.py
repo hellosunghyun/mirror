@@ -230,7 +230,7 @@ def contract_candidates(files, topic):
                     objc = bool(re.match(r'^\s*[-+]\s*\([^)]*\)', code))
                     if not direct and not objc:
                         continue
-                    end, named, handler, signature_depth = None, direct, False, 0
+                    end, named, handler, signature_depth, signature_brackets = None, direct, False, 0, 0
                     for follow in range(index, min(len(lines), index + 13)):
                         if ('{' in codes[follow] or '}' in codes[follow]
                                 or (follow > index and CONTRACT_DECLARATION_START.match(codes[follow]))):
@@ -243,7 +243,7 @@ def contract_candidates(files, topic):
                             if opening < 0:
                                 break
                             signature = signature[opening:]
-                        before_depth, closed = signature_depth, False
+                        before_depth, before_brackets, closed = signature_depth, signature_brackets, False
                         if objc:
                             closed = ';' in signature
                             signature = signature.split(';', 1)[0]
@@ -254,11 +254,13 @@ def contract_candidates(files, topic):
                                 if signature_depth <= 0:
                                     signature, closed = signature[:offset + 1], True
                                     break
+                        signature_brackets += signature.count('[') - signature.count(']')
                         named = named or bool(re.search(r'\bNS_SWIFT_NAME\s*\(\s*performAccessibilityAudit\b', signature))
                         for parameter in re.finditer(r'\b(?:issueHandler|withIssueHandler)\s*:', signature):
                             prefix = signature[:parameter.start()]
                             parameter_depth = before_depth + prefix.count('(') - prefix.count(')')
-                            if parameter_depth == (0 if objc else 1):
+                            parameter_brackets = before_brackets + prefix.count('[') - prefix.count(']')
+                            if parameter_depth == (0 if objc else 1) and parameter_brackets == 0:
                                 handler = True
                         if named and handler:
                             end = follow
