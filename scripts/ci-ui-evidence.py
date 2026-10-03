@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextvars import ContextVar
 import hashlib
 import html
 import importlib.util
@@ -22,6 +23,7 @@ import stat
 import struct
 import sys
 import tempfile
+from urllib.error import HTTPError
 from urllib.parse import quote, urlencode, urlsplit
 import zlib
 
@@ -62,6 +64,72 @@ KNOWN_EXPORT_KEYS = (
     'exportedFileName', 'suggestedHumanReadableName', 'name', 'uniformTypeIdentifier',
     'timestamp', 'isAssociatedWithFailure',
 )
+PUBLICATION_PHASES = frozenset({
+    'context', 'loadClient', 'initializeClient', 'validateEvidence', 'readRelease',
+    'verifyTag', 'prepareRelease', 'validateRelease', 'prepareDraft', 'removeAsset',
+    'prepareUpload', 'uploadAsset', 'readUploadedRelease', 'validateAssets',
+    'publishRelease', 'validateReleaseURL', 'writeOutput', 'reportResult', 'unknown',
+})
+PUBLICATION_EXCEPTION_CATEGORIES = frozenset({
+    'clientFailure', 'sourceFailure', 'jsonFailure', 'unicodeFailure', 'ioFailure',
+    'typeFailure', 'valueFailure', 'keyFailure', 'attributeFailure', 'other',
+})
+PUBLICATION_HTTP_STATUSES = frozenset({
+    400, 401, 403, 404, 408, 409, 410, 413, 415, 422, 429,
+    500, 501, 502, 503, 504,
+})
+_PUBLICATION_DIAGNOSTIC = ContextVar('mirror_ui_publication_diagnostic', default=None)
+
+
+def publication_phase(phase):
+    state = _PUBLICATION_DIAGNOSTIC.get()
+    if state is not None:
+        state['phase'] = phase if type(phase) is str and phase in PUBLICATION_PHASES else 'unknown'
+
+
+def publication_failure_notice(error):
+    # 오류 원문·args·URL·임의 클래스명 대신 선언된 타입과 고정 상수만 사용한다.
+    state = _PUBLICATION_DIAGNOSTIC.get() or {}
+    phase = state.get('phase')
+    phase = phase if type(phase) is str and phase in PUBLICATION_PHASES else 'unknown'
+    client_error_type = state.get('clientErrorType')
+    category = 'other'
+    http_status = None
+    if client_error_type is not None and isinstance(error, client_error_type):
+        category = 'clientFailure'
+        # 선언된 client 오류의 직접 context만 본다. 원문과 cause/chain은 읽지 않는다.
+        context = error.__context__
+        if type(context) is HTTPError:
+            code = context.code
+            if type(code) is int and code in PUBLICATION_HTTP_STATUSES:
+                http_status = code
+    else:
+        for error_type, candidate in (
+            ((ImportError, SyntaxError), 'sourceFailure'),
+            (json.JSONDecodeError, 'jsonFailure'),
+            (UnicodeError, 'unicodeFailure'),
+            (OSError, 'ioFailure'),
+            (TypeError, 'typeFailure'),
+            (ValueError, 'valueFailure'),
+            (KeyError, 'keyFailure'),
+            (AttributeError, 'attributeFailure'),
+        ):
+            if isinstance(error, error_type):
+                category = candidate
+                break
+    category = category if category in PUBLICATION_EXCEPTION_CATEGORIES else 'other'
+    print('::notice::UI 게시 실패 분류: ' + json.dumps(
+        {'phase': phase, 'exceptionCategory': category, 'httpStatus': http_status}, sort_keys=True))
+
+
+def publication_request(client, phase, method, endpoint, **kwargs):
+    publication_phase(phase)
+    return client.request(method, endpoint, **kwargs)
+
+
+def publication_verify_tag(client, tag, expected_sha):
+    publication_phase('verifyTag')
+    return client.verify_tag(tag, expected_sha)
 
 
 class EvidenceError(Exception):
@@ -616,9 +684,16 @@ def aggregate(source, output, expected):
 
 def github_class():
     # 기존 배포 helper의 allowlisted GitHub 호스트·tag SHA 검증을 재사용한다.
+    publication_phase('loadClient')
+    state = _PUBLICATION_DIAGNOSTIC.get()
+    if state is not None:
+        state['clientErrorType'] = None
     spec = importlib.util.spec_from_file_location('mirror_ui_github', Path(__file__).with_name('ci-publish-adhoc.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    declared_error = getattr(module, 'PublishError', None)
+    if state is not None and isinstance(declared_error, type) and issubclass(declared_error, Exception):
+        state['clientErrorType'] = declared_error
     return module.GitHub
 
 
@@ -663,14 +738,17 @@ def release_url(value):
 
 def publish(client, directory, expected):
     # 네트워크 요청 전에 모든 공개 바이트를 다시 검증하고 메모리에 고정한다.
+    publication_phase('validateEvidence')
     manifest, files = validate_directory(directory, expected, aggregate=True)
     tag = 'ui-review-' + expected['runID']
-    release = client.request('GET', '/releases/tags/' + quote(tag, safe=''), missing_ok=True)
-    tag_exists = client.verify_tag(tag, expected['commitSHA'])
+    release = publication_request(client, 'readRelease', 'GET', '/releases/tags/' + quote(tag, safe=''), missing_ok=True)
+    tag_exists = publication_verify_tag(client, tag, expected['commitSHA'])
+    publication_phase('prepareRelease')
     notes = release_notes(expected)
     attributes = {'tag_name': tag, 'target_commitish': expected['commitSHA'], 'prerelease': True,
                   'make_latest': 'false', 'name': '미러 UI 검토 ' + expected['buildNumber'], 'body': notes}
     if release is not None:
+        publication_phase('validateRelease')
         require(isinstance(release, dict) and release.get('tag_name') == tag
                 and type(release.get('id')) is int and release['id'] > 0, 'invalidRelease')
         require(tag_exists or release.get('target_commitish') == expected['commitSHA'], 'identityMismatch')
@@ -683,38 +761,48 @@ def publish(client, directory, expected):
                        asset['size'] == len(files[asset['name']]) and
                        asset['digest'] == 'sha256:' + digest(files[asset['name']]) for asset in assets))
         if same_assets and tag_exists and release.get('draft') is False:
-            published = client.request('PATCH', '/releases/' + str(release['id']), value={**attributes, 'draft': False})
+            published = publication_request(client, 'publishRelease', 'PATCH', '/releases/' + str(release['id']), value={**attributes, 'draft': False})
+            publication_phase('validateRelease')
             require(published.get('draft') is False and published.get('prerelease') is True
-                    and client.verify_tag(tag, expected['commitSHA']), 'invalidRelease')
+                    and publication_verify_tag(client, tag, expected['commitSHA']), 'invalidRelease')
+            publication_phase('validateReleaseURL')
             return release_url(published.get('html_url'))
-        release = client.request('PATCH', '/releases/' + str(release['id']), value={**attributes, 'draft': True})
+        release = publication_request(client, 'prepareDraft', 'PATCH', '/releases/' + str(release['id']), value={**attributes, 'draft': True})
     else:
-        release = client.request('POST', '/releases', value={**attributes, 'draft': True})
+        release = publication_request(client, 'prepareDraft', 'POST', '/releases', value={**attributes, 'draft': True})
+    publication_phase('validateRelease')
     require(isinstance(release, dict) and type(release.get('id')) is int and release['id'] > 0
             and release.get('draft') is True, 'invalidRelease')
     release_id = release['id']
     validate_remote_assets(release.get('assets', []))
     for asset in release.get('assets', []):
-        client.request('DELETE', '/releases/assets/' + str(asset['id']))
+        publication_request(client, 'removeAsset', 'DELETE', '/releases/assets/' + str(asset['id']))
+    publication_phase('prepareUpload')
     upload_url = release.get('upload_url')
     require(isinstance(upload_url, str) and urlsplit(upload_url).scheme == 'https'
             and urlsplit(upload_url).hostname == 'uploads.github.com', 'invalidRelease')
     upload_url = upload_url.split('{', 1)[0]
     for name, data in sorted(files.items()):
+        publication_phase('prepareUpload')
         content_type = 'image/png' if name.endswith('.png') else 'text/html' if name.endswith('.html') else 'application/octet-stream'
-        uploaded = client.request('POST', upload_url + '?' + urlencode({'name': name}), content=data, content_type=content_type)
+        uploaded = publication_request(client, 'uploadAsset', 'POST', upload_url + '?' + urlencode({'name': name}), content=data, content_type=content_type)
+        publication_phase('validateAssets')
         validate_remote_assets([uploaded], {name: data})
-    refreshed = client.request('GET', '/releases/' + str(release_id))
+    refreshed = publication_request(client, 'readUploadedRelease', 'GET', '/releases/' + str(release_id))
+    publication_phase('validateAssets')
     require(isinstance(refreshed, dict), 'invalidRelease')
     validate_remote_assets(refreshed.get('assets'), files)
-    published = client.request('PATCH', '/releases/' + str(release_id), value={**attributes, 'draft': False})
+    published = publication_request(client, 'publishRelease', 'PATCH', '/releases/' + str(release_id), value={**attributes, 'draft': False})
+    publication_phase('validateRelease')
     require(published.get('draft') is False and published.get('prerelease') is True
-            and client.verify_tag(tag, expected['commitSHA']), 'invalidRelease')
+            and publication_verify_tag(client, tag, expected['commitSHA']), 'invalidRelease')
+    publication_phase('validateReleaseURL')
     return release_url(published.get('html_url'))
 
 
 def main(argv=None):
     command = None
+    diagnostic_token = _PUBLICATION_DIAGNOSTIC.set({'phase': 'unknown', 'clientErrorType': None})
     try:
         parser = SafeArgumentParser(description=__doc__)
         commands = parser.add_subparsers(dest='command', required=True, parser_class=SafeArgumentParser)
@@ -741,14 +829,22 @@ def main(argv=None):
         elif command == 'aggregate':
             manifest = aggregate(args.input_root, args.output, expected)
         else:
+            publication_phase('context')
             repository, token = os.environ.get('GITHUB_REPOSITORY'), os.environ.get('GITHUB_TOKEN')
             require(isinstance(repository, str) and re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository)
                     and token, 'missingGitHubContext')
-            url = publish(github_class()(repository, token), args.publish_dir, expected)
+            publication_phase('loadClient')
+            github_type = github_class()
+            publication_phase('initializeClient')
+            client = github_type(repository, token)
+            publication_phase('validateEvidence')
+            url = publish(client, args.publish_dir, expected)
             github_output = os.environ.get('GITHUB_OUTPUT')
             if github_output:
+                publication_phase('writeOutput')
                 with open(github_output, 'a', encoding='utf-8') as destination:
                     destination.write('ui_review_url=' + url + '\n')
+            publication_phase('reportResult')
             print(json.dumps({'command': command, 'status': 'published', 'url': url}, sort_keys=True))
             return 0
         print(json.dumps({'command': command, 'status': 'prepared' if command == 'prepare' else 'aggregated',
@@ -762,11 +858,19 @@ def main(argv=None):
         print('::error::UI 화면 증거 검증 실패: ' + error.code)
         print(json.dumps(summary, sort_keys=True))
         return 1
-    except Exception:
+    except Exception as error:
         # SDK JSON/IO/API 예외 메시지에는 비공개 원문·경로·토큰이 들어갈 수 있다.
+        if command == 'publish':
+            try:
+                publication_failure_notice(error)
+            except Exception:
+                # 보조 진단 실패가 기존 error·JSON 결과와 실패 exit를 가리지 않는다.
+                pass
         print('::error::UI 화면 증거 처리 실패: processingFailed')
         print(json.dumps({'command': command, 'status': 'processingFailed'}, sort_keys=True))
         return 1
+    finally:
+        _PUBLICATION_DIAGNOSTIC.reset(diagnostic_token)
 
 
 if __name__ == '__main__':

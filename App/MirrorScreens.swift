@@ -1112,9 +1112,11 @@ struct MirrorTaskDetail: View {
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text(task.title).font(.title2.weight(.semibold))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled).accessibilityIdentifier("detail.contentTitle")
+                            ExpandableText(task.title, lineLimit: 3, togglesOnTap: false,
+                                           style: .init(link: MirrorPalette.accent),
+                                           paragraphAccessibilityIdentifier: "detail.contentTitle")
+                                .font(.title2.weight(.semibold)).textSelection(.enabled)
+                                .id(task.taskID)
                             if task.content.note != nil || task.content.sourceURL != nil {
                                 DisclosureGroup("메모와 원문 링크", isExpanded: $showNotes) {
                                     VStack(alignment: .leading, spacing: 10) {

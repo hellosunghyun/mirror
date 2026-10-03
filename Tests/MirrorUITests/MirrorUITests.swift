@@ -213,7 +213,7 @@ final class MirrorUITests: XCTestCase {
         let app = try launchApp()
         defer { app.terminate() }
         recordTomorrowPhase(.launched)
-        let title = "UI tomorrow is searchable"
+        let title = "UI tomorrow is searchable " + String(repeating: "긴 제목 ", count: 94) + "전체원문"
         try capture(title, in: app)
         recordTomorrowPhase(.captured)
         try activate("today.review", in: app)
@@ -247,6 +247,7 @@ final class MirrorUITests: XCTestCase {
         #endif
         recordTomorrowPhase(.searchEntered)
         let future = try requireRow(title, in: app)
+        XCTAssertEqual(displayedText(of: future), title, "목록의 접근성 이름은 저장한 500자 제목 원문을 보존한다.")
         XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
         XCTAssertTrue(value(of: future).contains("미완료"))
         recordTomorrowPhase(.futureRowVerified)
@@ -321,6 +322,20 @@ final class MirrorUITests: XCTestCase {
         recordTomorrowPhase(.detailOpened)
         XCTAssertTrue(displayedText(of: try requireElement("detail.plan", in: app)).contains("10월 1일"))
         recordTomorrowPhase(.detailPlanVerified)
+        XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
+                       "상세는 저장한 500자 제목 원문을 생략하지 않는다.")
+        try activate("expandableText.expand", in: app)
+        let collapseTitle = try requireElement("expandableText.collapse", in: app, preferButtons: true)
+        XCTAssertEqual(collapseTitle.elementType, .button, "전체 제목은 별도의 실제 Button으로 접을 수 있다.")
+        XCTAssertFalse(element("expandableText.expand", in: app).exists)
+        XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
+                       "펼친 제목도 저장한 전체 원문을 보존한다.")
+        try activate("expandableText.collapse", in: app)
+        let expandTitle = try requireElement("expandableText.expand", in: app, preferButtons: true)
+        XCTAssertEqual(expandTitle.elementType, .button, "접힌 제목은 별도의 실제 Button으로 다시 펼칠 수 있다.")
+        XCTAssertFalse(element("expandableText.collapse", in: app).exists)
+        XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
+                       "다시 접어도 전체 원문과 접근성 내용은 바뀌지 않는다.")
         try recordUI("detail", in: app, identifiers: ["detail.contentTitle", "detail.plan", "detail.edit", "task.complete", "detail.close"])
         recordTomorrowPhase(.detailScreenshotRecorded)
         try activate("detail.close", in: app)

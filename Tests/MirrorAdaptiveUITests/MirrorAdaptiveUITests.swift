@@ -311,13 +311,19 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let before = window.frame
         XCTAssertTrue(hasArea(before))
         XCTAssertGreaterThan(before.width, 800, "실제 좁히기 전의 창은 목표 폭보다 넓어야 한다.")
-        // 시스템 창의 실제 오른쪽 아래 모서리를 drag한다. 앱의 sizeClass를 위조하지 않는다.
+        // 둥근 모서리 밖을 피하고 시스템 창의 두 가장자리를 직접 drag한다.
         progress(.windowResizeStarted)
-        let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
-            .withOffset(CGVector(dx: -2, dy: -2))
-        let resizeDestination = window.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: 780, dy: 600))
-        corner.press(forDuration: 0.1, thenDragTo: resizeDestination)
+        let rightEdge = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+            .withOffset(CGVector(dx: -2, dy: 0))
+        let widthDestination = window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 780, dy: before.height / 2))
+        rightEdge.press(forDuration: 0.1, thenDragTo: widthDestination)
+        let widthAdjustedFrame = window.frame
+        let bottomEdge = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1))
+            .withOffset(CGVector(dx: 0, dy: -2))
+        let heightDestination = window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: widthAdjustedFrame.width / 2, dy: 600))
+        bottomEdge.press(forDuration: 0.1, thenDragTo: heightDestination)
         let resizeObservations = ResizeObservations()
         let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let frame = window.frame
@@ -403,8 +409,14 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let applied = try find("ui.appliedDynamicType", in: app)
         let appliedValue = applied.value
         let appliedString = appliedValue as? String
-        configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: applied.label)
+        let appliedLabel = applied.label
+        configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: appliedLabel)
+        #if os(macOS)
+        // Mac의 contain 그룹 value는 빈 문자열이다. 실제 환경에서 만든 label을 확인한다.
+        XCTAssertEqual(appliedLabel, "글자 크기 환경: accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
+        #else
         XCTAssertEqual(appliedString, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
+        #endif
         XCTAssertEqual(app.state, .runningForeground)
         #if os(iOS)
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
@@ -436,11 +448,18 @@ final class MirrorAdaptiveUITests: XCTestCase {
 
     @MainActor
     private func find(_ identifier: String, in app: XCUIApplication, timeout: TimeInterval = 15) throws -> XCUIElement {
-        let fields = app.textFields.matching(identifier: identifier)
-        if fields.firstMatch.exists { return try unique(fields, timeout: timeout) }
-        let textViews = app.textViews.matching(identifier: identifier)
-        if textViews.firstMatch.exists { return try unique(textViews, timeout: timeout) }
-        let query = identifier == "library.search" ? fields : app.descendants(matching: .any).matching(identifier: identifier)
+        let query: XCUIElementQuery
+        switch identifier {
+        case "capture.title", "capture.note", "capture.url", "library.search":
+            // 입력 ID만 실제 TextField/TextView 역할을 확인한다.
+            let fields = app.textFields.matching(identifier: identifier)
+            if fields.firstMatch.exists { return try unique(fields, timeout: timeout) }
+            let textViews = app.textViews.matching(identifier: identifier)
+            if textViews.firstMatch.exists { return try unique(textViews, timeout: timeout) }
+            query = identifier == "library.search" ? fields : app.descendants(matching: .any).matching(identifier: identifier)
+        default:
+            query = app.descendants(matching: .any).matching(identifier: identifier)
+        }
         if identifier == "state.error", query.firstMatch.waitForExistence(timeout: timeout), query.count > 1 {
             // 오류가 modal과 배경에 함께 노출될 때 실제 조작 가능한 modal의 고유 후보를 사용한다.
             let visible = query.allElementsBoundByAccessibilityElement.filter { $0.exists && $0.isHittable }
@@ -547,29 +566,34 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(15)
         for _ in 0..<8 {
             let frame = element.frame
+            let identifier = element.identifier
+            let elementType = element.elementType
             let windows = app.windows.allElementsBoundByIndex.map { $0.frame }
-            let ownerPredicate = NSPredicate(format: "identifier == %@", element.identifier)
+            let ownerPredicate = NSPredicate(format: "identifier == %@", identifier)
             let surfaces = app.scrollViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex
                 + app.collectionViews.allElementsBoundByIndex
-            let owners = surfaces.filter { surface in
+            // 같은 관측의 경계를 재사용하며, 다음 반복과 스크롤 뒤에는 새로 읽는다.
+            let owners: [(surface: XCUIElement, bounds: CGRect, area: CGFloat)] = surfaces.compactMap { surface in
                 let bounds = surface.frame
-                return hasArea(bounds) && surface.isHittable
-                    && surface.descendants(matching: element.elementType).matching(ownerPredicate).firstMatch.exists
+                guard hasArea(bounds) && surface.isHittable
+                    && surface.descendants(matching: elementType).matching(ownerPredicate).firstMatch.exists
                     && bounds.minX <= frame.midX && frame.midX <= bounds.maxX
-                    && windows.contains { $0.intersects(bounds) }
+                    && windows.contains(where: { $0.intersects(bounds) }) else { return nil }
+                return (surface, bounds, bounds.width * bounds.height)
             }
-            let viewport = owners.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
-            let viewportFrame = viewport?.frame
-            let isScrollableInput = element.elementType == .textField || element.elementType == .textView
+            let viewport = owners.min(by: { $0.area < $1.area })
+            let viewportFrame = viewport?.bounds
+            let isScrollableInput = elementType == .textField || elementType == .textView
             let oversizedInput = viewportFrame.map { isScrollableInput && frame.height > $0.height } ?? false
             // 긴 입력란은 내용 자체를 스크롤할 수 있다. 동작/오류 버튼에는 항상 전체 표시를 요구한다.
             let insideOwner = viewportFrame.map { oversizedInput ? hasArea($0.intersection(frame)) : $0.contains(frame) } ?? true
             if element.isHittable, hasArea(frame), windows.contains(where: { $0.contains(frame) }), insideOwner { return }
-            guard Date() < deadline, let surface = viewport else {
+            guard Date() < deadline, let viewport else {
                 XCTFail("현재 대상의 실제 스크롤 소유자 안에서 요소에 도달해야 한다.")
                 throw HarnessFailure.unhittable
             }
-            let bounds = surface.frame
+            let surface = viewport.surface
+            let bounds = viewport.bounds
             guard isScrollableInput || frame.height <= bounds.height else {
                 XCTFail("전체 표시가 필요한 동작의 높이가 실제 스크롤 viewport보다 크다.")
                 throw HarnessFailure.unhittable

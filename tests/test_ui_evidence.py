@@ -11,6 +11,7 @@ import struct
 import tempfile
 import unittest
 from unittest import mock
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 import zlib
 
@@ -915,6 +916,199 @@ class UIEvidenceTests(unittest.TestCase):
                                           '--build-number', '27', '--run-id', '31415', '--attempt', '1'])
         self.assertEqual((code, summary['status']), (0, 'published'))
         self.assertEqual(github_output.read_text(), 'ui_review_url=https://github.com/example/mirror/releases/tag/ui-review-31415\n')
+
+    def publish_arguments(self, output):
+        return ['publish', '--publish-dir', str(output), '--sha', 'a' * 40,
+                '--build-number', '27', '--run-id', '31415', '--attempt', '1']
+
+    def assert_publication_failure(self, result, phase, category, http_status=None):
+        code, summary, stdout = result
+        self.assertEqual((code, summary), (1, {'command': 'publish', 'status': 'processingFailed'}))
+        lines = stdout.splitlines()
+        self.assertEqual(len(lines), 3)
+        prefix = '::notice::UI 게시 실패 분류: '
+        self.assertTrue(lines[0].startswith(prefix))
+        self.assertEqual(json.loads(lines[0][len(prefix):]),
+                         {'phase': phase, 'exceptionCategory': category, 'httpStatus': http_status})
+        self.assertEqual(lines[1], '::error::UI 화면 증거 처리 실패: processingFailed')
+        self.assertIsNone(helper._PUBLICATION_DIAGNOSTIC.get())
+
+    def test_publish_real_loader_classifies_synthetic_http_transport_and_json_failures(self):
+        output = self.aggregate_all()
+        failures = (
+            (HTTPError(PRIVATE, 403, PRIVATE, {}, io.BytesIO(PRIVATE.encode())), 403),
+            (URLError(PRIVATE), None),
+            (io.BytesIO(PRIVATE.encode()), None),
+        )
+        for response, http_status in failures:
+            with self.subTest(response_kind='response' if isinstance(response, io.BytesIO) else 'exception'):
+                replacement = {'return_value': response} if isinstance(response, io.BytesIO) else {'side_effect': response}
+                with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                        mock.patch('urllib.request.urlopen', **replacement) as request:
+                    result = self.invoke(self.publish_arguments(output))
+                self.assert_publication_failure(result, 'readRelease', 'clientFailure', http_status)
+                request.assert_called_once()
+                self.assertEqual(request.call_args.args[0].get_method(), 'GET')
+
+    def test_publish_real_loader_http_status_accepts_only_known_exact_integer_codes(self):
+        output = self.aggregate_all()
+        allowed = (400, 401, 403, 404, 408, 409, 410, 413, 415, 422, 429,
+                   500, 501, 502, 503, 504)
+        for code in allowed + (True, False, 403.0, '403', PRIVATE, 418, 599):
+            with self.subTest(status_kind='known' if type(code) is int and code in allowed else 'rejected'):
+                error = HTTPError(PRIVATE, code, PRIVATE, {}, io.BytesIO(PRIVATE.encode()))
+                with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                        mock.patch('urllib.request.urlopen', side_effect=error) as request:
+                    result = self.invoke(self.publish_arguments(output))
+                if type(code) is int and code == 404:
+                    # release/tag 조회의 missing_ok 404는 그대로 통과하고 draft 요청에서 실패한다.
+                    self.assert_publication_failure(result, 'prepareDraft', 'clientFailure', 404)
+                    self.assertEqual(request.call_count, 3)
+                    self.assertEqual([call.args[0].get_method() for call in request.call_args_list], ['GET', 'GET', 'POST'])
+                else:
+                    expected = code if type(code) is int and code in allowed else None
+                    self.assert_publication_failure(result, 'readRelease', 'clientFailure', expected)
+                    request.assert_called_once()
+
+    def test_publish_real_loader_does_not_traverse_http_context_or_cause_chain(self):
+        output = self.aggregate_all()
+        error = URLError(PRIVATE)
+        error.__context__ = HTTPError(PRIVATE, 403, PRIVATE, {}, io.BytesIO(PRIVATE.encode()))
+        error.__cause__ = HTTPError(PRIVATE, 401, PRIVATE, {}, io.BytesIO(PRIVATE.encode()))
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                mock.patch('urllib.request.urlopen', side_effect=error) as request:
+            result = self.invoke(self.publish_arguments(output))
+        self.assert_publication_failure(result, 'readRelease', 'clientFailure')
+        request.assert_called_once()
+
+    def test_publish_real_loader_rejects_http_named_errors_and_avoids_unrecognized_context(self):
+        output = self.aggregate_all()
+
+        def forbidden_code(error):
+            raise AssertionError('선언된 HTTPError 외의 code를 읽으면 안 됩니다.')
+
+        def guarded_attribute(error, name):
+            if name == '__context__':
+                raise AssertionError('선언된 client 오류 외의 context를 읽으면 안 됩니다.')
+            return Exception.__getattribute__(error, name)
+
+        cases = (
+            (type('HTTPError', (OSError,), {'code': property(forbidden_code)})(PRIVATE), 'clientFailure'),
+            (type(PRIVATE, (Exception,), {'__getattribute__': guarded_attribute})(PRIVATE), 'other'),
+        )
+        for error, category in cases:
+            with self.subTest(category=category):
+                with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                        mock.patch('urllib.request.urlopen', side_effect=error) as request:
+                    result = self.invoke(self.publish_arguments(output))
+                self.assert_publication_failure(result, 'readRelease', category)
+                request.assert_called_once()
+
+    def test_publish_real_loader_classifies_synthetic_tag_failure_at_actual_tag_call(self):
+        output = self.aggregate_all()
+        responses = [HTTPError(PRIVATE, 404, PRIVATE, {}, io.BytesIO(PRIVATE.encode())),
+                     io.BytesIO(json.dumps({'object': {'type': 'commit', 'sha': 'b' * 40}}).encode())]
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                mock.patch('urllib.request.urlopen', side_effect=responses) as request:
+            result = self.invoke(self.publish_arguments(output))
+        self.assert_publication_failure(result, 'verifyTag', 'clientFailure')
+        self.assertEqual(request.call_count, 2)
+        self.assertTrue(all(call.args[0].get_method() == 'GET' for call in request.call_args_list))
+
+    def test_publish_loader_failure_keeps_private_source_details_out_of_notice(self):
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                mock.patch.object(helper.importlib.util, 'spec_from_file_location', side_effect=ImportError(PRIVATE)):
+            result = self.invoke(self.publish_arguments(self.root / PRIVATE))
+        self.assert_publication_failure(result, 'loadClient', 'sourceFailure')
+
+    def test_publish_mock_factory_and_three_argument_publish_remain_compatible_on_output_failure(self):
+        client = FakeGitHub()
+        output = self.root / PRIVATE
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE,
+                                                 'GITHUB_OUTPUT': str(output)}), \
+                mock.patch.object(helper, 'github_class', return_value=lambda repository, token: client), \
+                mock.patch.object(helper, 'publish', return_value='https://github.com/example/mirror/releases/tag/ui-review-31415') as publish, \
+                mock.patch.object(helper, 'open', side_effect=OSError(PRIVATE), create=True):
+            result = self.invoke(self.publish_arguments(output))
+        publish.assert_called_once_with(client, output, IDENTITY)
+        self.assert_publication_failure(result, 'writeOutput', 'ioFailure')
+
+    def test_publish_client_constructor_failure_has_fixed_phase_and_category(self):
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                mock.patch.object(helper, 'github_class', return_value=mock.Mock(side_effect=TypeError(PRIVATE))):
+            result = self.invoke(self.publish_arguments(self.root / PRIVATE))
+        self.assert_publication_failure(result, 'initializeClient', 'typeFailure')
+
+    def test_publish_notice_failure_does_not_mask_original_error_result_or_exit(self):
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                mock.patch.object(helper, 'github_class', side_effect=ImportError(PRIVATE)), \
+                mock.patch.object(helper, 'publication_failure_notice', side_effect=RuntimeError(PRIVATE)) as notice:
+            code, summary, stdout = self.invoke(self.publish_arguments(self.root / PRIVATE))
+        self.assertEqual((code, summary), (1, {'command': 'publish', 'status': 'processingFailed'}))
+        self.assertEqual(stdout.splitlines()[0], '::error::UI 화면 증거 처리 실패: processingFailed')
+        self.assertEqual(len(stdout.splitlines()), 2)
+        notice.assert_called_once()
+        self.assertIsNone(helper._PUBLICATION_DIAGNOSTIC.get())
+
+    def test_publish_evidence_gate_still_fails_before_api_without_new_notice(self):
+        output = self.aggregate_all()
+        (output / 'video.mp4').write_bytes(PRIVATE.encode())
+        with mock.patch.dict(helper.os.environ, {'GITHUB_REPOSITORY': 'example/mirror', 'GITHUB_TOKEN': PRIVATE}), \
+                mock.patch('urllib.request.urlopen', side_effect=AssertionError(PRIVATE)) as request:
+            code, summary, stdout = self.invoke(self.publish_arguments(output))
+        self.assertEqual((code, summary), (1, {'command': 'publish', 'status': 'unexpectedPublicFile'}))
+        self.assertNotIn('::notice::', stdout)
+        request.assert_not_called()
+        self.assertIsNone(helper._PUBLICATION_DIAGNOSTIC.get())
+
+    def test_publication_notice_rejects_unknown_phase_and_never_reads_error_text_or_args(self):
+        def forbidden_text(error):
+            raise AssertionError('예외 원문을 읽으면 안 됩니다.')
+
+        def guarded_attribute(error, name):
+            if name == 'args':
+                raise AssertionError('예외 args를 읽으면 안 됩니다.')
+            return Exception.__getattribute__(error, name)
+
+        error_type = type(PRIVATE, (Exception,), {'__str__': forbidden_text, '__getattribute__': guarded_attribute})
+        for phase in (PRIVATE, [], {}):
+            with self.subTest(phase_kind=type(phase).__name__):
+                token = helper._PUBLICATION_DIAGNOSTIC.set({'phase': phase, 'clientErrorType': None})
+                stdout = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(stdout):
+                        helper.publication_failure_notice(error_type(PRIVATE))
+                finally:
+                    helper._PUBLICATION_DIAGNOSTIC.reset(token)
+                self.assertEqual(stdout.getvalue(), '::notice::UI 게시 실패 분류: '
+                                 '{"exceptionCategory": "other", "httpStatus": null, "phase": "unknown"}\n')
+                self.assertNotIn(PRIVATE, stdout.getvalue())
+
+    def test_publication_notice_uses_only_whitelisted_exception_categories(self):
+        cases = (
+            (ImportError(PRIVATE), 'sourceFailure'),
+            (json.JSONDecodeError(PRIVATE, PRIVATE, 0), 'jsonFailure'),
+            (UnicodeDecodeError('utf-8', b'\xff', 0, 1, PRIVATE), 'unicodeFailure'),
+            (OSError(PRIVATE), 'ioFailure'),
+            (TypeError(PRIVATE), 'typeFailure'),
+            (ValueError(PRIVATE), 'valueFailure'),
+            (KeyError(PRIVATE), 'keyFailure'),
+            (AttributeError(PRIVATE), 'attributeFailure'),
+            (type('PublishError', (Exception,), {})(PRIVATE), 'other'),
+        )
+        for error, category in cases:
+            with self.subTest(category=category):
+                token = helper._PUBLICATION_DIAGNOSTIC.set({'phase': 'readRelease', 'clientErrorType': None})
+                stdout = io.StringIO()
+                try:
+                    with contextlib.redirect_stdout(stdout):
+                        helper.publication_failure_notice(error)
+                finally:
+                    helper._PUBLICATION_DIAGNOSTIC.reset(token)
+                prefix = '::notice::UI 게시 실패 분류: '
+                diagnostic = json.loads(stdout.getvalue()[len(prefix):])
+                self.assertEqual(diagnostic, {'phase': 'readRelease', 'exceptionCategory': category, 'httpStatus': None})
+                self.assertNotIn(PRIVATE, stdout.getvalue())
 
 
 if __name__ == '__main__':

@@ -33,6 +33,7 @@ import SwiftUI
 ///   - showsLess: When false, an expanded paragraph stays expanded (no "less" link, and tapping the body does nothing).
 ///   - togglesOnTap: When true, tapping anywhere on the paragraph also expands or collapses it. Links inside the text still open.
 ///   - style: Link color and weight, fade width, and an optional solid fade color. Defaults to the house palette.
+///   - paragraphAccessibilityIdentifier: An optional identifier for the visible paragraph after layout and clipping; measuring copies and buttons keep their own accessibility behavior.
 @MainActor
 public struct ExpandableText: View {
     /// Link color and weight, and how the last line fades. `.standard` is the house palette.
@@ -88,18 +89,19 @@ public struct ExpandableText: View {
     private let showsLess: Bool
     private let togglesOnTap: Bool
     private let style: Style
+    private let paragraphAccessibilityIdentifier: String?
 
     /// A plain string, shown verbatim.
-    public init(_ text: String, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard) {
-        self.init(content: .plain(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style)
+    public init(_ text: String, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard, paragraphAccessibilityIdentifier: String? = nil) {
+        self.init(content: .plain(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style, paragraphAccessibilityIdentifier: paragraphAccessibilityIdentifier)
     }
 
     /// An attributed string: bold, italics and links are kept, and links stay tappable.
-    public init(_ text: AttributedString, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard) {
-        self.init(content: .attributed(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style)
+    public init(_ text: AttributedString, lineLimit: Int = 3, isExpanded: Binding<Bool>? = nil, moreLabel: LocalizedStringKey = "더 보기", lessLabel: LocalizedStringKey = "접기", showsLess: Bool = true, togglesOnTap: Bool = true, style: Style = .standard, paragraphAccessibilityIdentifier: String? = nil) {
+        self.init(content: .attributed(text), lineLimit: lineLimit, isExpanded: isExpanded, moreLabel: moreLabel, lessLabel: lessLabel, showsLess: showsLess, togglesOnTap: togglesOnTap, style: style, paragraphAccessibilityIdentifier: paragraphAccessibilityIdentifier)
     }
 
-    private init(content: Content, lineLimit: Int, isExpanded: Binding<Bool>?, moreLabel: LocalizedStringKey, lessLabel: LocalizedStringKey, showsLess: Bool, togglesOnTap: Bool, style: Style) {
+    private init(content: Content, lineLimit: Int, isExpanded: Binding<Bool>?, moreLabel: LocalizedStringKey, lessLabel: LocalizedStringKey, showsLess: Bool, togglesOnTap: Bool, style: Style, paragraphAccessibilityIdentifier: String?) {
         self.content = content
         self.lineLimit = max(lineLimit, 1)
         self.externalExpanded = isExpanded
@@ -108,6 +110,7 @@ public struct ExpandableText: View {
         self.showsLess = showsLess
         self.togglesOnTap = togglesOnTap
         self.style = style
+        self.paragraphAccessibilityIdentifier = paragraphAccessibilityIdentifier
     }
 
     // MARK: State
@@ -167,7 +170,7 @@ public struct ExpandableText: View {
 
     /// The full text, clipped to the limited height while collapsed, with the fade and "more" on the last line.
     private func paragraph(truncated: Bool, collapsed: Bool, lastLine: CGFloat) -> some View {
-        text
+        let visibleParagraph = text
             // Before the first measurement, a plain clamped Text shows the same first lines, so nothing jumps.
             .lineLimit(isMeasured ? nil : lineLimit)
             .fixedSize(horizontal: false, vertical: true)
@@ -202,6 +205,13 @@ public struct ExpandableText: View {
                     }
                 }
             }
+        return Group {
+            if let paragraphAccessibilityIdentifier {
+                visibleParagraph.accessibilityIdentifier(paragraphAccessibilityIdentifier)
+            } else {
+                visibleParagraph
+            }
+        }
     }
 
     /// Opaque everywhere except the trailing end of the last collapsed line: a fade, then a hole the width of "more".
