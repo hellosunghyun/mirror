@@ -196,10 +196,12 @@ struct MirrorCalendarView: View {
                 HStack(spacing: 24) {
                     if !compact { scopePicker.frame(width: 180) }
                     datePicker
+                    todayButton
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     if !compact { scopePicker }
                     datePicker
+                    todayButton
                 }
             }
             if !compact {
@@ -219,6 +221,21 @@ struct MirrorCalendarView: View {
             .datePickerStyle(.compact)
             .environment(\.timeZone, TimeZone(identifier: model.preferences.timeZoneID) ?? .gmt)
             .accessibilityIdentifier("calendar.date")
+    }
+
+    @ViewBuilder
+    private var todayButton: some View {
+        if let day = model.context?.planningDay,
+           let instant = AppDate.instant(day, zone: model.preferences.timeZoneID) {
+            Button { selectedDate = instant } label: {
+                Text("오늘로")
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier("calendar.today")
+            .accessibilityHint("계획 시간대의 오늘 일정을 살펴봐요. 작업의 계획은 바꾸지 않아요.")
+        }
     }
 
     private func dayCard(_ date: LocalDate) -> some View {
@@ -424,12 +441,7 @@ struct MirrorSettingsView: View {
         @Bindable var model = model
         NavigationStack {
             Form {
-                if let problem = model.problem {
-                    Section {
-                        Label(problem, systemImage: "exclamationmark.circle")
-                            .foregroundStyle(.red).accessibilityIdentifier("state.error")
-                    }
-                }
+                operationErrorSection
                 planningSection
                 if model.projectionRecovery != nil || model.recoveryConfigurationBlocked {
                     Section("목록 복구") {
@@ -449,9 +461,7 @@ struct MirrorSettingsView: View {
                 calendarsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
                 syncSection
                 privacySection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
-                diagnosticsSection
-                archiveSection
-                deletionSection
+                dataManagementSection
                 aboutSection
             }
             .formStyle(.grouped)
@@ -460,6 +470,7 @@ struct MirrorSettingsView: View {
             .frame(maxWidth: .infinity)
             .background(MirrorPalette.canvas)
             .navigationTitle("설정")
+        }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.accessibilityIdentifier("settings.close") } }
             .fileExporter(isPresented: $exporting, document: MirrorArchiveDocument(data: model.archiveData ?? Data()), contentType: .json, defaultFilename: model.exportFileName) { result in
                 if case .failure = result { model.problem = "내보내기 파일을 저장하지 못했어요. 원본은 유지했어요." }
@@ -485,14 +496,6 @@ struct MirrorSettingsView: View {
                 Button("기기 데이터 삭제", role: .destructive) { Task { await model.deleteLocalData() } }
                 Button("취소", role: .cancel) {}
             } message: { Text("이 기기에서 복원하려면 내보낸 파일이 필요해요. 다른 기기와 iCloud는 삭제하지 않아요.") }
-            .alert("개인 공간 전체 삭제", isPresented: $cloudDeleteFirstConfirmation) {
-                Button("전체 삭제 안내 계속 보기", role: .destructive) { cloudDeleteSecondConfirmation = true }
-                Button("취소", role: .cancel) {}
-            } message: { Text("iCloud와 다른 기기의 작업까지 함께 지우는 기능은 아직 준비 중이에요. 이 안내를 확인해도 데이터를 지우지 않아요.") }
-            .alert("개인 공간 전체 삭제 재확인", isPresented: $cloudDeleteSecondConfirmation) {
-                Button("현재 지원 상태 확인", role: .destructive) { Task { await model.inspectCloudDeletion() } }
-                Button("취소", role: .cancel) {}
-            } message: { Text("현재 전체 삭제를 사용할 수 있는지 확인해요. 다른 기기에 남은 데이터까지 삭제됐다고 보장할 수 없어 지금은 삭제를 실행하지 않아요.") }
             .alert("전체 삭제 상태", isPresented: Binding(get: { model.cloudDeletionMessage != nil }, set: { if !$0 { model.cloudDeletionMessage = nil } })) {
                 Button("확인", role: .cancel) { model.cloudDeletionMessage = nil }
             } message: { Text(model.cloudDeletionMessage ?? "") }
@@ -514,9 +517,85 @@ struct MirrorSettingsView: View {
                 }
             }
             .onChange(of: model.cloudPreview?.token) { _, _ in cloudMergeConfirmed = false }
-        }
         .tint(MirrorPalette.accent)
         .frame(minWidth: 300, idealWidth: 580, minHeight: 500)
+    }
+
+    @ViewBuilder
+    private var operationErrorSection: some View {
+        if let problem = model.problem {
+            Section {
+                Label(problem, systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red).accessibilityIdentifier("state.error")
+            }
+        }
+    }
+
+    private var dataManagementSection: some View {
+        Section {
+            NavigationLink {
+                diagnosticsPage
+            } label: {
+                Label("진단 기록", systemImage: "waveform.path")
+            }
+            .accessibilityIdentifier("settings.diagnostics")
+            NavigationLink {
+                archivePage
+            } label: {
+                Label("내보내기와 복원", systemImage: "arrow.up.doc")
+            }
+            .accessibilityIdentifier("settings.archive")
+            NavigationLink {
+                deletionPage
+            } label: {
+                Label("데이터 삭제", systemImage: "trash")
+            }
+            .accessibilityIdentifier("settings.deletion")
+        } header: {
+            Label("데이터 관리", systemImage: "externaldrive")
+        }
+    }
+
+    private var diagnosticsPage: some View {
+        Form {
+            operationErrorSection
+            diagnosticsSection
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+        .background(MirrorPalette.canvas)
+        .navigationTitle("진단 기록")
+        .accessibilityIdentifier("settings.diagnostics.page")
+    }
+
+    private var archivePage: some View {
+        Form {
+            operationErrorSection
+            archiveSection
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+        .background(MirrorPalette.canvas)
+        .navigationTitle("내보내기와 복원")
+        .accessibilityIdentifier("settings.archive.page")
+    }
+
+    private var deletionPage: some View {
+        Form {
+            operationErrorSection
+            deletionSection
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+        .background(MirrorPalette.canvas)
+        .navigationTitle("데이터 삭제")
+        .accessibilityIdentifier("settings.deletion.page")
     }
 
     private var planningSection: some View {
@@ -699,7 +778,7 @@ struct MirrorSettingsView: View {
     private var deletionSection: some View {
         Section {
             Button("이 기기에서만 지우기", role: .destructive) { model.showDeleteConfirmation = true }
-            Button("iCloud 포함 개인 공간 전체 삭제 안내", role: .destructive) { cloudDeleteFirstConfirmation = true }
+            Button("iCloud 포함 전체 삭제 지원 상태 확인") { Task { await model.inspectCloudDeletion() } }
         } header: {
             Label("데이터 삭제", systemImage: "trash")
         } footer: {

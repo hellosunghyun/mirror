@@ -14,6 +14,8 @@ struct MirrorRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var sceneExposureID = UUID()
     @State private var adjacentCalendarVisible = false
+    @State private var detailCloseRequestedID: UUID?
+    @State private var detailDraftTaskID: UUID?
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -55,7 +57,7 @@ struct MirrorRootView: View {
         .inspector(isPresented: taskInspectorPresentation) {
             NavigationStack {
                 if let task = model.selectedTask {
-                    MirrorTaskDetail(task: task)
+                    MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID)
                 }
             }
             .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
@@ -344,13 +346,35 @@ struct MirrorRootView: View {
             : AnyLayout(HStackLayout(spacing: 12))
         return layout {
             if model.problem != nil || model.projectionPending {
-                Button("다시 확인") { Task { await model.retry() } }.accessibilityIdentifier("state.retry")
+                Button { Task { await model.retry() } } label: {
+                    Text("다시 확인")
+                        #if os(iOS)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        #endif
+                }.accessibilityIdentifier("state.retry")
                     .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
             }
             if let undo = model.lastUndo,
                !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
-                Button("되돌리기") { Task { await model.undo() } }.accessibilityIdentifier("task.undo")
+                Button { Task { await model.undo() } } label: {
+                    Text("되돌리기")
+                        #if os(iOS)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        #endif
+                }.accessibilityIdentifier("task.undo")
                     .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
+            }
+            if model.feedback != nil, model.problem == nil, !model.isSaving, !model.projectionPending {
+                Button {
+                    guard model.problem == nil, !model.isSaving, !model.projectionPending else { return }
+                    model.feedback = nil
+                } label: {
+                    Label("저장 안내 닫기", systemImage: "xmark")
+                        .labelStyle(.iconOnly)
+                        #if os(iOS)
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        #endif
+                }.accessibilityIdentifier("state.dismissFeedback")
             }
         }
     }
@@ -358,8 +382,9 @@ struct MirrorRootView: View {
         Binding(get: {
             isTaskInspectorVisible
         }, set: { shown in
-            guard !shown, !model.showReview else { return }
-            model.selectedTaskID = nil
+            guard !shown, !model.showReview, !model.isSaving else { return }
+            if let id = model.selectedTaskID, detailDraftTaskID == id { detailCloseRequestedID = id }
+            else { model.selectedTaskID = nil }
         })
     }
     private var sidebarSelection: Binding<MirrorDestination?> {

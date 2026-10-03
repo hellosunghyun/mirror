@@ -110,4 +110,6 @@ python3.12 -m venv .venv
 
 최종 목표는 전체 명세의 앱 제작이다. [전체 구현 계획](docs/IMPLEMENTATION_PLAN.md)은 D-01~D-16의 산출물·선행 조건·검증 게이트·외부 준비를, [요구사항 추적표](docs/REQUIREMENTS_TRACEABILITY.md)는 FR 30개·NFR 12개·QA 87개의 구현과 증거를 관리한다. 중간 단계의 골격이나 단위 테스트 통과를 전체 제품 완성으로 기록하지 않는다.
 
+쉽게 넣고 미루는 흐름과 화면 분배를 기준으로 한 [전체 앱 개선 기준](docs/COMPREHENSIVE_APP_REVIEW.md)에 이번 전면 검토의 수용 조건과 남은 구현·검증을 기록한다.
+
 먼저 [개발 지침](AGENTS.md), 원본 문서 01·03·04·06, [테스트 전략](TESTING.md)을 읽는다. 타깃 골격과 날짜 판정은 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)에 기록한다. 타깃·도메인·저장·명령·시스템 통합의 실제 코드와 원격 실행을 확인한 뒤, 서명·등록·실기기·사용자 검증 게이트를 충족한다.

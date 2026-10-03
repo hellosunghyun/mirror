@@ -8,7 +8,9 @@ struct MirrorTodayView: View {
     @Environment(AppModel.self) private var model
     @State private var showCompleted = false
     @State private var showReviewSummary = false
+    @State private var showMoreDeadlines = false
     var body: some View {
+        let deadlines = model.deadlines
         List {
             Section {
                 VStack(alignment: .leading, spacing: 14) {
@@ -45,12 +47,19 @@ struct MirrorTodayView: View {
                 }.padding(.vertical, 8)
             }
             .listRowSeparator(.hidden).listRowBackground(Color.clear)
-            if !model.deadlines.isEmpty {
-                Section("실제 마감 안내 · 계획과 별개") {
-                    ForEach(model.deadlines, id: \.taskID) { task in
-                        Button { model.selectedTaskID = task.taskID } label: {
-                            Label { VStack(alignment: .leading) { Text(task.title).lineLimit(3).accessibilityLabel(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
-                        }.buttonStyle(.plain).padding(.vertical, 4)
+            if !deadlines.isEmpty {
+                Section("실제 마감 안내 · 총 \(deadlines.count)개 · 계획과 별개") {
+                    ForEach(deadlines.prefix(3), id: \.taskID) { task in deadlineRow(task) }
+                    if deadlines.count > 3 {
+                        DisclosureGroup(isExpanded: $showMoreDeadlines) {
+                            ForEach(deadlines.dropFirst(3), id: \.taskID) { task in deadlineRow(task) }
+                        } label: {
+                            Text("나머지 \(deadlines.count - 3)개 더 보기")
+                                .fixedSize(horizontal: false, vertical: true)
+                                #if os(iOS)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                #endif
+                        }
                     }
                 }
                 .listRowSeparator(.hidden).listRowBackground(Color.clear)
@@ -105,6 +114,11 @@ struct MirrorTodayView: View {
         .onChange(of: model.showReview) { _, isPresented in
             if !isPresented { showReviewSummary = false }
         }
+    }
+    private func deadlineRow(_ task: TaskProjection) -> some View {
+        Button { model.selectedTaskID = task.taskID } label: {
+            Label { VStack(alignment: .leading) { Text(task.title).lineLimit(3).accessibilityLabel(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
+        }.buttonStyle(.plain).padding(.vertical, 4)
     }
     private var reviewButtonTitle: String {
         if let session = model.review, !session.cards.isEmpty {
@@ -715,6 +729,8 @@ struct MirrorReviewView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exposureID = UUID()
+    @State private var detailCloseRequestedID: UUID?
+    @State private var detailDraftTaskID: UUID?
 
     var body: some View {
         NavigationStack {
@@ -800,9 +816,13 @@ struct MirrorReviewView: View {
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: model.currentCard?.id)
             .sheet(item: Binding(get: { model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })) { MirrorPlanPicker(request: $0) }
-            .sheet(item: Binding(get: { model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: { if $0 == nil, model.showReview { model.selectedTaskID = nil } })) { detail in
+            .sheet(item: Binding(get: { model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: {
+                guard $0 == nil, model.showReview, !model.isSaving else { return }
+                if let id = model.selectedTaskID, detailDraftTaskID == id { detailCloseRequestedID = id }
+                else { model.selectedTaskID = nil }
+            })) { detail in
                 NavigationStack {
-                    if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task) }
+                    if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID) }
                 }
             }
             .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil && model.selectedTaskID == nil))
@@ -1228,6 +1248,10 @@ struct MirrorTaskDetail: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let task: TaskProjection
+    @Binding private var closeRequestedID: UUID?
+    @Binding private var draftTaskID: UUID?
+    @State private var discardRequestedID: UUID?
+    @State private var showDiscardConfirmation = false
     @State private var title = ""
     @State private var note = ""
     @State private var link = ""
@@ -1236,6 +1260,23 @@ struct MirrorTaskDetail: View {
     @State private var showDeadline = false
     @State private var showHistory = false
     @State private var showNotes = false
+    init(task: TaskProjection, closeRequestedID: Binding<UUID?> = .constant(nil), draftTaskID: Binding<UUID?> = .constant(nil)) {
+        self.task = task; self._closeRequestedID = closeRequestedID; self._draftTaskID = draftTaskID
+    }
+    private var hasUnsavedChanges: Bool {
+        guard editing else { return false }
+        guard let original = editingSnapshot, original.taskID == task.taskID else { return true }
+        return title != original.title || note != (original.content.note ?? "") || link != (original.content.sourceURL ?? "")
+    }
+    private func requestClose() {
+        guard model.selectedTaskID == task.taskID, !model.isSaving,
+              !editing || editingSnapshot?.taskID == task.taskID else { return }
+        if hasUnsavedChanges {
+            guard !model.projectionPending else { return }
+            discardRequestedID = task.taskID; showDiscardConfirmation = true
+        }
+        else { model.selectedTaskID = nil }
+    }
     private var actionMaxWidth: CGFloat {
         #if os(macOS)
         return dynamicTypeSize.isAccessibilitySize ? .infinity : 200
@@ -1337,6 +1378,9 @@ struct MirrorTaskDetail: View {
                                 Button("실제 마감 편집") { showDeadline = true }.buttonStyle(.borderless).frame(minHeight: 44)
                                 Text(model.preferences.deadlineAlarmDates[task.taskID].map { "이 기기 알림: \($0.formatted())" } ?? "이 작업의 실제 마감 알림은 꺼져 있어요.")
                                     .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Button { showDeadline = true } label: { Label("실제 마감 추가", systemImage: "flag") }
+                                    .buttonStyle(.borderless).frame(minHeight: 44)
                             }
                         }
                         VStack(alignment: .leading, spacing: 0) {
@@ -1358,10 +1402,6 @@ struct MirrorTaskDetail: View {
                                 VStack(alignment: .leading, spacing: 16) {
                                     if task.status == .open {
                                         Button("당분간 보관") { Task { await model.park(task) } }.frame(minHeight: 44)
-                                    }
-                                    if task.deadline == nil {
-                                        Button { showDeadline = true } label: { Label("실제 마감 추가", systemImage: "flag") }
-                                            .frame(minHeight: 44)
                                     }
                                     if task.deadline != nil {
                                         Button("실제 마감 알림 설정") { showDeadline = true }.frame(minHeight: 44)
@@ -1420,6 +1460,15 @@ struct MirrorTaskDetail: View {
                     .accessibilityIdentifier("detail.save")
                     Button("편집 취소") { editing = false; editingSnapshot = nil }
                         .buttonStyle(.borderless).frame(minHeight: 44)
+                    if model.problem != nil || model.projectionPending {
+                        Button { Task { await model.retry() } } label: {
+                            Text("저장 결과 다시 확인")
+                                #if os(iOS)
+                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                #endif
+                        }
+                        .buttonStyle(.borderless).accessibilityIdentifier("detail.retry")
+                    }
                 }.padding(.horizontal, 24).padding(.vertical, 12)
                     .frame(maxWidth: .infinity, alignment: .leading).background(MirrorPalette.surface)
             } else {
@@ -1461,14 +1510,40 @@ struct MirrorTaskDetail: View {
             }
         }
         .navigationTitle("작업 상세")
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("상세 닫기") { model.selectedTaskID = nil }.accessibilityIdentifier("detail.close") } }
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("상세 닫기") { requestClose() }.accessibilityIdentifier("detail.close") } }
+        .interactiveDismissDisabled(hasUnsavedChanges || model.isSaving)
+        .onChange(of: hasUnsavedChanges, initial: true) { _, dirty in
+            if dirty { draftTaskID = task.taskID }
+            else if draftTaskID == task.taskID { draftTaskID = nil }
+        }
+        .onChange(of: closeRequestedID) { _, requested in
+            closeRequestedID = nil
+            guard requested == task.taskID else { return }
+            requestClose()
+        }
+        .alert("편집한 내용을 버리고 닫을까요?", isPresented: $showDiscardConfirmation) {
+            Button("버리고 닫기", role: .destructive) {
+                guard discardRequestedID == task.taskID, model.selectedTaskID == task.taskID,
+                      editingSnapshot?.taskID == task.taskID, !model.isSaving, !model.projectionPending else { return }
+                discardRequestedID = nil; model.selectedTaskID = nil
+            }.accessibilityIdentifier("detail.discardEdit")
+            Button("계속 편집", role: .cancel) { discardRequestedID = nil }
+                .accessibilityIdentifier("detail.keepEditing")
+        }
         .disabled(model.isSaving)
         .onChange(of: editing) { _, value in
             model.isDetailEditing = value
             model.isTextEditing = value
         }
-        .onDisappear { model.isDetailEditing = false; model.isTextEditing = false }
-        .onChange(of: task.taskID) { _, _ in showNotes = false; showHistory = false }
+        .onDisappear {
+            model.isDetailEditing = false; model.isTextEditing = false
+            if draftTaskID == task.taskID { draftTaskID = nil }
+            if closeRequestedID == task.taskID { closeRequestedID = nil }
+        }
+        .onChange(of: task.taskID) { _, _ in
+            showNotes = false; showHistory = false; discardRequestedID = nil; showDiscardConfirmation = false; closeRequestedID = nil
+            draftTaskID = hasUnsavedChanges ? task.taskID : nil
+        }
         .sheet(isPresented: $showDeadline) { MirrorDeadlineEditor(task: task) }
         .sheet(item: $model.picker) { MirrorPlanPicker(request: $0) }
         .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil))

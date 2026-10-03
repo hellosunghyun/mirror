@@ -35,6 +35,7 @@ final class MirrorUITests: XCTestCase {
         recordCapturePhase(.calendarScreenshotRecorded)
         try showToday(in: app)
         try captureSettings(in: app)
+        try verifySettingsPages(in: app)
         recordCapturePhase(.settingsRecorded)
         try capture(title, in: app, attachEvidence: true)
         recordCapturePhase(.captureSaved)
@@ -501,6 +502,13 @@ final class MirrorUITests: XCTestCase {
                        "Today로 돌아와도 미저장 상세 제목을 그대로 유지한다.")
         #endif
         try recordUI("detail-edit", in: app, identifiers: ["detail.title", "detail.save", "detail.close"])
+        try activate("detail.close", in: app)
+        let continueEditing = try requireElement("detail.keepEditing", in: app, preferButtons: true)
+        XCTAssertEqual(continueEditing.elementType, .button, "수정한 초안은 실제 계속 편집 버튼으로 보존할 수 있다.")
+        try activate("detail.keepEditing", in: app)
+        try requireNoElement("detail.keepEditing", in: app)
+        XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
+                       "상세 닫기의 폐기를 취소하면 미저장 제목 원문을 그대로 유지한다.")
         try activate("detail.save", in: app)
         try waitForLabel(edited, element: requireElement("detail.contentTitle", in: app), in: app)
         #if os(macOS)
@@ -1245,6 +1253,21 @@ final class MirrorUITests: XCTestCase {
         try interact(with: close, in: app)
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: close)
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed, "설정 화면을 실제로 닫은 뒤 입력한다.")
+    }
+
+    @MainActor
+    private func verifySettingsPages(in app: XCUIApplication) throws {
+        for section in ["diagnostics", "archive", "deletion"] {
+            try activate("settings.button", in: app)
+            try activate("settings.\(section)", in: app)
+            let pageID = "settings.\(section).page"
+            let page = try requireElement(pageID, in: app)
+            XCTAssertTrue(page.isHittable, "요청한 설정 페이지를 실제 화면에서 사용할 수 있어야 한다.")
+            let close = try settingsCloseButton(in: app)
+            try interact(with: close, in: app)
+            try requireNoElement(pageID, in: app)
+            try requireNoElement("settings.close", in: app)
+        }
     }
 
     @MainActor
