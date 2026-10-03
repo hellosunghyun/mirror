@@ -232,6 +232,52 @@ def failure_locations(log, bundle, source_root=ROOT):
     return reports
 
 
+def query_failure_locations(log, bundle, source_root=ROOT):
+    """검증된 두 사례의 고정 query 종류만 반환한다. payload와 원본 경로는 버린다."""
+    require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
+    prefixes = (
+        (r'^Failed to get matching snapshots?(?:\s|[.:]|$)', 'failedToGetMatchingSnapshot'),
+        (r'^Multiple matching elements found(?:\s|[.:]|$)', 'multipleMatchingElements'),
+        (r'^(?:No matching elements found|No matches found)(?:\s|[.:]|$)', 'noMatchingElements'),
+        (r'^AX snapshot timed out(?:\s|[.:]|$)', 'axSnapshotTimedOut'),
+        (r'^Element query evaluation failed(?:\s|[.:]|$)', 'elementQueryEvaluationFailed'),
+        (r'^Application is not running(?:\s|[.:]|$)', 'applicationNotRunning'),
+        (r'^Unhandled XCTest exception(?:\s|[.:]|$)', 'unhandledXCTestException'),
+    )
+    reports = []
+    source_line_count = None
+    for line in log.splitlines():
+        match = SUPPORT.UI_FAILURE_SOURCE.fullmatch(line)
+        if not match:
+            continue
+        case = SUPPORT.UI_FAILURE_CASE.match(match[4])
+        if not case or case[1] != bundle + '.' + CLASS or case[2] not in CASES:
+            continue
+        location = SUPPORT.source_location(match[1], int(match[2]), int(match[3]) if match[3] else 1, source_root)
+        if not location or location['file'] != SOURCE:
+            continue
+        if source_line_count is None:
+            try:
+                source_line_count = len(SUPPORT.read_regular(source_root / SOURCE, SUPPORT.MAX_JSON).decode('utf-8').splitlines())
+            except (OSError, UnicodeError, SUPPORT.AdaptiveError):
+                return []
+        if location['line'] > source_line_count:
+            continue
+        assertion = re.match(r'^(XCT[A-Za-z]+)(?:\s|$)', case[3])
+        if assertion and assertion[1] in SUPPORT.UI_ASSERTION_KINDS:
+            continue
+        kind = next((kind for pattern, kind in prefixes if re.match(pattern, case[3])), 'unknown')
+        report = {'scope': 'stdoutOnly', 'method': case[2], 'sourceFile': SOURCE,
+                  'line': location['line'],
+                  **({'column': location['column']} if match[3] else {}),
+                  'queryFailureKind': kind}
+        if report not in reports:
+            reports.append(report)
+        if len(reports) == 12:
+            break
+    return reports
+
+
 def diagnostics(directory, expected, phase):
     require(phase in ('build', 'test'), 'invalidArguments')
     context = context_for(directory, expected)
@@ -239,6 +285,11 @@ def diagnostics(directory, expected, phase):
     reports = SUPPORT.compiler_diagnostics(log, ROOT) if phase == 'build' else failure_locations(log, context['bundle'])
     print('::notice::Batch UI source diagnostics: ' + json.dumps(
         {**expected, 'phase': phase, 'scope': 'stdoutOnly', 'locations': reports}, sort_keys=True))
+    if phase == 'test':
+        query_reports = query_failure_locations(log, context['bundle'])
+        print('::notice::Batch UI query failure diagnostics: ' + json.dumps(
+            {**expected, 'phase': phase, 'scope': 'stdoutOnly', 'locations': query_reports,
+             'locationCount': len(query_reports)}, sort_keys=True))
 
 
 def validate_source(source):

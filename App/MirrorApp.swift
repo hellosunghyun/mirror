@@ -129,7 +129,7 @@ struct MirrorMenuBarContent: View {
             }
             Divider()
             Button("오늘 목록 열기") { openWindow(id: "main"); model.destination = .today }
-            Button("이어서 정리") { openWindow(id: "main"); model.beginReview(mode: .manualResume) }
+            Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") { openWindow(id: "main"); model.beginReview(mode: .manualResume) }
                 .disabled(model.isDetailEditing)
             Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
         }.padding().frame(width: 320)
@@ -163,9 +163,7 @@ struct MirrorCommands: Commands {
                 .disabled(model.lastUndo == nil || model.isTextEditing || model.isDetailEditing || model.isSaving)
         }
         CommandMenu("정리") {
-            Button("오늘 정리") { model.beginReview(mode: .manualResume) }
-                .disabled(model.isDetailEditing)
-            Button("이어서 정리") { model.beginReview(mode: .manualResume) }
+            Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") { model.beginReview(mode: .manualResume) }
                 .disabled(model.isDetailEditing)
             Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
                 .disabled(model.isDetailEditing)

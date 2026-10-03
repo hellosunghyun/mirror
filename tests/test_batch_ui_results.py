@@ -227,6 +227,141 @@ class BatchResultGateTests(unittest.TestCase):
                     with self.assertRaises(helper.BatchError):
                         helper.verify_receipt(directory, EXPECTED)
 
+    def query_failure_fixture(self, payload, bundle=BUNDLE, case=None, source=None, line=30, column=5, source_root=ROOT):
+        case = helper.CASES[0] if case is None else case
+        source = helper.SOURCE if source is None else source
+        position = str(line) + (':' + str(column) if column is not None else '')
+        return str(source_root / source) + ':' + position + ': error: -[' + bundle + '.' + helper.CLASS + ' ' + case + '] : ' + payload
+
+    def test_query_failure_diagnostics_classify_only_fixed_anchored_prefixes(self):
+        examples = (
+            ('Failed to get matching snapshot', 'failedToGetMatchingSnapshot'),
+            ('Failed to get matching snapshots', 'failedToGetMatchingSnapshot'),
+            ('Multiple matching elements found', 'multipleMatchingElements'),
+            ('No matching elements found', 'noMatchingElements'),
+            ('No matches found', 'noMatchingElements'),
+            ('AX snapshot timed out', 'axSnapshotTimedOut'),
+            ('Element query evaluation failed', 'elementQueryEvaluationFailed'),
+            ('Application is not running', 'applicationNotRunning'),
+            ('Unhandled XCTest exception', 'unhandledXCTestException'),
+        )
+        private = 'SYNTHETIC_PRIVATE_TITLE 11111111-2222-3333-4444-555555555555 /private/synthetic/value'
+        for bundle in ('MirrorIOSBatchUITests', 'MirrorMacBatchUITests'):
+            for case in helper.CASES:
+                for prefix, kind in examples:
+                    with self.subTest(bundle=bundle, case=case, kind=kind):
+                        value = self.query_failure_fixture(prefix + ': ' + private, bundle=bundle, case=case)
+                        report = helper.query_failure_locations(value, bundle)
+                        self.assertEqual(report, [{'scope': 'stdoutOnly', 'method': case, 'sourceFile': helper.SOURCE,
+                                                   'line': 30, 'column': 5, 'queryFailureKind': kind}])
+                        self.assertNotIn(private, json.dumps(report))
+                        self.assertNotIn(str(ROOT), json.dumps(report))
+        no_column = self.query_failure_fixture('Failed to get matching snapshots: ' + private, column=None)
+        self.assertEqual(helper.query_failure_locations(no_column, BUNDLE),
+                         [{'scope': 'stdoutOnly', 'method': helper.CASES[0], 'sourceFile': helper.SOURCE,
+                           'line': 30, 'queryFailureKind': 'failedToGetMatchingSnapshot'}])
+
+    def test_query_failure_diagnostics_keep_unknown_private_and_assertions_separate(self):
+        values = ('SYNTHETIC_PRIVATE_TITLE', 'prefix Failed to get matching snapshots: SYNTHETIC_PRIVATE_TITLE',
+                  'Failed to get matching snapshotsUnexpected: SYNTHETIC_PRIVATE_TITLE',
+                  'failed to get matching snapshots: SYNTHETIC_PRIVATE_TITLE', 'XCTAssertSynthetic failed: SYNTHETIC_PRIVATE_TITLE')
+        for payload in values:
+            with self.subTest(payload=payload):
+                report = helper.query_failure_locations(self.query_failure_fixture(payload), BUNDLE)
+                self.assertEqual(report[0]['queryFailureKind'], 'unknown')
+                self.assertEqual(set(report[0]), {'scope', 'method', 'sourceFile', 'line', 'column', 'queryFailureKind'})
+                self.assertNotIn('SYNTHETIC_PRIVATE_TITLE', json.dumps(report))
+        for assertion in helper.SUPPORT.UI_ASSERTION_KINDS:
+            value = self.query_failure_fixture(assertion + ' failed: Failed to get matching snapshots: SYNTHETIC_PRIVATE_TITLE')
+            self.assertEqual(helper.query_failure_locations(value, BUNDLE), [])
+
+    def test_query_failure_diagnostics_reject_wrong_owner_source_and_real_bounds(self):
+        payload = 'Failed to get matching snapshots: SYNTHETIC_PRIVATE_TITLE'
+        count = len((ROOT / helper.SOURCE).read_text().splitlines())
+        values = (
+            self.query_failure_fixture(payload, bundle='OtherUITests'),
+            self.query_failure_fixture(payload, bundle='MirrorMacBatchUITests'),
+            self.query_failure_fixture(payload, case='testUnexpected'),
+            self.query_failure_fixture(payload).replace('.' + helper.CLASS + ' ', '.OtherTests '),
+            self.query_failure_fixture(payload, source='Tests/Other.swift'),
+            self.query_failure_fixture(payload, source='../' + helper.SOURCE),
+            self.query_failure_fixture(payload, source_root=Path('/private/synthetic')),
+            self.query_failure_fixture(payload, line=0),
+            self.query_failure_fixture(payload, line=count + 1, column=1),
+            self.query_failure_fixture(payload, line=count + 2, column=1),
+            self.query_failure_fixture(payload, column=0),
+            self.query_failure_fixture(payload, column=99999),
+        )
+        for value in values:
+            with self.subTest(value=value):
+                self.assertEqual(helper.query_failure_locations(value, BUNDLE), [])
+        last = self.query_failure_fixture(payload, line=count, column=1)
+        self.assertEqual(helper.query_failure_locations(last, BUNDLE)[0]['line'], count)
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            source = source_root / helper.SOURCE
+            source.parent.mkdir(parents=True)
+            source.symlink_to(ROOT / helper.SOURCE)
+            value = self.query_failure_fixture(payload, source_root=source_root)
+            self.assertEqual(helper.query_failure_locations(value, BUNDLE, source_root), [])
+        with mock.patch.object(helper.SUPPORT, 'source_location', return_value={'file': helper.SOURCE, 'line': 30, 'column': 5}), \
+                mock.patch.object(helper.SUPPORT, 'read_regular', side_effect=OSError('SYNTHETIC_PRIVATE_VALUE')):
+            self.assertEqual(helper.query_failure_locations(self.query_failure_fixture(payload), BUNDLE), [])
+
+    def test_query_failure_diagnostics_bound_and_deduplicate_only_fixed_records(self):
+        rows = [self.query_failure_fixture('Failed to get matching snapshots: SYNTHETIC_PRIVATE_TITLE ' + str(line), line=line, column=1)
+                for line in range(1, 20)]
+        value = '\n'.join(row for row in rows for _ in (0, 1))
+        reports = helper.query_failure_locations(value, BUNDLE)
+        self.assertEqual(len(reports), 12)
+        self.assertEqual([report['line'] for report in reports], list(range(1, 13)))
+        self.assertTrue(all(report['queryFailureKind'] == 'failedToGetMatchingSnapshot' for report in reports))
+        changed = '\n'.join((rows[0], rows[0].replace('SYNTHETIC_PRIVATE_TITLE 1', 'SYNTHETIC_OTHER_TITLE')))
+        self.assertEqual(len(helper.query_failure_locations(changed, BUNDLE)), 1)
+        with self.assertRaises(helper.BatchError):
+            helper.query_failure_locations(None, BUNDLE)
+        with mock.patch.object(helper, 'MAX_LOG', 8), self.assertRaises(helper.BatchError):
+            helper.query_failure_locations(value, BUNDLE)
+
+    def test_query_failure_notice_preserves_original_notice_and_filters_payload(self):
+        value = self.query_failure_fixture('Failed to get matching snapshots: SYNTHETIC_PRIVATE_TITLE 11111111-2222-3333-4444-555555555555 /private/synthetic/value')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / 'test.log').write_text(value)
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'test')
+        messages = [call.args[0] for call in printed.call_args_list]
+        self.assertEqual(len(messages), 2)
+        original = {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': helper.failure_locations(value, BUNDLE)}
+        self.assertEqual(messages[0], '::notice::Batch UI source diagnostics: ' + json.dumps(original, sort_keys=True))
+        prefix = '::notice::Batch UI query failure diagnostics: '
+        self.assertTrue(messages[1].startswith(prefix))
+        report = json.loads(messages[1][len(prefix):])
+        self.assertEqual(report, {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly', 'locationCount': 1,
+                                  'locations': helper.query_failure_locations(value, BUNDLE)})
+        self.assertEqual(set(report), set(EXPECTED) | {'phase', 'scope', 'locations', 'locationCount'})
+        for private in ('SYNTHETIC_PRIVATE_TITLE', '11111111-2222-3333-4444-555555555555', '/private/synthetic/value', str(ROOT)):
+            self.assertNotIn(private, '\n'.join(messages))
+
+    def test_query_failure_notice_does_not_change_build_or_empty_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / 'build.log').write_text('SYNTHETIC_PRIVATE_TITLE')
+            (directory / 'test.log').write_text('SYNTHETIC_PRIVATE_TITLE')
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), \
+                    mock.patch.object(helper.SUPPORT, 'compiler_diagnostics', return_value=[]), \
+                    mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'build')
+            self.assertEqual(printed.call_args_list, [mock.call('::notice::Batch UI source diagnostics: ' + json.dumps(
+                {**EXPECTED, 'phase': 'build', 'scope': 'stdoutOnly', 'locations': []}, sort_keys=True))])
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'test')
+            self.assertEqual(len(printed.call_args_list), 2)
+            prefix = '::notice::Batch UI query failure diagnostics: '
+            empty = json.loads(printed.call_args_list[1].args[0][len(prefix):])
+            self.assertEqual(empty['locations'], [])
+            self.assertEqual(empty['locationCount'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

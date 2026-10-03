@@ -254,7 +254,18 @@ struct MirrorCaptureView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { model.clearCaptureInputProblem(); focusedField = nil; dismiss() }.accessibilityIdentifier("capture.close") } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { model.clearCaptureInputProblem(); focusedField = nil; dismiss() } label: {
+                        Text("닫기")
+                            #if os(iOS)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                            #endif
+                    }
+                    .disabled(model.isSaving).accessibilityIdentifier("capture.close")
+                }
+            }
+            .interactiveDismissDisabled(model.isSaving)
             .onAppear { model.clearCaptureInputProblem(); focusedField = .title; startCaptureFlow() }
             .onChange(of: title) { _, value in
                 if !value.isEmpty { showSavedFeedback = false; startCaptureFlow() }
@@ -463,6 +474,7 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
 @MainActor
 struct MirrorLibraryView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var filter: LibraryFilter = .inbox
     @State private var selecting = false
     @FocusState private var searchFocused: Bool
@@ -504,7 +516,7 @@ struct MirrorLibraryView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                        TextField("미래·완료·보관까지 검색", text: $model.search)
+                        TextField(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색", text: $model.search)
                             .textFieldStyle(.plain).focused($searchFocused).accessibilityIdentifier("library.search")
                             .onSubmit { searchFocused = false; model.isTextEditing = false }
                     }
@@ -521,7 +533,7 @@ struct MirrorLibraryView: View {
                             model.selectedTaskIDs.removeAll()
                             selecting.toggle()
                         }
-                            .buttonStyle(.borderless).frame(minHeight: 44)
+                            .buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
                             .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
                             .accessibilityIdentifier("library.selectToggle")
                     }
@@ -546,10 +558,6 @@ struct MirrorLibraryView: View {
                                     .accessibilityHint("검색과 목록에 표시된 미완료 작업만 선택해요.")
                                     .accessibilityIdentifier("library.selectAll")
                             }
-                            Button("선택한 \(selectedIDs.count)개 날짜 배치") { model.makePicker(taskIDs: Array(selectedIDs)) }
-                                .buttonStyle(.bordered).frame(minHeight: 44)
-                                .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
-                                .accessibilityIdentifier("library.batchPlan")
                         }
                     }
                 }.padding(.vertical, 4)
@@ -561,16 +569,16 @@ struct MirrorLibraryView: View {
                     HStack {
                         if selecting, task.status == .open {
                             Button {
-                                if model.selectedTaskIDs.contains(task.taskID) { model.selectedTaskIDs.remove(task.taskID) }
-                                else if model.selectedTaskIDs.count < 20 { model.selectedTaskIDs.insert(task.taskID) }
-                                else { model.problem = "한 번에 최대 20개를 선택해 주세요." }
+                                toggleSelection(task)
                             } label: { Image(systemName: model.selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square") }
                                 .buttonStyle(.plain).frame(minWidth: 44, minHeight: 44)
                                 .accessibilityLabel("\(task.title), 배치 대상 선택")
                                 .accessibilityValue(model.selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")
                                 .accessibilityIdentifier("task.select.\(task.taskID.uuidString)")
                         }
-                        if task.status == .deleted {
+                        if selecting {
+                            selectionRow(task)
+                        } else if task.status == .deleted {
                             Button { openDetail(task) } label: {
                                 VStack(alignment: .leading) { Text(task.title); Text("휴지통 · \(planLabel(task.plan.target))").font(.caption) }
                             }.buttonStyle(.plain)
@@ -588,12 +596,57 @@ struct MirrorLibraryView: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         .navigationTitle("보관함")
         .accessibilityIdentifier("library.list")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if selecting {
+                Button { model.makePicker(taskIDs: eligibleTaskIDs.filter(selectedIDs.contains)) } label: {
+                    Text("선택한 \(selectedIDs.count)개 날짜 배치")
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(minWidth: 44, maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.bordered)
+                .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
+                .accessibilityIdentifier("library.batchPlan")
+                #if os(macOS)
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 560 : 320)
+                #else
+                .frame(maxWidth: 560)
+                #endif
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .frame(maxWidth: .infinity)
+                .background(MirrorPalette.surface)
+            }
+        }
         .onChange(of: selectableTaskIDs) { _, visibleIDs in
             model.selectedTaskIDs.formIntersection(visibleIDs)
         }
         .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
         .onChange(of: searchFocused) { _, focused in model.isTextEditing = focused }
         .onDisappear { model.isTextEditing = false }
+    }
+    private func toggleSelection(_ task: TaskProjection) {
+        guard task.status == .open else { return }
+        if model.selectedTaskIDs.contains(task.taskID) { model.selectedTaskIDs.remove(task.taskID) }
+        else if model.selectedTaskIDs.count < 20 { model.selectedTaskIDs.insert(task.taskID) }
+        else { model.problem = "한 번에 최대 20개를 선택해 주세요." }
+    }
+    private func selectionRow(_ task: TaskProjection) -> some View {
+        let status = task.status == .completed ? "완료" : task.status == .deleted ? "휴지통" : "미완료"
+        return Button { toggleSelection(task) } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(task.title).font(.body.weight(.medium)).lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(planLabel(task.plan.target)).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+            }
+            .frame(minWidth: 44, maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(task.title)
+        .accessibilityValue("\(status), 배치: \(planLabel(task.plan.target))")
+        .accessibilityHint(task.status == .open ? "일괄 날짜 배치 대상을 선택하거나 해제해요." : "미완료 작업만 선택할 수 있어요.")
+        .accessibilityIdentifier("task.row.\(task.taskID.uuidString)")
+        .disabled(task.status != .open)
     }
     private func openDetail(_ task: TaskProjection) {
         searchFocused = false

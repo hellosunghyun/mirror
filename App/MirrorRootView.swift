@@ -261,10 +261,20 @@ struct MirrorRootView: View {
     }
     @ToolbarContentBuilder private var commonToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: commonToolbarPlacement) {
-            Button { model.openCapture() } label: { Label("일단 넣기", systemImage: "plus") }
+            Button { model.openCapture() } label: {
+                Label("일단 넣기", systemImage: "plus")
+                    #if os(iOS)
+                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    #endif
+            }
                 .accessibilityIdentifier("capture.open")
                 .keyboardShortcut("n", modifiers: .command)
-            Button { model.showSettings = true } label: { Label("설정", systemImage: "gearshape") }
+            Button { model.showSettings = true } label: {
+                Label("설정", systemImage: "gearshape")
+                    #if os(iOS)
+                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    #endif
+            }
                 .accessibilityIdentifier("settings.button")
         }
     }

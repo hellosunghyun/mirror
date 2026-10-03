@@ -213,6 +213,9 @@ final class MirrorBatchUITests: XCTestCase {
                                   missingTowardTop: true, in: app)
         XCTAssertEqual(batch.label, "선택한 \(selected.count)개 날짜 배치")
         XCTAssertTrue(batch.isEnabled)
+        try assertMobileTarget(batch)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.postpone.")).count, 0,
+                       "선택 모드에는 개별 미루기 버튼을 표시하지 않는다.")
     }
 
     private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {
