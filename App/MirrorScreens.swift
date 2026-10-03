@@ -373,9 +373,9 @@ struct MirrorCaptureView: View {
             }
         }
         .tint(MirrorPalette.accent)
+        #if os(macOS)
         .frame(idealWidth: 460, idealHeight: 340)
         .presentationSizing(.fitted)
-        #if os(macOS)
         .frame(minWidth: 320, minHeight: 280)
         #endif
     }
