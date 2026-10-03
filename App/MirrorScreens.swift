@@ -254,8 +254,7 @@ struct MirrorCaptureView: View {
     @State private var more = false
     @State private var splitPreview = false
     @State private var requestToken = UUID().uuidString
-    @State private var pendingLine: String?
-    @State private var pendingSingle = false
+    @State private var pendingCapture = CaptureDraftCommitState()
     @State private var captureFlowStarted = false
     @State private var showSavedFeedback = false
     @State private var savedFeedback = "보관함에 넣었어요."
@@ -335,19 +334,8 @@ struct MirrorCaptureView: View {
             }
             .onChange(of: focusedField) { _, focused in model.isTextEditing = focused != nil }
             .onDisappear { model.isTextEditing = false; model.clearCaptureInputProblem() }
-            .onChange(of: model.lastCaptureCommittedToken) { _, token in
-                guard token == requestToken else { return }
-                if pendingSingle {
-                    title = ""; note = ""; sourceURL = ""; pendingSingle = false
-                    initialPlan = nil; planContext = nil
-                    requestToken = UUID().uuidString; captureFlowStarted = false
-                    finishSavedCapture()
-                } else if let pendingLine {
-                    var remaining = title.components(separatedBy: .newlines)
-                    if remaining.first == pendingLine { remaining.removeFirst(); title = remaining.joined(separator: "\n") }
-                    self.pendingLine = nil; requestToken = UUID().uuidString
-                    if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
-                }
+            .onChange(of: model.presentedCaptureCommittedToken) { _, token in
+                acceptCaptureCommit(token)
             }
             .sheet(isPresented: $splitPreview) {
                 NavigationStack {
@@ -356,12 +344,22 @@ struct MirrorCaptureView: View {
                         ForEach(Array(lines.enumerated()), id: \.offset) { _, line in Text(line) }
                         Button("\(lines.count)개를 각각 저장") {
                             Task {
+                                let accepted = acceptCaptureCommit(model.presentedCaptureCommittedToken)
+                                if accepted == .clearDraft || (accepted == .removeFirstLine && lines.isEmpty) {
+                                    splitPreview = false
+                                    return
+                                }
                                 var remaining = lines
                                 for line in lines {
+                                    let submitted = CaptureDraftSnapshot(title: remaining.joined(separator: "\n"),
+                                        note: note, sourceURL: sourceURL, initialPlan: initialPlan, planContext: planContext)
                                     requestToken = UUID().uuidString
-                                    guard await model.capture(title: line, note: note, sourceURL: sourceURL, requestToken: requestToken,
-                                                              initialPlan: initialPlan, displayedContext: planContext, presentation: request) else {
-                                        if model.projectionPending { pendingLine = line }
+                                    let token = requestToken
+                                    pendingCapture = CaptureDraftCommitState()
+                                    model.registerPresentedCapture(token: token, presentation: request)
+                                    guard await model.capture(title: line, note: submitted.note, sourceURL: submitted.sourceURL, requestToken: token,
+                                                              initialPlan: submitted.initialPlan, displayedContext: submitted.planContext, presentation: request) else {
+                                        pendingCapture.register(token: token, draft: submitted, firstLine: line)
                                         break
                                     }
                                     remaining.removeFirst()
@@ -422,8 +420,11 @@ struct MirrorCaptureView: View {
                 #if os(macOS)
                 .frame(maxWidth: 200)
                 #endif
-            if model.projectionPending {
-                Button("저장 결과 다시 확인") { Task { await model.retry() } }
+            if model.canRetryPresentedCapture(request) {
+                Button(model.projectionPending ? "저장 결과 다시 확인" : "이전 입력 다시 시도") {
+                    Task { await model.retryPresentedCapture(request) }
+                }
+                    .disabled(model.isSaving)
                     .frame(minHeight: 44)
             }
         }.padding(12).frame(maxWidth: .infinity).background(MirrorPalette.surface)
@@ -461,19 +462,53 @@ struct MirrorCaptureView: View {
         dismiss()
     }
     private func save() {
+        let accepted = acceptCaptureCommit(model.presentedCaptureCommittedToken)
+        if accepted == .clearDraft || (accepted == .removeFirstLine && title.isEmpty && sourceURL.isEmpty) { return }
+        if pendingCapture.matchesWholeDraft(captureDraft), model.canRetryPresentedCapture(request) {
+            Task { await model.retryPresentedCapture(request) }
+            return
+        }
         showSavedFeedback = false
         startCaptureFlow()
         Task {
+            let submitted = captureDraft
             requestToken = UUID().uuidString
-            if await model.capture(title: title, note: note, sourceURL: sourceURL, requestToken: requestToken,
-                                   initialPlan: initialPlan, displayedContext: planContext, presentation: request) {
+            let token = requestToken
+            pendingCapture = CaptureDraftCommitState()
+            model.registerPresentedCapture(token: token, presentation: request)
+            if await model.capture(title: submitted.title, note: submitted.note, sourceURL: submitted.sourceURL, requestToken: token,
+                                   initialPlan: submitted.initialPlan, displayedContext: submitted.planContext, presentation: request) {
                 title = ""; note = ""; sourceURL = ""
                 initialPlan = nil; planContext = nil
                 requestToken = UUID().uuidString
                 captureFlowStarted = false
                 finishSavedCapture()
-            } else if model.projectionPending { pendingSingle = true }
+            } else { pendingCapture.register(token: token, draft: submitted) }
         }
+    }
+    private var captureDraft: CaptureDraftSnapshot {
+        CaptureDraftSnapshot(title: title, note: note, sourceURL: sourceURL, initialPlan: initialPlan, planContext: planContext)
+    }
+    @discardableResult
+    private func acceptCaptureCommit(_ token: String?) -> CaptureDraftCommitDisposition? {
+        guard token == requestToken,
+              let disposition = pendingCapture.consume(token: token, draft: captureDraft) else { return nil }
+        requestToken = UUID().uuidString
+        switch disposition {
+        case .clearDraft:
+            title = ""; note = ""; sourceURL = ""
+            initialPlan = nil; planContext = nil; captureFlowStarted = false
+            finishSavedCapture()
+        case .removeFirstLine:
+            var remaining = title.components(separatedBy: .newlines)
+            remaining.removeFirst(); title = remaining.joined(separator: "\n")
+            if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
+            else { focusedField = .title }
+        case .preserveDraft:
+            savedFeedback = "이전 입력은 저장됐어요. 수정한 내용은 그대로 남겼어요."
+            showSavedFeedback = true
+        }
+        return disposition
     }
     private func finishSavedCapture() {
         // 원본 저장과 projection 갱신을 확인한 성공 경로에서만 단일 입력을 닫는다.

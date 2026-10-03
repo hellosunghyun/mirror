@@ -120,6 +120,8 @@ final class AppModel {
     var projectionPending = false
     var projectionRecovery: ProjectionRecoveryNotice?
     var lastCaptureCommittedToken: String?
+    @ObservationIgnored private var presentedCaptureSubmission: (token: String, presentation: CapturePresentationRequest)?
+    var presentedCaptureCommittedToken: String?
     @ObservationIgnored private var menuBarCaptureToken: String?
     var menuBarCaptureCommittedReceipt: CaptureCommittedReceipt?
     var confirmation: CommandEnvelope?
@@ -536,6 +538,24 @@ final class AppModel {
         menuBarCaptureToken = token
         menuBarCaptureCommittedReceipt = nil
     }
+    func registerPresentedCapture(token: String, presentation: CapturePresentationRequest) {
+        guard capturePresentationCoordinator.isCurrent(presentation, contextID: storeObservationID) else { return }
+        guard presentedCaptureSubmission?.token != token else { return }
+        presentedCaptureSubmission = (token, presentation)
+        presentedCaptureCommittedToken = nil
+    }
+    func canRetryPresentedCapture(_ presentation: CapturePresentationRequest) -> Bool {
+        guard let submitted = presentedCaptureSubmission,
+              submitted.presentation == presentation,
+              capturePresentationCoordinator.isCurrent(presentation, contextID: storeObservationID),
+              let retryEnvelope else { return false }
+        return retryEnvelope.idempotencyKey == submitted.token
+    }
+    @discardableResult
+    func retryPresentedCapture(_ presentation: CapturePresentationRequest) async -> Bool {
+        guard canRetryPresentedCapture(presentation), let retryEnvelope else { return false }
+        return await execute(retryEnvelope, success: "이 기기에 저장했어요.")
+    }
     func capturePresentation(for ownerSceneID: UUID) -> CapturePresentationRequest? {
         capturePresentationCoordinator.presentation(for: ownerSceneID)
     }
@@ -548,11 +568,14 @@ final class AppModel {
     }
     @discardableResult
     func closeCapture(_ request: CapturePresentationRequest) -> Bool {
-        capturePresentationCoordinator.close(presentationID: request.id, ownerSceneID: request.ownerSceneID)
+        guard capturePresentationCoordinator.close(presentationID: request.id, ownerSceneID: request.ownerSceneID) else { return false }
+        presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
+        return true
     }
     @discardableResult
     func finishCapture(_ request: CapturePresentationRequest) -> Bool {
         guard capturePresentationCoordinator.finish(presentationID: request.id, ownerSceneID: request.ownerSceneID) else { return false }
+        presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
         destination = .today
         return true
     }
@@ -1067,6 +1090,11 @@ final class AppModel {
                     default: break
                     }
                 }
+                if let submitted = presentedCaptureSubmission,
+                   envelope.idempotencyKey == submitted.token,
+                   capturePresentationCoordinator.isCurrent(submitted.presentation, contextID: storeObservationID) {
+                    presentedCaptureCommittedToken = envelope.idempotencyKey
+                }
                 lastCaptureCommittedToken = envelope.idempotencyKey
             }
             return true
@@ -1564,6 +1592,7 @@ final class AppModel {
         activeReviewMilliseconds = 0; reviewExposures = []
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
         menuBarCaptureToken = nil; menuBarCaptureCommittedReceipt = nil
+        presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
         completedWidgetPickerID = nil; widgetNextDestination = nil
         completedBatchPickerID = nil; batchPickerOwner = nil
         projectionRecovery = nil; recoveryConfigurationBlocked = false

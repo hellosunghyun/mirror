@@ -28,6 +28,117 @@ private func notificationEvent(_ route: MirrorRoute, request: String,
 
 @Suite("시스템 탐색과 복구 중 외부 노출")
 struct SystemNavigationTests {
+    @Test("일반 저장 실패 뒤 자기 성공 receipt만 초안을 정확히 한 번 소비한다")
+    func captureDraftFailureRetryConsumesOwnTokenOnce() {
+        let draft = CaptureDraftSnapshot(title: "  실패 뒤 유지할 제목  ", note: "메모", sourceURL: "https://example.com/original")
+        var state = CaptureDraftCommitState()
+        state.register(token: "failed-capture", draft: draft)
+        let matchesInitialDraft = state.matchesWholeDraft(draft)
+        #expect(matchesInitialDraft)
+        let missingReceipt = state.consume(token: nil, draft: draft)
+        #expect(missingReceipt == nil)
+        let foreignReceipt = state.consume(token: "other-window", draft: draft)
+        #expect(foreignReceipt == nil)
+        let foreignReceiptRetainsDraft = state.matchesWholeDraft(draft)
+        #expect(foreignReceiptRetainsDraft)
+        let ownRetryReceipt = state.consume(token: "failed-capture", draft: draft)
+        #expect(ownRetryReceipt == .clearDraft)
+        let matchesConsumedDraft = state.matchesWholeDraft(draft)
+        #expect(!matchesConsumedDraft)
+        let repeatedReceipt = state.consume(token: "failed-capture", draft: draft)
+        #expect(repeatedReceipt == nil)
+    }
+
+    @Test("제목·메모·링크·날짜·계획 context를 바꾼 새 초안은 이전 성공이 지우지 않는다")
+    func captureDraftEditsPreserveEachField() throws {
+        let day = try LocalDate("2026-10-04")
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let nextContext = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v2")
+        let draft = CaptureDraftSnapshot(title: "  원문 제목  ", note: "원문 메모", sourceURL: "https://example.com/original",
+                                         initialPlan: .day(day), planContext: context)
+        let changed = [
+            CaptureDraftSnapshot(title: "원문 제목", note: draft.note, sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: context),
+            CaptureDraftSnapshot(title: draft.title, note: "바꾼 메모", sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: context),
+            CaptureDraftSnapshot(title: draft.title, note: draft.note, sourceURL: "https://example.com/changed", initialPlan: draft.initialPlan, planContext: context),
+            CaptureDraftSnapshot(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, initialPlan: nil, planContext: context),
+            CaptureDraftSnapshot(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: nextContext),
+            CaptureDraftSnapshot(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: nil),
+        ]
+        for edited in changed {
+            var state = CaptureDraftCommitState()
+            state.register(token: "old-input", draft: draft)
+            let matchesEditedDraft = state.matchesWholeDraft(edited)
+            #expect(!matchesEditedDraft)
+            let disposition = state.consume(token: "old-input", draft: edited)
+            #expect(disposition == .preserveDraft)
+            let repeatedReceipt = state.consume(token: "old-input", draft: draft)
+            #expect(repeatedReceipt == nil)
+        }
+    }
+
+    @Test("분할 재시도는 동일한 첫 줄·나머지 원문·메타데이터를 확인한 뒤 한 줄만 소비한다")
+    func captureDraftSplitPreservesSuffixAndMetadata() throws {
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let draft = CaptureDraftSnapshot(title: "첫 줄\n두 번째 줄\n마지막 줄", note: "공통 메모", sourceURL: "https://example.com/original",
+                                         initialPlan: .day(try LocalDate("2026-10-04")), planContext: context)
+        var state = CaptureDraftCommitState()
+        state.register(token: "split-input", draft: draft, firstLine: "첫 줄")
+        let splitIsWholeDraft = state.matchesWholeDraft(draft)
+        #expect(!splitIsWholeDraft)
+        let foreignReceipt = state.consume(token: "other-window", draft: draft)
+        #expect(foreignReceipt == nil)
+        let ownReceipt = state.consume(token: "split-input", draft: draft)
+        #expect(ownReceipt == .removeFirstLine)
+        let repeatedReceipt = state.consume(token: "split-input", draft: draft)
+        #expect(repeatedReceipt == nil)
+        let changed = [
+            CaptureDraftSnapshot(title: "첫 줄\n바꾼 두 번째 줄\n마지막 줄", note: draft.note, sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: context),
+            CaptureDraftSnapshot(title: draft.title, note: "바꾼 공통 메모", sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: context),
+            CaptureDraftSnapshot(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, initialPlan: draft.initialPlan, planContext: nil),
+        ]
+        for edited in changed {
+            state.register(token: "split-input", draft: draft, firstLine: "첫 줄")
+            let disposition = state.consume(token: "split-input", draft: edited)
+            #expect(disposition == .preserveDraft)
+            let alreadyConsumed = state.consume(token: "split-input", draft: draft)
+            #expect(alreadyConsumed == nil)
+        }
+    }
+
+    @Test("분할 첫 줄의 원문이 다르면 같은 snapshot도 지우지 않고 공백을 임의 정규화하지 않는다")
+    func captureDraftSplitRequiresExactFirstLine() {
+        let draft = CaptureDraftSnapshot(title: " 첫 줄 \r\n두 번째 줄", note: "", sourceURL: "")
+        var state = CaptureDraftCommitState()
+        state.register(token: "split-input", draft: draft, firstLine: "다른 첫 줄")
+        let wrongFirstLine = state.consume(token: "split-input", draft: draft)
+        #expect(wrongFirstLine == .preserveDraft)
+        state.register(token: "split-input", draft: draft, firstLine: "첫 줄")
+        let trimmedFirstLine = state.consume(token: "split-input", draft: draft)
+        #expect(trimmedFirstLine == .preserveDraft)
+        state.register(token: "split-input", draft: draft, firstLine: " 첫 줄 ")
+        let exactFirstLine = state.consume(token: "split-input", draft: draft)
+        #expect(exactFirstLine == .removeFirstLine)
+    }
+
+    @Test("새 실패 claim을 등록한 뒤 이전 토큰의 receipt는 새 초안을 소비하지 못한다")
+    func captureDraftReplacementRejectsStaleReceipt() {
+        let first = CaptureDraftSnapshot(title: "이전 제목", note: "이전 메모", sourceURL: "")
+        let next = CaptureDraftSnapshot(title: "새 제목", note: "새 메모", sourceURL: "")
+        var state = CaptureDraftCommitState()
+        state.register(token: "old-input", draft: first)
+        state.register(token: "new-input", draft: next)
+        let staleReceipt = state.consume(token: "old-input", draft: first)
+        #expect(staleReceipt == nil)
+        let replacementRetainsCurrentDraft = state.matchesWholeDraft(next)
+        #expect(replacementRetainsCurrentDraft)
+        let missingReceipt = state.consume(token: nil, draft: next)
+        #expect(missingReceipt == nil)
+        let currentReceipt = state.consume(token: "new-input", draft: next)
+        #expect(currentReceipt == .clearDraft)
+        let repeatedReceipt = state.consume(token: "new-input", draft: next)
+        #expect(repeatedReceipt == nil)
+    }
+
     @Test("같은 창의 입력 재호출은 생성 당시 모드와 presentation을 유지한다")
     func captureSameOwnerKeepsPresentation() throws {
         let contextID = UUID()

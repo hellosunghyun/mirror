@@ -33,6 +33,12 @@
 
 추가 정적 검토에서 Batch의 초기 launch 확인이 Swift error를 던지면 호출자 defer가 등록되지 않아 자기 앱 종료를 건너뛰는 경계를 찾았다. 기존 초기 조회 두 개와 반환을 do/catch로 감싸 같은 XCUIApplication을 종료한 뒤 원래 오류를 다시 던진다. 성공 경로와 기존2사례·53assertion·8XCTFail·기대값·시간·typed gate는 유지한다. 실제 잔류 프로세스나 기존 UI 실패 원인의 해결은 확인하지 못했으며, 이 마지막 보완의 SDK/UI 수용은 새 소스의 Actions에서 확인해야 한다. Simulator 재사용·Mac GUI session·고정 checkout 경로는 외부 runner 격리를 전제로 하지만 실제 host 공유/충돌은 미관측이므로 이를 원인으로 단정하지 않는다.
 
+소스68 Basic100의 실제 SwiftPM196개(도메인52·데이터101·시스템43) 통과를 확인했다. 개별 입력 owner 회귀의 실행 내역과 native UI 통과를 대신하지 않는다. source2ff의 Batch12 iPad는 새563줄 타깃 SDK 빌드가 성공하고 UI가 시작됐으며, 실제 cleanup/typed2 수용은 미확인이다.
+
+후속 재검토에서 일반 저장 실패의 own retry 성공을 입력 화면이 소비하지 않는 생산 경계를 찾았다. persistenceFailed/unavailable은 동일 봉투를 재시도할 수 있지만 화면의 pendingSingle/pendingLine은 projectionPending일 때만 등록됐다. T 입력이 실패한 뒤 같은 K 재시도가 성공해도 T가 남아 새 작업으로 다시 저장될 수 있고, 분할 B 실패 뒤 같은 B 재시도가 성공해도 B/C가 남는 소스 반례다. 이 수치는 실제 native 실패 주입 결과가 아니다.
+
+입력 화면은 모든 실패의 token과 제목·메모·URL·선택 계획·PlanningContext 원문을 추적한다. 모델은 현재 presentation/context의 자기 token 성공을 전용 receipt로 보존하고 다른 창·메뉴 입력의 성공으로 덮지 않는다. 내용이 같은 전체 입력의 기본 저장은 실제 own retryEnvelope가 있을 때 같은 봉투를 재시도하며, 새 입력을 임의 생성하지 않는다. 자기 성공은 정확히 한 번 소비하고, 변경한 초안은 전부 유지한다. 분할 입력은 snapshot과 첫 줄 원문이 일치할 때만 성공 줄 하나를 제거한다. 닫기·공간 변경의 기존 owner 보호와 메뉴 receipt·명령/멱등성·Undo 계약을 유지한다. 의미 있는 pure 회귀5개를 추가해 기존16개/126expect/11require를 보존했으며 현재 작성 수는21개/150expect/11require다. 이 마지막 생산 보완의 SDK·단위·UI 실행은 후속 Actions에서 확인해야 한다.
+
 불투명 sRGB 팔레트의 기본 전경/배경10조합은 정적 계산에서 모두 대비4.5 이상이었다. 실제 투명도·시스템 제어·렌더링 배경과 native audit 통과를 대신하지 않는다.
 
 Native6사례·46장과 기존 assertion/실패 조건, Batch2사례의 typed gate, Adaptive의 전체 접근성 audit와 시간 제한을 유지한다. 테스트를 skip하거나 실패 조건을 약화하지 않는다. 공개 SDK에서 auditType 및 nullable element 선언, optional throwing Issue→Bool signature는 관측했으나 true/false의 의미는 확인하지 못했다. handler 추정이나 사전 issue 무시를 추가하지 않는다.

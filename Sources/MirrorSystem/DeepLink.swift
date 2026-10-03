@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import MirrorDomain
 
 /// 입력 presentation의 origin과 저장 뒤 동작은 생성 당시 값으로 고정한다.
 public struct CapturePresentationRequest: Identifiable, Equatable, Sendable {
@@ -197,5 +198,54 @@ public enum MirrorDeepLink {
         }
         // 위 구조에는 유효한 고정 스킴과 UUID만 들어간다.
         return parts.url!
+    }
+}
+
+///  실패한 입력의 원문과 선택 날짜를 receipt 소비까지 그대로 비교한다.
+public struct CaptureDraftSnapshot: Equatable, Sendable {
+    public let title: String
+    public let note: String
+    public let sourceURL: String
+    public let initialPlan: PlanTarget?
+    public let planContext: PlanningContext?
+
+    public init(title: String, note: String, sourceURL: String,
+                initialPlan: PlanTarget? = nil, planContext: PlanningContext? = nil) {
+        self.title = title
+        self.note = note
+        self.sourceURL = sourceURL
+        self.initialPlan = initialPlan
+        self.planContext = planContext
+    }
+}
+
+public enum CaptureDraftCommitDisposition: Equatable, Sendable {
+    case clearDraft, removeFirstLine, preserveDraft
+}
+
+/// 한 실패 입력만 보유한다. 자기 receipt는 초안 변경 여부와 관계없이 정확히 한 번 소비한다.
+public struct CaptureDraftCommitState: Sendable {
+    private var pending: (token: String, draft: CaptureDraftSnapshot, firstLine: String?)?
+
+    public init() {}
+
+    public mutating func register(token: String, draft: CaptureDraftSnapshot, firstLine: String? = nil) {
+        pending = (token, draft, firstLine)
+    }
+
+    public func matchesWholeDraft(_ draft: CaptureDraftSnapshot) -> Bool {
+        guard let pending else { return false }
+        return pending.firstLine == nil && pending.draft == draft
+    }
+
+    public mutating func consume(token: String?, draft: CaptureDraftSnapshot) -> CaptureDraftCommitDisposition? {
+        guard let token, let pending, pending.token == token else { return nil }
+        self.pending = nil
+        guard pending.draft == draft else { return .preserveDraft }
+        if let firstLine = pending.firstLine {
+            return draft.title.components(separatedBy: .newlines).first == firstLine
+                ? .removeFirstLine : .preserveDraft
+        }
+        return .clearDraft
     }
 }
