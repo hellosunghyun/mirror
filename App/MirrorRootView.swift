@@ -132,6 +132,9 @@ struct MirrorRootView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if usesPhoneTabs { phoneHeader(model.destination) }
+        }
     }
     private var isTaskInspectorVisible: Bool {
         model.preferences.onboardingComplete && !model.isLoading && !model.showReview && model.selectedTask != nil
@@ -148,7 +151,6 @@ struct MirrorRootView: View {
     }
     private func phoneNavigation(_ destination: MirrorDestination) -> some View {
         VStack(spacing: 0) {
-            phoneHeader(destination)
             NavigationStack {
                 content(destination)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
