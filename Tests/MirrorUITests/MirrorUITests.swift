@@ -1364,6 +1364,14 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func element(_ identifier: String, in app: XCUIApplication, preferButtons: Bool = false) -> XCUIElement {
+        // 고유한 후보는 sheet 우선·hittable 선택을 거쳐도 같은 요소다.
+        // Button role을 먼저 확인하며, 중복 오류/Undo는 기존 modal 검색을 유지한다.
+        if identifier != "state.error" && identifier != "task.undo" {
+            let uniqueCandidates = preferButtons
+                ? app.buttons.matching(identifier: identifier)
+                : app.descendants(matching: .any).matching(identifier: identifier)
+            if uniqueCandidates.count == 1 { return uniqueCandidates.firstMatch }
+        }
         // 오류/Undo가 modal과 상태 표시줄 양쪽에 있으면 실제 활성 modal 요소를 우선한다.
         // Mac에서는 Button의 ID가 Row/Label에도 전달될 수 있으므로 실제 Button role을 우선한다.
         if preferButtons {
@@ -1453,8 +1461,12 @@ final class MirrorUITests: XCTestCase {
         let owners = app.scrollViews.allElementsBoundByIndex.filter { candidate in
             candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: "detail.history").firstMatch.exists
         }
-        guard control.exists, owners.count == 1,
-              let surface = scrollContainer(containing: control, in: app), surface.elementType == .scrollView else {
+        // 이미 확인한 고유 owner를 사용한다. 전역 스크롤 후보를 다시 열거하지 않는다.
+        // 실제 control의 소유·현재 조작 가능 여부는 기존 조건대로 확인한다.
+        guard control.exists, owners.count == 1, let surface = owners.first,
+              surface.isHittable,
+              surface.descendants(matching: .any).matching(identifier: control.identifier).firstMatch.exists,
+              surface.elementType == .scrollView else {
             try failHistoryNavigation("이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다", in: app, file: file, line: line)
         }
         let frame = surface.frame

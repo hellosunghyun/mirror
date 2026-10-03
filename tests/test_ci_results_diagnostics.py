@@ -35,6 +35,8 @@ STORE_DEDUP_NOTICE = '::notice::Store dedup result diagnostic: '
 STORE_DEDUP_REJECTED_NOTICE = '::notice::Store dedup result diagnostic rejected: '
 UI_FIRST_FAILURE_NOTICE = '::notice::UI first failure: '
 UI_FIRST_FAILURE_REJECTED_NOTICE = '::notice::UI first failure rejected: '
+UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE = '::notice::UI first failure rejection reasons: '
+UI_UNCLASSIFIED_FAILURE_NOTICE = '::notice::UI unclassified failure: '
 UI_VIEWPORT_NOTICE = '::notice::UI viewport diagnostic: '
 UI_VIEWPORT_REJECTED_NOTICE = '::notice::UI viewport diagnostic rejected: '
 UI_KEYBOARD_NOTICE = '::notice::UI keyboard introduction diagnostic: '
@@ -1841,6 +1843,8 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                         'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift',
                         'line': int(line), 'assertionKind': kind,
                     }])
+                    self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [])
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE), [])
         invalid_lines = [ui_failure_line(line=value) for value in ('0', '10001', '-1', '\u0661', '1.5', '1e2', '123456')]
         invalid_lines += [ui_failure_line(source=value) for value in (
             '/private/' + PRIVATE + '/OtherTests.swift', '/private/' + PRIVATE + '/MirrorUITests.swift',
@@ -1852,6 +1856,154 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
         self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
         self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': len(invalid_lines)}])
         self.assertNotIn('::error::', output)
+
+    def test_first_ui_failure_rejection_reasons_count_each_existing_branch_once(self):
+        reason_counts = {'sourceFormat': 0, 'sourceOwnership': 0, 'lineRange': 0, 'caseFormat': 0,
+                         'caseUnavailable': 0, 'caseOwnership': 0, 'assertionKind': 0}
+        native_error = ui_failure_line().replace('XCTAssertTrue failed -', 'Native UI error:')
+        samples = (
+            (ui_failure_line(line='-1'), 'sourceFormat'),
+            (ui_failure_line(source='/private/' + PRIVATE + '/OtherTests.swift'), 'sourceOwnership'),
+            (ui_failure_line(line='0'), 'lineRange'),
+            (ui_failure_line().replace(METHODS[0] + ']', 'test' + PRIVATE + '-broken]'), 'caseFormat'),
+            (ui_failure_line(explicit=False), 'caseUnavailable'),
+            (ui_failure_line(method='test' + PRIVATE), 'caseOwnership'),
+            (ui_failure_line().replace('.MirrorUITests ', '.OtherTests '), 'caseOwnership'),
+            (ui_failure_line(kind='XCTAssertNativeFailure'), 'assertionKind'),
+            (native_error, 'assertionKind'),
+        )
+        for failure, reason in samples:
+            with self.subTest(reason=reason, failure=failure):
+                output = self.capture(helper.report_ui_first_failure, [failure])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE), [{
+                    'rejectedTotal': 1, 'reasonCounts': {**dict.fromkeys(reason_counts, 0), reason: 1},
+                }])
+                self.assertEqual(len(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE)),
+                                 int(reason == 'assertionKind'))
+                reason_counts[reason] += 1
+        output = self.capture(helper.report_ui_first_failure, [failure for failure, _ in samples])
+        rejected = self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE)
+        reasons = self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE)
+        self.assertEqual(rejected, [{'invalidCount': 9}])
+        self.assertEqual(reasons, [{'rejectedTotal': 9, 'reasonCounts': reason_counts}])
+        self.assertEqual(sum(reasons[0]['reasonCounts'].values()), rejected[0]['invalidCount'])
+        self.assertEqual(len(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE)), 1)
+        self.assertNotIn('Native UI error', output)
+        self.assertNotIn('XCTAssertNativeFailure', output)
+        self.assertNotIn('/private/', output)
+        self.assertEqual(self.capture(helper.report_ui_first_failure, ['error: safe compiler error']), '')
+
+    def test_unclassified_ui_failure_requires_valid_source_line_and_owned_case(self):
+        unsupported = lambda **arguments: ui_failure_line(kind='XCTAssertNativeFailure', **arguments)
+        samples = (
+            [unsupported(source='/private/' + PRIVATE + '/OtherTests.swift')],
+            [unsupported(source='Tests/MirrorUITests/MirrorUITests.swift.backup')],
+            [unsupported(line='0')], [unsupported(line='10001')], [unsupported(line='-1')],
+            [unsupported().replace(METHODS[0] + ']', 'test' + PRIVATE + '-broken]')],
+            [unsupported(method='test' + PRIVATE)],
+            [unsupported().replace('.MirrorUITests ', '.OtherTests ')],
+            [unsupported(explicit=False)],
+            [started_line(METHODS[0]), started_line(METHODS[1]), unsupported(explicit=False)],
+            [started_line(METHODS[0]), case_line(METHODS[0]), unsupported(explicit=False)],
+            [started_line(METHODS[0], 'OtherTests'), unsupported(explicit=False)],
+        )
+        for lines in samples:
+            with self.subTest(lines=lines):
+                output = self.capture(helper.report_ui_first_failure, lines)
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                reasons = self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE)
+                self.assertEqual(len(reasons), 1)
+                self.assertEqual(reasons[0]['rejectedTotal'], 1)
+                self.assertEqual(sum(reasons[0]['reasonCounts'].values()), 1)
+                self.assertEqual(reasons[0]['reasonCounts']['assertionKind'], 0)
+        for explicit, source, line in ((True, '/private/' + PRIVATE + '/Tests/MirrorUITests/MirrorUITests.swift', '1'),
+                                      (False, 'MirrorUITests.swift', '10000')):
+            with self.subTest(explicit=explicit, line=line):
+                output = self.capture(helper.report_ui_first_failure, [
+                    started_line(METHODS[2]), unsupported(method=METHODS[2], source=source, line=line,
+                                                         explicit=explicit),
+                    unsupported(method=METHODS[0], line='939'), ui_failure_line(method=METHODS[1], line='475'),
+                ])
+                self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': METHODS[2],
+                    'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': int(line),
+                    'failureKind': 'unclassified',
+                }])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': METHODS[1],
+                    'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                    'assertionKind': 'XCTAssertTrue',
+                }])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 2}])
+
+    def test_unclassified_ui_failure_never_replaces_an_earlier_supported_failure(self):
+        output = self.capture(helper.report_ui_first_failure, [
+            ui_failure_line(method=METHODS[1], line='475'),
+            ui_failure_line(method=METHODS[2], line='284', kind='XCTAssertNativeFailure'),
+            ui_failure_line(method=METHODS[0], line='939', kind='XCTAssertNativeFailure'),
+        ])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[1],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+            'assertionKind': 'XCTAssertTrue',
+        }])
+        self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[2],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 284,
+            'failureKind': 'unclassified',
+        }])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 2}])
+
+    def test_unclassified_failure_and_reasons_preserve_private_filter_and_actions_outputs(self):
+        private = ('/private/' + PRIVATE + ' Test run with 999 tests passed '
+                   + started_line(METHODS[1]) + ' ' + screenshot_line('detail', '999'))
+        unsupported = ui_failure_message_line(private, method=METHODS[2], line='284').replace(
+            'XCTAssertTrue failed -', 'Native UI error:')
+        log = self.root / 'ui-unclassified-private.log'
+        log.write_text('\n'.join([
+            ui_failure_line(source='OtherTests.swift'), unsupported,
+            ui_failure_line(method=METHODS[0], line='599'),
+            unsupported + ' ' + viewport_line({'private': private}),
+            'error: safe unrelated compiler failure',
+        ]) + '\n')
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.diagnostics, log)
+        self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[2],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 284,
+            'failureKind': 'unclassified',
+        }])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+            'scope': 'stdoutOnly', 'method': METHODS[0],
+            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 599,
+            'assertionKind': 'XCTAssertTrue',
+        }])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 2}])
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE), [{
+            'rejectedTotal': 2, 'reasonCounts': {
+                'sourceFormat': 0, 'sourceOwnership': 1, 'lineRange': 0, 'caseFormat': 0,
+                'caseUnavailable': 0, 'caseOwnership': 0, 'assertionKind': 1,
+            },
+        }])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_NOTICE), [])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [{'invalidCount': 1}])
+        for raw in ('Native UI error', '/private/', 'expected/actual', 'Swift Testing completion reports:',
+                    METHODS[1], 'UI screenshot timing:', 'UI stdout diagnostics:', 'executedTests'):
+            self.assertNotIn(raw, output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+        self.assertEqual(summary_path.read_text(), 'previous summary\n')
 
     def test_xctfail_reason_identifies_fixed_helper_branches_at_forwarded_caller_284(self):
         branches = (

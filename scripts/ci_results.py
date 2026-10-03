@@ -557,7 +557,17 @@ def is_ui_failure_candidate(line):
 def report_ui_first_failure(lines):
     active_cases = set()
     first_failure = None
+    unclassified_failure = None
     invalid_count = 0
+    rejection_counts = dict.fromkeys((
+        'sourceFormat', 'sourceOwnership', 'lineRange', 'caseFormat',
+        'caseUnavailable', 'caseOwnership', 'assertionKind',
+    ), 0)
+
+    def reject(reason):
+        nonlocal invalid_count
+        invalid_count += 1
+        rejection_counts[reason] += 1
 
     def own_case(case):
         return ((case[0] == 'MirrorUITests' or case[0].endswith('.MirrorUITests'))
@@ -577,13 +587,16 @@ def report_ui_first_failure(lines):
                 active_cases.clear()
             continue
         source = UI_FAILURE_SOURCE_PATTERN.match(line)
-        if not source or not (source[1] in ('MirrorUITests.swift', UI_FAILURE_SOURCE_FILE)
-                              or source[1].endswith('/' + UI_FAILURE_SOURCE_FILE)):
-            invalid_count += 1
+        if not source:
+            reject('sourceFormat')
+            continue
+        if not (source[1] in ('MirrorUITests.swift', UI_FAILURE_SOURCE_FILE)
+                or source[1].endswith('/' + UI_FAILURE_SOURCE_FILE)):
+            reject('sourceOwnership')
             continue
         line_number = int(source[2])
         if not 1 <= line_number <= 10000:
-            invalid_count += 1
+            reject('lineRange')
             continue
         payload = source[3].strip()
         explicit = UI_FAILURE_CASE_PATTERN.match(payload)
@@ -591,14 +604,26 @@ def report_ui_first_failure(lines):
             case = (explicit[1], explicit[2])
             payload = explicit[3]
         elif payload.startswith(('-[', '+[')):
-            invalid_count += 1
+            reject('caseFormat')
             continue
         else:
             case = next(iter(active_cases)) if len(active_cases) == 1 else None
         assertion = re.match(r'^(XCTAssert[A-Za-z]*)\s+failed(?=[:\s-]|$)', payload)
         kind = assertion[1] if assertion else 'XCTFail' if payload.startswith('failed -') else None
-        if case is None or not own_case(case) or kind not in UI_ASSERTION_KINDS:
-            invalid_count += 1
+        if case is None:
+            reject('caseUnavailable')
+            continue
+        if not own_case(case):
+            reject('caseOwnership')
+            continue
+        if kind not in UI_ASSERTION_KINDS:
+            reject('assertionKind')
+            if unclassified_failure is None:
+                # UI unclassified failure는 검증된 stdout 위치이며 원인은 미확정이다.
+                # assertion 분류나 xcresult 결과·통과 게이트를 대신하지 않는다.
+                unclassified_failure = {'scope': 'stdoutOnly', 'method': case[1],
+                                        'sourceFile': UI_FAILURE_SOURCE_FILE, 'line': line_number,
+                                        'failureKind': 'unclassified'}
             continue
         if first_failure is None:
             first_failure = {'scope': 'stdoutOnly', 'method': case[1],
@@ -612,8 +637,13 @@ def report_ui_first_failure(lines):
                     first_failure['failureReason'] = reason
     if first_failure is not None:
         print('::notice::UI first failure: ' + json.dumps(first_failure))
+    if unclassified_failure is not None:
+        print('::notice::UI unclassified failure: ' + json.dumps(unclassified_failure))
     if invalid_count:
         print('::notice::UI first failure rejected: ' + json.dumps({'invalidCount': invalid_count}))
+        print('::notice::UI first failure rejection reasons: ' + json.dumps({
+            'rejectedTotal': invalid_count, 'reasonCounts': rejection_counts,
+        }))
 
 
 def report_ui_keyboard_diagnostics(lines):
