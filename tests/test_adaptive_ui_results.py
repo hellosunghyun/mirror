@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('mirror_adaptive_results', ROOT / 'scripts/ci-adaptive-ui-results.py')
 helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
+NOTICE_SPEC = importlib.util.spec_from_file_location('mirror_adaptive_sdk_notice', ROOT / 'scripts/ci-adaptive-ui-public-sdk-notice.py')
+sdk_notice = importlib.util.module_from_spec(NOTICE_SPEC)
+NOTICE_SPEC.loader.exec_module(sdk_notice)
 BUNDLE = 'MirrorIOSAdaptiveUITests'
 CASE = 'testMaximumTypeCaptureValidationAndRecovery'
 EXPECTED = {'platform': 'iphone', 'appearance': 'system'}
@@ -1051,6 +1054,109 @@ esac
                 helper.case_progress_diagnostics(root, expected)
                 self.assertIn('sourceUnavailable', output.call_args[0][0])
 
+
+
+class PublicSDKNoticeBoundsTests(unittest.TestCase):
+    def excerpt(self, first, text):
+        return {'firstLine': first, 'text': text,
+                'symbols': [symbol for symbol in sdk_notice.SYMBOLS if symbol in text]}
+
+    def record(self, *excerpts, name='SyntheticPublic.h'):
+        return {'file': name, 'sha256': 'a' * 64, 'excerpts': list(excerpts)}
+
+    def run_notice(self, value=None, raw=None):
+        if raw is None:
+            raw = json.dumps(value, ensure_ascii=True).encode('ascii')
+        stdin = mock.Mock()
+        stdin.buffer.read.return_value = raw
+        environment = {'GITHUB_ACTIONS': 'true', 'GITHUB_SHA': 'a' * 40,
+                       'GITHUB_RUN_ID': '1', 'GITHUB_RUN_ATTEMPT': '1'}
+        with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(sdk_notice.sys, 'platform', 'darwin'), \
+                mock.patch.object(sdk_notice.sys, 'stdin', stdin), mock.patch('builtins.print') as printed:
+            code = sdk_notice.main()
+        stdin.buffer.read.assert_called_once_with(sdk_notice.MAX_INPUT + 1)
+        return code, [call.args[0] for call in printed.call_args_list]
+
+    def decoded_report(self, notice):
+        self.assertTrue(notice.startswith(sdk_notice.PREFIX))
+        body = notice[len(sdk_notice.PREFIX):].replace('%0D', '\r').replace('%0A', '\n').replace('%25', '%')
+        return json.loads(body)
+
+    def test_sdk_notice_preserves_all_symbols_and_actual_lines_inside_whole_escaped_ascii_budget(self):
+        target = 'public ' + ' '.join(sdk_notice.SYMBOLS) + ' // synthetic declaration line'
+        lines = ['// synthetic public context % \\ " 한글 ' + 'x' * 400] * 10 + [target] + ['// trailing context'] * 10
+        original = self.excerpt(120, '\r\n'.join(lines))
+        value = {'status': 'found', 'files': [self.record(original)]}
+        self.assertTrue(sdk_notice.valid_files(value['files']))
+        full_report = {'schemaVersion': 1, 'sourceSHA': 'a' * 40, 'runID': '1', 'attempt': '1', **value}
+        full_message = json.dumps(full_report, ensure_ascii=True, separators=(',', ':'))
+        full_notice = sdk_notice.PREFIX + full_message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        self.assertGreater(len(full_notice.encode('ascii')) + 1, 3800)
+        code, notices = self.run_notice(value)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(notices), 1)
+        self.assertLessEqual(len(notices[0].encode('ascii')) + 1, 3800)
+        report = self.decoded_report(notices[0])
+        self.assertEqual(set(report), {'schemaVersion', 'sourceSHA', 'runID', 'attempt', 'status', 'files'})
+        self.assertEqual(report['status'], 'found')
+        self.assertTrue(sdk_notice.valid_files(report['files']))
+        self.assertEqual({symbol for record in report['files'] for excerpt in record['excerpts'] for symbol in excerpt['symbols']}, set(sdk_notice.SYMBOLS))
+        self.assertEqual(report['files'][0]['file'], value['files'][0]['file'])
+        self.assertEqual(report['files'][0]['sha256'], value['files'][0]['sha256'])
+        self.assertNotEqual(report['files'], value['files'])
+        self.assertEqual(report['files'][0]['excerpts'][0]['firstLine'], 129)
+        for excerpt in report['files'][0]['excerpts']:
+            index = excerpt['firstLine'] - original['firstLine']
+            self.assertEqual(excerpt['text'].splitlines(), lines[index:index + len(excerpt['text'].splitlines())])
+        small = {'status': 'found', 'files': [self.record(self.excerpt(7, target))]}
+        code, notices = self.run_notice(small)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.decoded_report(notices[0])['files'], small['files'])
+        separated = [self.excerpt(200 + 100 * index, '\n'.join(['// context ' + 'x' * 400] * 9
+                     + [symbol] + ['// trailing context'] * 9)) for index, symbol in enumerate(sdk_notice.SYMBOLS)]
+        code, notices = self.run_notice({'status': 'found', 'files': [self.record(*separated)]})
+        self.assertEqual(code, 0)
+        self.assertEqual(len(notices), 1)
+        self.assertLessEqual(len(notices[0].encode('ascii')) + 1, 3800)
+        self.assertEqual({symbol for record in self.decoded_report(notices[0])['files']
+                          for excerpt in record['excerpts'] for symbol in excerpt['symbols']}, set(sdk_notice.SYMBOLS))
+
+    def test_sdk_notice_skips_unfittable_whole_target_line_for_later_real_smaller_fragment(self):
+        oversized = sdk_notice.SYMBOLS[0] + '\0' * 900
+        small = 'public ' + ' '.join(sdk_notice.SYMBOLS)
+        value = {'status': 'found', 'files': [self.record(self.excerpt(1, oversized), self.excerpt(90, small))]}
+        self.assertTrue(sdk_notice.valid_files(value['files']))
+        code, notices = self.run_notice(value)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(notices), 1)
+        self.assertLessEqual(len(notices[0].encode('ascii')) + 1, 3800)
+        report = self.decoded_report(notices[0])
+        self.assertEqual(report['files'][0]['excerpts'], [self.excerpt(90, small)])
+        self.assertNotIn('\\u0000', notices[0])
+
+    def test_sdk_notice_found_with_no_fitting_complete_target_line_has_no_partial_or_fake_not_found(self):
+        value = {'status': 'found', 'files': [self.record(self.excerpt(1, sdk_notice.SYMBOLS[0] + '\0' * 900))]}
+        self.assertTrue(sdk_notice.valid_files(value['files']))
+        self.assertEqual(self.run_notice(value), (2, []))
+        code, notices = self.run_notice({'status': 'notFound', 'files': []})
+        self.assertEqual(code, 0)
+        self.assertEqual(self.decoded_report(notices[0])['status'], 'notFound')
+        self.assertEqual(self.decoded_report(notices[0])['files'], [])
+
+    def test_sdk_notice_validates_every_input_record_before_selection_and_keeps_read_bounds(self):
+        target = 'public ' + ' '.join(sdk_notice.SYMBOLS)
+        good = self.record(self.excerpt(1, target))
+        invalid = ({'status': 'found', 'files': [good, self.record(self.excerpt(1, target), name='PrivateSynthetic.h')]},
+                   {'status': 'found', 'files': [good, {**self.record(self.excerpt(1, target)), 'sha256': 'wrong'}]},
+                   {'status': 'found', 'files': [self.record({**self.excerpt(1, target), 'symbols': []})]},
+                   {'status': 'found', 'files': [good], 'privateExtra': PRIVATE},
+                   {'status': 'notFound', 'files': [good]})
+        for value in invalid:
+            with self.subTest(valueKind='invalidWholeInput'):
+                self.assertEqual(self.run_notice(value), (2, []))
+        duplicate = b'{"status":"found","status":"notFound","files":[]}'
+        self.assertEqual(self.run_notice(raw=duplicate), (2, []))
+        self.assertEqual(self.run_notice(raw=b' ' * (sdk_notice.MAX_INPUT + 1)), (2, []))
 
 
 if __name__ == '__main__':

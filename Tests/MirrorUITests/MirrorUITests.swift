@@ -704,6 +704,8 @@ final class MirrorUITests: XCTestCase {
             try dismissKeyboardIntroduction(in: app)
             #endif
             try recordUI("capture-form", in: app, identifiers: ["capture.title", "capture.note", "capture.url", "capture.save", "capture.close"])
+            try activate("capture.more", in: app)
+            _ = try requireElement("capture.note", in: app)
         }
         try activate("capture.save", in: app)
         try waitForValue("", element: field)
@@ -712,6 +714,7 @@ final class MirrorUITests: XCTestCase {
             XCTAssertEqual(displayedText(of: confirmation), "보관함에 넣었어요.",
                            "실제 저장을 확인한 뒤 연속 입력 화면 안에서 보관함 저장을 안내한다.")
             XCTAssertTrue(confirmation.isHittable, "저장 안내는 입력 화면에서 보여야 한다.")
+            try requireNoElement("capture.note", in: app)
             #if os(iOS)
             let keyboard = app.keyboards.firstMatch
             XCTAssertTrue(keyboard.exists, "연속 입력을 위해 저장 후에도 키보드를 유지한다.")

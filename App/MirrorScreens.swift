@@ -421,6 +421,7 @@ struct MirrorCaptureView: View {
         let single = model.captureIsSingle
         savedFeedback = model.feedback ?? "보관함에 넣었어요."
         if !single { showSavedFeedback = true }
+        more = false
         focusedField = single ? nil : .title
         model.finishCapture()
         if single { dismiss() }
@@ -676,7 +677,9 @@ struct MirrorLibraryView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(task.title)
-        .accessibilityValue("\(status), 배치: \(planLabel(task.plan.target))")
+        .accessibilityValue(task.status == .open
+            ? "\(status), 배치: \(planLabel(task.plan.target)), \(model.selectedTaskIDs.contains(task.taskID) ? "선택됨" : "선택 안 됨")"
+            : "\(status), 배치: \(planLabel(task.plan.target))")
         .accessibilityHint(task.status == .open ? "일괄 날짜 배치 대상을 선택하거나 해제해요." : "미완료 작업만 선택할 수 있어요.")
         .accessibilityIdentifier("task.row.\(task.taskID.uuidString)")
         .disabled(task.status != .open)

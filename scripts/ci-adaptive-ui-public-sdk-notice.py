@@ -7,7 +7,7 @@ import sys
 
 PREFIX = '::notice::Public SDK audit declarations: '
 SYMBOLS = ('performAccessibilityAudit', 'XCUIAccessibilityAuditIssue', 'XCUIAccessibilityAuditType')
-MAX_INPUT, MAX_NOTICE = 64 * 1024, 64 * 1024
+MAX_INPUT, MAX_NOTICE = 64 * 1024, 3800
 PUBLIC_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z')
 
 
@@ -69,6 +69,86 @@ def valid_files(value):
     return True
 
 
+def encoded_notice(report):
+    message = json.dumps(report, ensure_ascii=True, separators=(',', ':'))
+    escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+    notice = PREFIX + escaped
+    return notice if len(notice.encode('ascii')) + 1 <= MAX_NOTICE else None
+
+
+def selected_files(files, selected):
+    records = []
+    for file_index, record in enumerate(files):
+        excerpts = []
+        for excerpt_index, excerpt in enumerate(record['excerpts']):
+            indexes = sorted(index for fi, ei, index in selected if (fi, ei) == (file_index, excerpt_index))
+            if not indexes:
+                continue
+            groups = []
+            for index in indexes:
+                if groups and index == groups[-1][-1] + 1:
+                    groups[-1].append(index)
+                else:
+                    groups.append([index])
+            lines = excerpt['text'].splitlines()
+            for group in groups:
+                text = '\n'.join(lines[index] for index in group)
+                symbols = [symbol for symbol in SYMBOLS if re.search(r'\b' + symbol + r'\b', text)]
+                excerpts.append({'symbols': symbols, 'firstLine': excerpt['firstLine'] + group[0], 'text': text})
+        if excerpts:
+            records.append({'file': record['file'], 'sha256': record['sha256'], 'excerpts': excerpts})
+    return records
+
+
+def compact_notice(report):
+    notice = encoded_notice(report)
+    if notice is not None:
+        return notice
+    # 원래 input 전체를 검증한 뒤 실제 target 줄만 고른다. greedy 선택은 최적 조합을 보장하지 않는다.
+    candidates = []
+    for file_index, record in enumerate(report['files']):
+        for excerpt_index, excerpt in enumerate(record['excerpts']):
+            for index, line in enumerate(excerpt['text'].splitlines()):
+                symbols = tuple(symbol for symbol in SYMBOLS if re.search(r'\b' + symbol + r'\b', line))
+                if symbols:
+                    candidates.append(((file_index, excerpt_index, index), symbols))
+    selected, covered, targets = set(), set(), []
+    for _ in SYMBOLS:
+        best = None
+        for position, symbols in candidates:
+            new_symbols = set(symbols) - covered
+            if not new_symbols:
+                continue
+            proposed = selected | {position}
+            files = selected_files(report['files'], proposed)
+            if not valid_files(files):
+                continue
+            notice = encoded_notice({**report, 'files': files})
+            if notice is None:
+                continue
+            rank = (-len(new_symbols), len(notice.encode('ascii')), position)
+            if best is None or rank < best[0]:
+                best = (rank, proposed, symbols, position)
+        if best is None:
+            break
+        selected = best[1]
+        covered.update(best[2])
+        targets.append(best[3])
+    if not selected:
+        return None
+    # 예산이 허용할 때만 같은 원발췌의 앞뒤 실제 한 줄을 더한다. gap을 합치거나 내용을 만들지 않는다.
+    for file_index, excerpt_index, index in targets:
+        lines = report['files'][file_index]['excerpts'][excerpt_index]['text'].splitlines()
+        for adjacent in (index - 1, index + 1):
+            if not 0 <= adjacent < len(lines):
+                continue
+            proposed = selected | {(file_index, excerpt_index, adjacent)}
+            files = selected_files(report['files'], proposed)
+            if valid_files(files) and encoded_notice({**report, 'files': files}) is not None:
+                selected = proposed
+    return encoded_notice({**report, 'files': selected_files(report['files'], selected)})
+
+
 def main():
     # 허용된 공개 문맥 변수만 읽으며, SDK probe의 stdin 이외 파일/네트워크에 접근하지 않는다.
     if os.environ.get('GITHUB_ACTIONS') != 'true' or sys.platform != 'darwin':
@@ -90,10 +170,8 @@ def main():
             return 2
         report = {'schemaVersion': 1, 'sourceSHA': source, 'runID': run, 'attempt': attempt,
                   'status': value['status'], 'files': value['files']}
-        message = json.dumps(report, ensure_ascii=True, separators=(',', ':'))
-        escaped = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-        notice = PREFIX + escaped
-        if len(notice.encode('ascii')) + 1 > MAX_NOTICE:
+        notice = compact_notice(report)
+        if notice is None:
             return 2
     except (OSError, UnicodeError, ValueError, TypeError, RecursionError):
         return 2

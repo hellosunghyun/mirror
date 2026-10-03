@@ -51,3 +51,5 @@ Batch query 실패 진단은 기존 source notice와 별도의 `Batch UI query f
 별도 Batch UI mobile target diagnostics notice는 현재 실행의 다섯 문맥, 정확한 두 method·bundle/class·canonical Swift 파일·실제 행/열, 그리고 해당 행이 메시지의 axis와 일치하는 실제 ≥44 source assertion인지 확인한 뒤 고정 axis/control와 최대12개 중복 제거 위치·수만 남긴다. 기존 source/query notices·typed2·실패0·skip0·outcome·receipt·시간 제한과 원21 결과 회귀를 보존하고 privacy·소유/소스/실제 bounds·행 조건·notice·dedup 회귀3개를 작성했다. 이는 authored 계약이며 실제 target·크기·실패 원인이나 native 통과를 확인했다는 뜻이 아니다. 추가 identifier 조회의 실제 시간과 SDK 동작은 새 동일 SHA의 GitHub Actions에서 확인해야 한다.
 
 모바일 notice는 승인된 실제 source-bound 위치가 있을 때만 추가하여 기존 query/빈 진단 notice 수와 원21 회귀를 그대로 유지한다. assertMobileTarget 함수와 모든 호출을 유지하며 iOS에서 element.identifier property를 정확 한 번 읽는다. matching/count/snapshot API를 추가하지 않지만 이 property의 native AX 비용과 실제 시간은 미검증이다.
+
+선택 모드의 큰 제목 Button에도 현재 선택됨·선택 안 됨을 알린다. 기존 미완료·계획 값 전체를 앞에 유지하고 완료·휴지통 작업은 기존 상태와 계획을 표시한다. 검증의 초기 일반 행 두 경로는 원래 값을 유지하며, 날짜 배치 뒤 대상·대조 작업과 전체 선택·해제의 일곱 경로는 fixture에서 아는 선택 기대값을 명시한다. 전체 문자열의 정확한 비교·제목·ID·현재 날짜 명령·도달 조건·기존53개 assertion·8개 실패 조건·두 사례를 유지하며 앱의 실제 선택값으로 기대값을 만들지 않는다. 실제 VoiceOver 안내와 새 소스의 Actions 통과는 별도로 확인한다.

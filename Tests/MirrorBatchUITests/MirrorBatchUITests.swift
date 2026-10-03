@@ -32,13 +32,13 @@ final class MirrorBatchUITests: XCTestCase {
         try verifyPicker(selected, in: app)
         try activate("plan.today", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
-        try verifyRows(selected, plan: today, in: app)
-        try verifyRows([control], plan: unassigned, in: app)
+        try verifyRows(selected, plan: today, selection: "선택됨", in: app)
+        try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
         try verifyPicker(selected, in: app)
         try activate("plan.tomorrow", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
-        try verifyRows(selected, plan: tomorrow, in: app)
-        try verifyRows([control], plan: unassigned, in: app)
+        try verifyRows(selected, plan: tomorrow, selection: "선택됨", in: app)
+        try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
     }
 
     func testTwentyTaskBatchKeepsEveryOriginalAndUsesTomorrow() throws {
@@ -55,7 +55,7 @@ final class MirrorBatchUITests: XCTestCase {
         try verifyPicker(originals, in: app)
         try activate("plan.tomorrow", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
-        try verifyRows(originals, plan: tomorrow, in: app)
+        try verifyRows(originals, plan: tomorrow, selection: "선택됨", in: app)
         XCTAssertEqual(Set(originals.map(\.identifier)).count, 20)
     }
 
@@ -207,13 +207,15 @@ final class MirrorBatchUITests: XCTestCase {
         return tasks
     }
 
-    private func verifyRows(_ tasks: [OriginalTask], plan: String, in app: XCUIApplication) throws {
+    private func verifyRows(_ tasks: [OriginalTask], plan: String, selection: String? = nil,
+                            in app: XCUIApplication) throws {
+        let expectedValue = selection.map { plan + ", " + $0 } ?? plan
         for task in tasks {
             let row = try reachable(app.buttons.matching(identifier: task.identifier), surface: .library, in: app)
             XCTAssertEqual(row.identifier, task.identifier)
             XCTAssertEqual(row.label, task.title, "원문 제목을 보존한다.")
-            try waitValue(plan, element: row)
-            XCTAssertEqual(textValue(row), plan, "날짜 배치만 바뀌며 미완료 상태를 유지한다.")
+            try waitValue(expectedValue, element: row)
+            XCTAssertEqual(textValue(row), expectedValue, "날짜 배치만 바뀌며 미완료 상태를 유지한다.")
         }
     }
 
@@ -232,7 +234,7 @@ final class MirrorBatchUITests: XCTestCase {
         XCTAssertEqual(batch.label, "선택한 20개 날짜 배치")
         XCTAssertTrue(batch.isEnabled)
         try verifySelectionState(originals, value: "선택됨", in: app)
-        try verifyRows(originals, plan: unassigned, in: app)
+        try verifyRows(originals, plan: unassigned, selection: "선택됨", in: app)
 
         let clear = try reachable(app.buttons.matching(identifier: "library.selectAll"), surface: .library,
                                   missingTowardTop: true, in: app)
@@ -245,7 +247,7 @@ final class MirrorBatchUITests: XCTestCase {
         XCTAssertEqual(clearedBatch.label, "선택한 0개 날짜 배치")
         XCTAssertFalse(clearedBatch.isEnabled)
         try verifySelectionState(originals, value: "선택 안 됨", in: app)
-        try verifyRows(originals, plan: unassigned, in: app)
+        try verifyRows(originals, plan: unassigned, selection: "선택 안 됨", in: app)
         try activate("library.selectToggle", surface: .library, in: app)
         XCTAssertFalse(app.buttons.matching(identifier: "library.selectAll").firstMatch.exists)
     }
