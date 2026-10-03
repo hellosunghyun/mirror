@@ -136,9 +136,19 @@ public struct GetTodayTasksIntent: AppIntent {
         let services = try await SystemCompositionRoot.open()
         let context = try await services.currentContext(), preferences = try await services.preferences()
         let date = try planningDate.map { try LocalDate($0) } ?? context.planningDay
-        let tasks = try await services.todayTasks(on: date)
-            .prefix(50).map { MirrorTaskEntity(task: $0, hideTitle: preferences.hideExternalTitles) }
-        return .result(value: tasks, dialog: "명시적으로 이 날짜에 남긴 일이 \(tasks.count)개예요.")
+        let reply = MirrorTodayTaskReplyPolicy.response(try await services.todayTasks(on: date),
+                                                      hideTitle: preferences.hideExternalTitles)
+        if reply.totalCount > reply.entities.count {
+            return .result(value: reply.entities, dialog: "명시적으로 이 날짜에 남긴 일은 총 \(reply.totalCount)개예요. 그중 \(reply.entities.count)개를 보여드려요.")
+        }
+        return .result(value: reply.entities, dialog: "명시적으로 이 날짜에 남긴 일이 \(reply.entities.count)개예요.")
+    }
+}
+
+/// 외부 반환 한도와 해당 날짜의 전체 개수를 분리해 일부 결과를 전체로 안내하지 않는다.
+enum MirrorTodayTaskReplyPolicy {
+    static func response(_ tasks: [TaskProjection], hideTitle: Bool) -> (entities: [MirrorTaskEntity], totalCount: Int) {
+        (tasks.prefix(50).map { MirrorTaskEntity(task: $0, hideTitle: hideTitle) }, tasks.count)
     }
 }
 

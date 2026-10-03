@@ -111,6 +111,35 @@ struct SystemNavigationTests {
             tasks: tasks, enabled: true, hideTitles: false) == nil)
     }
 
+    @Test("오늘 조회는 50개 반환 경계에서도 해당 날짜의 실제 전체 개수와 순서를 유지한다")
+    func todayReplyCountBoundary() throws {
+        for (total, returned) in [(0, 0), (1, 1), (50, 50), (51, 50), (100, 50)] {
+            let tasks = try (0..<total).map { _ in try navigationTask() }
+            let reply = MirrorTodayTaskReplyPolicy.response(tasks, hideTitle: false)
+            #expect(reply.totalCount == total)
+            #expect(reply.entities.count == returned)
+            #expect(reply.entities.map(\.id) == Array(tasks.prefix(returned).map(\.taskID)))
+            #expect(tasks.count == total)
+        }
+    }
+
+    @Test("잘린 오늘 조회도 외부 제목 숨김과 실제 마감·계획을 보존한다")
+    func truncatedTodayReplyPrivacy() throws {
+        let day = try LocalDate("2026-10-07")
+        let tasks = try (0..<51).map { _ in try navigationTask(deadline: .day(localDate: day, timeZoneID: "Asia/Seoul")) }
+        let hidden = MirrorTodayTaskReplyPolicy.response(tasks, hideTitle: true)
+        let visible = MirrorTodayTaskReplyPolicy.response(tasks, hideTitle: false)
+        #expect(hidden.totalCount == 51 && visible.totalCount == 51)
+        #expect(hidden.entities.count == 50 && visible.entities.count == 50)
+        #expect(hidden.entities.map(\.id) == visible.entities.map(\.id))
+        #expect(hidden.entities.allSatisfy { $0.title == "할 일" })
+        #expect(visible.entities.allSatisfy { $0.title == "외부에 노출하지 않을 제목" })
+        #expect(hidden.entities.allSatisfy { $0.planSummary == "계획 2026-10-04" && !$0.completed })
+        #expect(hidden.entities.allSatisfy { $0.deadlineKind == .day && $0.deadlineDay == "2026-10-07" &&
+            $0.deadlineInstant == nil && $0.deadlineTimeZoneID == "Asia/Seoul" })
+        #expect(tasks.count == 51 && tasks.allSatisfy { $0.title == "외부에 노출하지 않을 제목" })
+    }
+
     @Test("Shortcuts 실제 마감은 계획과 분리하고 날짜 마감을 자정 시각으로 바꾸지 않는다")
     func entityDeadlineContract() throws {
         let day = try LocalDate("2026-10-07")
