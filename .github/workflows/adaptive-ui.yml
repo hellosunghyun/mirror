@@ -15,20 +15,6 @@ on:
       - 'tests/test_adaptive_ui_results.py'
       - '.github/workflows/adaptive-ui.yml'
       - 'development-baseline.json'
-  pull_request:
-    paths:
-      - 'App/**'
-      - 'Sources/**'
-      - 'Extensions/**'
-      - 'Configuration/**'
-      - 'Resources/**'
-      - 'Tests/MirrorAdaptiveUITests/**'
-      - 'Mirror.xcodeproj/**'
-      - 'scripts/generate-xcode-project.py'
-      - 'scripts/ci-adaptive-ui*'
-      - 'tests/test_adaptive_ui_results.py'
-      - '.github/workflows/adaptive-ui.yml'
-      - 'development-baseline.json'
   workflow_dispatch:
 
 permissions:
@@ -69,6 +55,14 @@ jobs:
         if: ${{ always() && steps.build.outputs.adaptive_build_ready == 'true' }}
         timeout-minutes: 20
         run: bash scripts/ci-adaptive-ui.sh "$MIRROR_ADAPTIVE_PLATFORM" "$MIRROR_UI_APPEARANCE" test
+      - name: 관측된 적응형 UI 코드 경계 진단
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          python3 scripts/ci-adaptive-ui-results.py progress \
+            --directory ".build/ci-adaptive-ui/$MIRROR_ADAPTIVE_PLATFORM-$MIRROR_UI_APPEARANCE" \
+            --platform "$MIRROR_ADAPTIVE_PLATFORM" --appearance "$MIRROR_UI_APPEARANCE" || true
       - name: 고정 요약의 현재 실행 소유와 schema 검증
         id: summary
         if: always()

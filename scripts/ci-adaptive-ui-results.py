@@ -50,6 +50,63 @@ CASE_EVENT = re.compile(
 SWIFT_SOURCE = re.compile(r'(?:App|Sources|Tests)/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+\.swift')
 COMPILER_ERROR = re.compile(r'^(.+?\.swift):([1-9][0-9]{0,5}):([1-9][0-9]{0,5}):\s+error:\s+(.+)$')
 MAX_DIAGNOSTICS = 12
+UI_FAILURE_SOURCE_FILE = 'Tests/MirrorAdaptiveUITests/MirrorAdaptiveUITests.swift'
+UI_ASSERTION_KINDS = frozenset({
+    'XCTAssert', 'XCTAssertTrue', 'XCTAssertFalse', 'XCTAssertEqual', 'XCTAssertNotEqual',
+    'XCTAssertGreaterThan', 'XCTAssertGreaterThanOrEqual', 'XCTAssertLessThan',
+    'XCTAssertLessThanOrEqual', 'XCTAssertNil', 'XCTAssertNotNil', 'XCTAssertIdentical',
+    'XCTAssertNotIdentical', 'XCTAssertThrowsError', 'XCTAssertNoThrow', 'XCTFail',
+})
+UI_CASE_EVENT = re.compile(
+    r"Test Case '[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]' "
+    r'(started|passed|failed|skipped)(?=[\s.]|$)')
+UI_FAILURE_SOURCE = re.compile(
+    r'^\s*(.+?\.swift):([0-9]{1,5})(?::([0-9]{1,5}))?:\s*error:\s*(.*)$')
+UI_FAILURE_CASE = re.compile(r'^[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]\s*:\s*(.*)$')
+PROGRESS_MARKER = 'UI adaptive progress: '
+PROGRESS_DECLARATION = re.compile(r'^    func (' + '|'.join(re.escape(case) for case in CASES) + r')\(\) throws \{$')
+PROGRESS_PROTOCOL = {
+    'testMaximumTypeCaptureValidationAndRecovery': (
+        ('started', 0), ('launchComplete', 0), ('captureOpenStarted', 0), ('captureOpened', 0),
+        ('captureInputStarted', 0), ('captureInputComplete', 0), ('recordStarted', 1), ('recordComplete', 1),
+        ('auditStarted', 1), ('auditComplete', 1), ('overlongInputStarted', 0), ('overlongInputComplete', 0),
+        ('validationSubmitted', 0), ('validationVerified', 0), ('recordStarted', 2), ('recordComplete', 2),
+        ('optionalInputsStarted', 0), ('optionalInputsVerified', 0), ('recoveryInputStarted', 0),
+        ('recoveryInputComplete', 0), ('recoverySaved', 0), ('recordStarted', 3), ('recordComplete', 3),
+        ('storedRowVerified', 0),
+    ),
+    'testMaximumTypeReviewAndWeekPicker': (
+        ('started', 0), ('launchComplete', 0), ('captureStarted', 0), ('captureComplete', 0),
+        ('reviewOpened', 0), ('reviewControlsVerified', 0), ('recordStarted', 1), ('recordComplete', 1),
+        ('auditStarted', 1), ('auditComplete', 1), ('weekOpened', 0),
+        *((phase, day) for day in range(5, 12) for phase in ('weekDayStarted', 'weekDayVerified')),
+        ('recordStarted', 2), ('recordComplete', 2), ('auditStarted', 2), ('auditComplete', 2),
+        ('weekSelected', 0), ('storedRowVerified', 0),
+        ('newCaptureStarted', 0), ('newCaptureComplete', 0), ('reviewResumeVerified', 0), ('reviewResumeClosed', 0),
+    ),
+    'testMaximumTypeSearchDetailCompletionAndUndo': (
+        ('started', 0), ('launchComplete', 0), ('captureStarted', 0), ('captureComplete', 0),
+        ('postponeStarted', 0), ('postponeComplete', 0), ('searchInputStarted', 0), ('searchInputComplete', 0),
+        ('searchVerified', 0), ('recordStarted', 1), ('recordComplete', 1), ('auditStarted', 1),
+        ('auditComplete', 1), ('detailOpenStarted', 0), ('detailVerified', 0),
+        ('recordStarted', 2), ('recordComplete', 2), ('auditStarted', 2), ('auditComplete', 2),
+        ('completionStarted', 0), ('completionVerified', 0), ('recordStarted', 3), ('recordComplete', 3),
+        ('undoStarted', 0), ('undoVerified', 0), ('recordStarted', 4), ('recordComplete', 4),
+        ('auditStarted', 3), ('auditComplete', 3),
+    ),
+    'testMaximumTypePlannedCaptureKeepsUnassignedDefault': (
+        ('started', 0), ('launchComplete', 0), ('defaultCaptureStarted', 0), ('defaultCaptureComplete', 0),
+        ('plannedCaptureStarted', 0), ('plannedCaptureReady', 0), ('recordStarted', 1), ('recordComplete', 1),
+        ('auditStarted', 1), ('auditComplete', 1), ('plannedCaptureSaved', 0), ('storedRowVerified', 0),
+        ('recordStarted', 2), ('recordComplete', 2),
+    ),
+    'testNarrowMacWindowCaptureAndRequestedDetail': (
+        ('started', 0), ('launchComplete', 0), ('windowResizeStarted', 0), ('windowResizeVerified', 0),
+        ('recordStarted', 1), ('recordComplete', 1), ('auditStarted', 1), ('auditComplete', 1),
+        ('captureStarted', 0), ('captureComplete', 0), ('detailOpenStarted', 0), ('detailVerified', 0),
+        ('recordStarted', 2), ('recordComplete', 2), ('auditStarted', 2), ('auditComplete', 2),
+    ),
+}
 
 
 class AdaptiveError(Exception):
@@ -247,6 +304,170 @@ def diagnostics(directory, expected):
     print('::notice::Adaptive UI compiler diagnostics: ' + json.dumps(
         {**expected, 'status': 'accepted' if reports else 'noAcceptedCompilerDiagnostics', 'diagnostics': reports},
         sort_keys=True))
+
+
+def xctest_failure_diagnostics(log, expected, source_root=ROOT):
+    """유일한 실제 시작·실패 instance의 명시 소유 오류만 정제한다. 결과 판정은 하지 않는다."""
+    require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
+    source = source_location(UI_FAILURE_SOURCE_FILE, 1, 1, source_root)
+    if source is None:
+        return []
+    try:
+        source_lines = len(read_regular(source_root / UI_FAILURE_SOURCE_FILE, MAX_JSON).decode('utf-8').splitlines())
+    except (OSError, UnicodeError, AdaptiveError):
+        return []
+    owner = base_context(expected)['bundle'] + '.' + CLASS
+    cases = required_cases(expected['platform'])
+    active, started, pending, reports, seen = None, set(), [], [], set()
+    for text in log.splitlines():
+        if re.search(r'\bTest\s+Case\b', text):
+            events = list(UI_CASE_EVENT.finditer(text))
+            if len(events) != 1 or text.count('Test Case ') != 1:
+                return []
+            event = events[0]
+            case = event[2]
+            if event[1] != owner or case not in cases:
+                return []
+            if event[3] == 'started':
+                if active is not None or case in started:
+                    return []
+                active = case
+                started.add(case)
+                pending = []
+            else:
+                if active != case:
+                    return []
+                if event[3] == 'failed':
+                    for report in pending:
+                        key = tuple(sorted(report.items()))
+                        if key not in seen and len(reports) < MAX_DIAGNOSTICS:
+                            seen.add(key)
+                            reports.append(report)
+                active, pending = None, []
+            continue
+        if len(pending) >= MAX_DIAGNOSTICS or len(reports) >= MAX_DIAGNOSTICS:
+            continue
+        match = UI_FAILURE_SOURCE.fullmatch(text)
+        if match is None or active is None:
+            continue
+        explicit = UI_FAILURE_CASE.fullmatch(match[4].strip())
+        if explicit is None or explicit[1] != owner or explicit[2] != active:
+            # 암묵적 active case fallback을 사용하지 않는다.
+            continue
+        line, column = int(match[2]), int(match[3]) if match[3] is not None else None
+        if line > source_lines:
+            continue
+        location = source_location(match[1], line, 1 if column is None else column, source_root)
+        if location is None or location['file'] != UI_FAILURE_SOURCE_FILE:
+            continue
+        payload = explicit[3]
+        assertion = re.match(r'^(XCTAssert[A-Za-z]*)\s+failed(?=[:\s-]|$)', payload)
+        kind = assertion[1] if assertion else 'XCTFail' if payload.startswith('failed -') else None
+        report = {'scope': 'stdoutOnly', 'method': active, 'sourceFile': UI_FAILURE_SOURCE_FILE, 'line': line}
+        if column is not None:
+            report['column'] = column
+        report.update({'assertionKind': kind} if kind in UI_ASSERTION_KINDS else {'failureKind': 'unclassified'})
+        if report not in pending and len(pending) < MAX_DIAGNOSTICS:
+            pending.append(report)
+    return [] if active is not None else reports
+
+
+def test_diagnostics(directory, expected):
+    context_for(directory, expected)
+    log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8', errors='strict')
+    reports = xctest_failure_diagnostics(log, expected)
+    print('::notice::Adaptive UI XCTest failure diagnostics: ' + json.dumps(
+        {**expected, 'scope': 'stdoutOnly',
+         'status': 'accepted' if reports else 'noAcceptedXCTestFailureDiagnostics', 'diagnostics': reports},
+        sort_keys=True))
+
+
+def source_method_entries(source, platform):
+    require(isinstance(source, str) and len(source.encode('utf-8')) <= MAX_JSON, 'invalidSourceBounds')
+    if source.splitlines().count('final class MirrorAdaptiveUITests: XCTestCase {') != 1:
+        return None
+    entries = {}
+    for line, text in enumerate(source.splitlines(), 1):
+        declaration = PROGRESS_DECLARATION.fullmatch(text)
+        if declaration is not None:
+            if declaration[1] in entries or line > 100_000:
+                return None
+            entries[declaration[1]] = line
+    cases = required_cases(platform)
+    return {case: entries[case] for case in cases} if all(case in entries for case in cases) else None
+
+
+def xctest_progress_diagnostics(log, expected, entries):
+    """관측된 method·phase만 반환한다. 선언 위치는 실행·성공·실패의 증거가 아니다."""
+    require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
+    cases = required_cases(expected['platform'])
+    require(isinstance(entries, dict) and set(entries) == set(cases)
+            and all(type(line) is int and 1 <= line <= 100_000 for line in entries.values()), 'invalidSourceEntries')
+    owner = base_context(expected)['bundle'] + '.' + CLASS
+    active, started, sequence, observed = None, set(), 0, None
+    for text in log.splitlines():
+        if re.search(r'\bTest\s+Case\b', text):
+            event = UI_CASE_EVENT.match(text)
+            if event is None or text.count('Test Case ') != 1 or len(list(UI_CASE_EVENT.finditer(text))) != 1:
+                return None
+            case = event[2]
+            if event[1] != owner or case not in cases:
+                return None
+            if event[3] == 'started':
+                if active is not None or case in started:
+                    return None
+                active, sequence = case, 0
+                started.add(case)
+                observed = {'method': case, 'sourceFile': UI_FAILURE_SOURCE_FILE, 'entryLine': entries[case]}
+            else:
+                if active != case:
+                    return None
+                active, sequence = None, 0
+            continue
+        if not re.search(r'\bUI\s+adaptive\s+progress\b', text):
+            continue
+        if active is None or not text.startswith(PROGRESS_MARKER) or text.count(PROGRESS_MARKER) != 1:
+            return None
+        try:
+            value = strict_json(text[len(PROGRESS_MARKER):])
+        except (AdaptiveError, ValueError, TypeError, RecursionError):
+            return None
+        if not (isinstance(value, dict) and set(value) == {'method', 'phase', 'sequence', 'step'}
+                and value['method'] == active + '()' and type(value['sequence']) is int
+                and type(value['step']) is int and isinstance(value['phase'], str)
+                and value['sequence'] == sequence + 1 and sequence < len(PROGRESS_PROTOCOL[active])
+                and (value['phase'], value['step']) == PROGRESS_PROTOCOL[active][sequence]):
+            return None
+        sequence += 1
+        observed = {'method': active, 'sourceFile': UI_FAILURE_SOURCE_FILE, 'entryLine': entries[active],
+                    'phase': value['phase'], 'sequence': sequence, 'step': value['step']}
+    return observed
+
+
+def progress_diagnostics(directory, expected):
+    report = {**expected, 'scope': 'stdoutOnly', 'semantics': 'reachedCodeBoundaryOnly'}
+    try:
+        context_for(directory, expected)
+    except (AdaptiveError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+        report['status'] = 'contextUnavailable'
+    else:
+        try:
+            require(source_location(UI_FAILURE_SOURCE_FILE, 1, 1, ROOT) is not None, 'invalidSourceEntries')
+            entries = source_method_entries(read_regular(ROOT / UI_FAILURE_SOURCE_FILE, MAX_JSON).decode('utf-8'),
+                                            expected['platform'])
+            require(entries is not None, 'invalidSourceEntries')
+        except (AdaptiveError, OSError, UnicodeError):
+            report['status'] = 'sourceUnavailable'
+        else:
+            try:
+                log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8')
+            except (AdaptiveError, OSError, UnicodeError):
+                report['status'] = 'testLogUnavailable'
+            else:
+                observed = xctest_progress_diagnostics(log, expected, entries)
+                report.update({'status': 'observed', 'progress': observed} if observed is not None
+                              else {'status': 'noAcceptedProgressDiagnostics'})
+    print('::notice::Adaptive UI progress diagnostics: ' + json.dumps(report, sort_keys=True))
 
 
 def file_record(path, products):
@@ -620,7 +841,7 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'adaptiveRemoteOnly')
     parser = SafeParser()
-    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'failure'))
+    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'failure'))
     parser.add_argument('--directory', required=True)
     parser.add_argument('--platform', required=True)
     parser.add_argument('--appearance', required=True)
@@ -655,6 +876,11 @@ def main():
     elif args.command == 'diagnostics':
         require(1 <= args.native_exit_code <= 255, 'invalidArguments')
         diagnostics(directory, expected)
+    elif args.command == 'test-diagnostics':
+        require(1 <= args.native_exit_code <= 255, 'invalidArguments')
+        test_diagnostics(directory, expected)
+    elif args.command == 'progress':
+        progress_diagnostics(directory, expected)
     else:
         require(args.phase in ('build', 'test') and type(args.exit_code) is int and 1 <= args.exit_code <= 255
                 and -1 <= args.native_exit_code <= 255, 'invalidArguments')

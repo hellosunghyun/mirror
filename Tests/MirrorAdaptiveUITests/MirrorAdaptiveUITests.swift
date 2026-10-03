@@ -7,31 +7,49 @@ import UIKit
 /// 매 launch는 앱의 기존 UI 테스트 모드로 새 실제 Core Data store를 연다.
 final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor private var screenshotSequence = 0
+    @MainActor private var progressSequence = 0
 
     @MainActor
     func testMaximumTypeCaptureValidationAndRecovery() throws {
+        progress(.started)
         let app = try launchApp()
+        progress(.launchComplete)
         defer { app.terminate() }
+        progress(.captureOpenStarted)
         try tap("capture.open", in: app)
         let title = try find("capture.title", in: app)
+        progress(.captureOpened)
+        progress(.captureInputStarted)
         try replaceText(title, with: "큰 글자로 입력", in: app)
+        progress(.captureInputComplete)
         try assertVisible(try button("capture.save", in: app), in: app, outsideKeyboard: true)
+        progress(.recordStarted, step: 1)
         try record("max-capture", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
         try audit(app)
+        progress(.auditComplete, step: 1)
 
         let original = String(repeating: "x", count: 500) + "Z"
+        progress(.overlongInputStarted)
         try replaceText(title, with: original, in: app)
+        progress(.overlongInputComplete)
         XCTAssertEqual(title.value as? String, original)
         try tap("capture.save", in: app)
+        progress(.validationSubmitted)
         let error = try find("state.error", in: app)
         try waitForText("제목은 500자 이하로 입력해 주세요.", in: error)
         XCTAssertEqual(title.value as? String, original, "큰 글자에서도 501자 원문을 자르거나 지우지 않는다.")
         try assertVisible(error, in: app, outsideKeyboard: true)
         try assertVisible(try button("capture.save", in: app), in: app, outsideKeyboard: true)
         try assertVisible(try button("capture.close", in: app), in: app)
+        progress(.validationVerified)
+        progress(.recordStarted, step: 2)
         try record("max-validation", in: app)
+        progress(.recordComplete, step: 2)
 
         // 정지사진의 접힌 카드 비침과 실제 접근 불가능을 구별한다.
+        progress(.optionalInputsStarted)
         let more = try button("capture.more", in: app)
         try reveal(more, in: app)
         try assertVisible(more, in: app, outsideKeyboard: true)
@@ -42,37 +60,56 @@ final class MirrorAdaptiveUITests: XCTestCase {
         try reveal(more, in: app)
         more.tap()
         try reveal(title, in: app)
+        progress(.optionalInputsVerified)
+        progress(.recoveryInputStarted)
         try replaceText(title, with: "오류 수정 뒤 저장", in: app)
+        progress(.recoveryInputComplete)
         try tap("capture.save", in: app)
         try waitForText("보관함에 넣었어요.", in: find("capture.feedback", in: app))
+        progress(.recoverySaved)
         try assertVisible(try find("capture.feedback", in: app), in: app, outsideKeyboard: true)
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "state.error").firstMatch.exists)
+        progress(.recordStarted, step: 3)
         try record("max-recovery", in: app)
+        progress(.recordComplete, step: 3)
         try tap("capture.close", in: app)
         try gone("capture.title", in: app)
         try destination("library", title: "보관함", in: app)
         let saved = try row("오류 수정 뒤 저장", in: app)
         XCTAssertTrue((saved.value as? String ?? "").contains("아직 정하지 않음"))
+        progress(.storedRowVerified)
     }
 
     @MainActor
     func testMaximumTypeReviewAndWeekPicker() throws {
+        progress(.started)
         let app = try launchApp()
+        progress(.launchComplete)
         defer { app.terminate() }
+        progress(.captureStarted)
         try capture("큰 글자 주간 선택", in: app)
+        progress(.captureComplete)
         try tap("today.review", in: app)
         try waitForText("큰 글자 주간 선택", in: find("review.card", in: app))
+        progress(.reviewOpened)
         for id in ["review.today", "review.tomorrow", "review.nextWeek"] {
             let choice = try button(id, in: app)
             try reveal(choice, in: app)
             try assertVisible(choice, in: app)
             try assertMobileTarget(choice)
         }
+        progress(.reviewControlsVerified)
+        progress(.recordStarted, step: 1)
         try record("max-review", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
         try audit(app)
+        progress(.auditComplete, step: 1)
         try tap("review.nextWeek", in: app)
+        progress(.weekOpened)
         var column: (x: CGFloat, width: CGFloat)?
         for day in 5...11 {
+            progress(.weekDayStarted, step: day)
             let id = String(format: "plan.day.2026-10-%02d", day)
             let date = try weekDate(id, in: app)
             try reveal(date, in: app)
@@ -99,28 +136,52 @@ final class MirrorAdaptiveUITests: XCTestCase {
                     }
                 }
             }
+            progress(.weekDayVerified, step: day)
         }
+        progress(.recordStarted, step: 2)
         try record("max-week", in: app)
+        progress(.recordComplete, step: 2)
+        progress(.auditStarted, step: 2)
         try audit(app)
+        progress(.auditComplete, step: 2)
         try tap("plan.day.2026-10-11", in: app)
         try gone("plan.cancel", in: app)
+        progress(.weekSelected)
         try tap("review.finish", in: app)
         try gone("review.finish", in: app)
         try destination("library", title: "보관함", in: app)
         try replaceText(find("library.search", in: app), with: "큰 글자 주간 선택", in: app)
         XCTAssertTrue((try row("큰 글자 주간 선택", in: app).value as? String ?? "").contains("10월 11일"))
+        progress(.storedRowVerified)
+
+        // 주간 배치로 정리를 닫은 뒤 들어온 항목도 화면의 주 정리 버튼으로 확인한다.
+        progress(.newCaptureStarted)
+        try capture("정리 완료 뒤 새 입력", in: app)
+        progress(.newCaptureComplete)
+        try destination("today", title: "오늘", in: app)
+        try tap("today.review", in: app)
+        try waitForText("정리 완료 뒤 새 입력", in: find("review.card", in: app))
+        progress(.reviewResumeVerified)
+        try tap("review.finish", in: app)
+        try gone("review.finish", in: app)
+        progress(.reviewResumeClosed)
     }
 
     @MainActor
     func testMaximumTypeSearchDetailCompletionAndUndo() throws {
+        progress(.started)
         let app = try launchApp()
+        progress(.launchComplete)
         defer { app.terminate() }
         let title = "큰 글자 검색과 내일"
+        progress(.captureStarted)
         try capture(title, in: app)
+        progress(.captureComplete)
         try destination("library", title: "보관함", in: app)
         let saved = try row(title, in: app)
         let taskID = try XCTUnwrap(saved.identifier.components(separatedBy: "task.row.").last)
         XCTAssertNotNil(UUID(uuidString: taskID))
+        progress(.postponeStarted)
         try tap("task.postpone.\(taskID)", in: app)
         let tomorrow = try button("plan.tomorrow", in: app)
         try reveal(tomorrow, in: app)
@@ -129,41 +190,68 @@ final class MirrorAdaptiveUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists)
         tomorrow.tap()
         try gone("plan.cancel", in: app)
+        progress(.postponeComplete)
         try destination("today", title: "오늘", in: app)
         XCTAssertFalse(rowQuery(title, in: app).firstMatch.exists, "내일 배치는 오늘 목록에 나타나지 않는다.")
         try destination("library", title: "보관함", in: app)
         let search = try find("library.search", in: app)
+        progress(.searchInputStarted)
         try replaceText(search, with: title, in: app)
+        progress(.searchInputComplete)
         let future = try row(title, in: app)
         XCTAssertTrue((future.value as? String ?? "").contains("10월 1일"))
         for id in ["capture.open", "settings.button"] {
             try assertVisible(try button(id, in: app), in: app, outsideKeyboard: true)
         }
+        progress(.searchVerified)
+        progress(.recordStarted, step: 1)
         try record("max-search", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
         try audit(app)
+        progress(.auditComplete, step: 1)
+        progress(.detailOpenStarted)
         search.typeText("\n")
         try reveal(future, in: app)
         try assertVisible(future, in: app)
         future.tap()
         try waitForText(title, in: find("detail.contentTitle", in: app))
         XCTAssertTrue(text(try find("detail.plan", in: app)).contains("10월 1일"))
+        progress(.detailVerified)
+        progress(.recordStarted, step: 2)
         try record("max-detail", in: app)
+        progress(.recordComplete, step: 2)
+        progress(.auditStarted, step: 2)
         try audit(app)
+        progress(.auditComplete, step: 2)
+        progress(.completionStarted)
         try tap("task.complete", in: app)
         try waitForText("완료 취소 · 다시 열기", in: button("task.complete", in: app))
+        progress(.completionVerified)
+        progress(.recordStarted, step: 3)
         try record("max-completion", in: app)
+        progress(.recordComplete, step: 3)
+        progress(.undoStarted)
         try tap("task.undo", label: "직전 변경 되돌리기", in: app)
         try waitForText("완료", in: button("task.complete", in: app))
         XCTAssertEqual(text(try find("detail.contentTitle", in: app)), title)
         XCTAssertTrue(text(try find("detail.plan", in: app)).contains("10월 1일"))
+        progress(.undoVerified)
+        progress(.recordStarted, step: 4)
         try record("max-undo", in: app)
+        progress(.recordComplete, step: 4)
+        progress(.auditStarted, step: 3)
         try audit(app)
+        progress(.auditComplete, step: 3)
     }
 
     @MainActor
     func testMaximumTypePlannedCaptureKeepsUnassignedDefault() throws {
+        progress(.started)
         let app = try launchApp()
+        progress(.launchComplete)
         defer { app.terminate() }
+        progress(.defaultCaptureStarted)
         let unassigned = "날짜 없는 큰 글자 입력"
         try tap("capture.open", in: app)
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "capture.planChoices").firstMatch.exists)
@@ -177,7 +265,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
         XCTAssertTrue((try row(unassigned, in: app).value as? String ?? "").contains("아직 정하지 않음"))
         try destination("today", title: "오늘", in: app)
         XCTAssertFalse(rowQuery(unassigned, in: app).firstMatch.exists)
+        progress(.defaultCaptureComplete)
 
+        progress(.plannedCaptureStarted)
         let planned = "오늘로 정한 큰 글자 입력"
         try tap("capture.open", in: app)
         try replaceText(find("capture.title", in: app), with: planned, in: app)
@@ -186,10 +276,16 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let summary = try find("capture.planSummary", in: app)
         XCTAssertTrue(text(summary).contains("9월 30일"))
         XCTAssertEqual(text(try button("capture.save", in: app)), "날짜에 넣기")
+        progress(.plannedCaptureReady)
+        progress(.recordStarted, step: 1)
         try record("max-capture-plan", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
         try audit(app)
+        progress(.auditComplete, step: 1)
         try tap("capture.save", in: app)
         try waitForText("9월 30일 수요일에 넣었어요.", in: find("capture.feedback", in: app))
+        progress(.plannedCaptureSaved)
         try assertVisible(try find("capture.feedback", in: app), in: app, outsideKeyboard: true)
         try tap("capture.close", in: app)
         try gone("capture.title", in: app)
@@ -197,13 +293,18 @@ final class MirrorAdaptiveUITests: XCTestCase {
         XCTAssertTrue((saved.value as? String ?? "").contains("9월 30일"))
         XCTAssertTrue((saved.value as? String ?? "").contains("미완료"), "날짜를 정한 입력은 완료가 아니다.")
         XCTAssertFalse(rowQuery(unassigned, in: app).firstMatch.exists)
+        progress(.storedRowVerified)
+        progress(.recordStarted, step: 2)
         try record("max-planned-today", in: app)
+        progress(.recordComplete, step: 2)
     }
 
     #if os(macOS)
     @MainActor
     func testNarrowMacWindowCaptureAndRequestedDetail() throws {
+        progress(.started)
         let app = try launchApp(recordConfiguration: false)
+        progress(.launchComplete)
         defer { app.terminate() }
         XCTAssertEqual(app.windows.count, 1)
         let window = app.windows.firstMatch
@@ -211,11 +312,12 @@ final class MirrorAdaptiveUITests: XCTestCase {
         XCTAssertTrue(hasArea(before))
         XCTAssertGreaterThan(before.width, 800, "실제 좁히기 전의 창은 목표 폭보다 넓어야 한다.")
         // 시스템 창의 실제 오른쪽 아래 모서리를 drag한다. 앱의 sizeClass를 위조하지 않는다.
+        progress(.windowResizeStarted)
         let corner = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 1))
             .withOffset(CGVector(dx: -2, dy: -2))
-        let destination = window.coordinate(withNormalizedOffset: .zero)
+        let resizeDestination = window.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(dx: 780, dy: 600))
-        corner.press(forDuration: 0.1, thenDragTo: destination)
+        corner.press(forDuration: 0.1, thenDragTo: resizeDestination)
         let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let frame = window.frame
             return Self.hasArea(frame) && frame.width >= 760 && frame.width <= 800
@@ -224,15 +326,23 @@ final class MirrorAdaptiveUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 15), .completed,
                        "현재 화면의 실제 창이 지원하는 좁은 폭과 높이로 줄어야 한다.")
         try configuration(in: app, viewport: "narrow")
+        progress(.windowResizeVerified)
         for id in ["capture.open", "settings.button", "today.review"] {
             try assertVisible(try button(id, in: app), in: app)
         }
+        progress(.recordStarted, step: 1)
         try record("narrow-main", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
         try audit(app)
+        progress(.auditComplete, step: 1)
+        progress(.captureStarted)
         try capture("좁은 창에서 저장", in: app)
+        progress(.captureComplete)
         try destination("library", title: "보관함", in: app)
         let saved = try row("좁은 창에서 저장", in: app)
         try reveal(saved, in: app)
+        progress(.detailOpenStarted)
         saved.tap()
         try waitForText("좁은 창에서 저장", in: find("detail.contentTitle", in: app))
         for id in ["detail.close", "detail.postponeTomorrow", "task.complete"] {
@@ -241,8 +351,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
             try assertVisible(control, in: app)
         }
         XCTAssertTrue(window.frame.width <= 900, "요청 상세가 좁은 창을 화면 밖으로 확장하지 않는다.")
+        progress(.detailVerified)
+        progress(.recordStarted, step: 2)
         try record("narrow-detail", in: app)
+        progress(.recordComplete, step: 2)
+        progress(.auditStarted, step: 2)
         try audit(app)
+        progress(.auditComplete, step: 2)
     }
     #endif
 
@@ -577,6 +692,67 @@ final class MirrorAdaptiveUITests: XCTestCase {
         attachment.name = "mirror-adaptive-\(stage)-\(screenshotSequence)"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    private func progress(_ phase: ProgressPhase, method: String = #function, step: Int = 0) {
+        if phase == .started { progressSequence = 0 }
+        progressSequence += 1
+        // 고정 사례명과 도달 경계만 기록하며 입력값·AX 요소·검증 결과를 포함하지 않는다.
+        print("UI adaptive progress: {\"method\":\"\(method)\",\"phase\":\"\(phase.rawValue)\",\"sequence\":\(progressSequence),\"step\":\(step)}")
+    }
+
+    private enum ProgressPhase: String {
+        case auditComplete
+        case auditStarted
+        case captureComplete
+        case captureInputComplete
+        case captureInputStarted
+        case captureOpenStarted
+        case captureOpened
+        case captureStarted
+        case completionStarted
+        case completionVerified
+        case defaultCaptureComplete
+        case defaultCaptureStarted
+        case detailOpenStarted
+        case detailVerified
+        case launchComplete
+        case newCaptureComplete
+        case newCaptureStarted
+        case optionalInputsStarted
+        case optionalInputsVerified
+        case overlongInputComplete
+        case overlongInputStarted
+        case plannedCaptureReady
+        case plannedCaptureSaved
+        case plannedCaptureStarted
+        case postponeComplete
+        case postponeStarted
+        case recordComplete
+        case recordStarted
+        case recoveryInputComplete
+        case recoveryInputStarted
+        case recoverySaved
+        case reviewControlsVerified
+        case reviewOpened
+        case reviewResumeClosed
+        case reviewResumeVerified
+        case searchInputComplete
+        case searchInputStarted
+        case searchVerified
+        case started
+        case storedRowVerified
+        case undoStarted
+        case undoVerified
+        case validationSubmitted
+        case validationVerified
+        case weekDayStarted
+        case weekDayVerified
+        case weekOpened
+        case weekSelected
+        case windowResizeStarted
+        case windowResizeVerified
     }
 
     private enum HarnessFailure: Error { case configuration, missingElement, unhittable }

@@ -1197,8 +1197,38 @@ final class MirrorUITests: XCTestCase {
         lastActionDescription = "iPad 가로 화면과 인접 일정의 실제 배치 안정 대기"
         XCUIDevice.shared.orientation = .landscapeLeft
         do {
+            // 기본 숨김을 확인한 뒤 실제 사용자 버튼으로 기존 가로 캡처를 준비한다.
+            let defaultToggle = try requireElement("ipad.adjacentCalendar.toggle", in: app, preferButtons: true)
+            let defaultToggleCount = app.buttons.matching(identifier: "ipad.adjacentCalendar.toggle").count
+            XCTAssertEqual(defaultToggleCount, 1, "보조 일정 표시 버튼은 고유해야 한다.")
+            guard defaultToggleCount == 1 else { throw UIHarnessError.unexpectedElement("ipad.adjacentCalendar.toggle") }
+            try waitForLabel("보조 일정 표시", element: defaultToggle, in: app)
+            try waitForValue("숨겨짐", element: defaultToggle)
+            XCTAssertEqual(defaultToggle.label, "보조 일정 표시")
+            XCTAssertEqual(value(of: defaultToggle), "숨겨짐")
+            try requireNoElement("ipad.adjacentCalendar", in: app)
+            try interact(with: defaultToggle, in: app)
+            let shownToggle = try requireElement("ipad.adjacentCalendar.toggle", in: app, preferButtons: true)
+            try waitForLabel("보조 일정 숨기기", element: shownToggle, in: app)
+            try waitForValue("표시됨", element: shownToggle)
+            let shownToggleCount = app.buttons.matching(identifier: "ipad.adjacentCalendar.toggle").count
+            XCTAssertEqual(shownToggleCount, 1, "보조 일정 숨기기 버튼은 고유해야 한다.")
+            guard shownToggleCount == 1 else { throw UIHarnessError.unexpectedElement("ipad.adjacentCalendar.toggle") }
+            XCTAssertEqual(shownToggle.label, "보조 일정 숨기기")
+            XCTAssertEqual(value(of: shownToggle), "표시됨")
             try await waitForViewport(in: app, landscape: true)
             try recordUI("ipad-landscape", in: app, identifiers: ["today.list", "capture.open", "settings.button", "ipad.adjacentCalendar"])
+            // 캡처 이후에도 같은 버튼으로 숨김이 실제 반영되는지 확인한다.
+            try interact(with: shownToggle, in: app)
+            let hiddenToggle = try requireElement("ipad.adjacentCalendar.toggle", in: app, preferButtons: true)
+            try waitForLabel("보조 일정 표시", element: hiddenToggle, in: app)
+            try waitForValue("숨겨짐", element: hiddenToggle)
+            let hiddenToggleCount = app.buttons.matching(identifier: "ipad.adjacentCalendar.toggle").count
+            XCTAssertEqual(hiddenToggleCount, 1, "다시 숨긴 보조 일정 표시 버튼은 고유해야 한다.")
+            guard hiddenToggleCount == 1 else { throw UIHarnessError.unexpectedElement("ipad.adjacentCalendar.toggle") }
+            XCTAssertEqual(hiddenToggle.label, "보조 일정 표시")
+            XCTAssertEqual(value(of: hiddenToggle), "숨겨짐")
+            try requireNoElement("ipad.adjacentCalendar", in: app)
         } catch {
             XCUIDevice.shared.orientation = .portrait
             throw error

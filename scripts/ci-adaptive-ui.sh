@@ -23,6 +23,9 @@ adaptive_finish() {
     if [[ "$adaptive_mode" == build && "$adaptive_original_native_status" -gt 0 ]]; then
       python3 scripts/ci-adaptive-ui-results.py diagnostics "${adaptive_args[@]}" \
         --native-exit-code "$adaptive_original_native_status" || true
+    elif [[ "$adaptive_mode" == test && "$adaptive_original_native_status" -gt 0 ]]; then
+      python3 scripts/ci-adaptive-ui-results.py test-diagnostics "${adaptive_args[@]}" \
+        --native-exit-code "$adaptive_original_native_status" || true
     fi
     python3 scripts/ci-adaptive-ui-results.py failure "${adaptive_args[@]}" \
       --phase "$adaptive_mode" --exit-code "$adaptive_exit_status" --native-exit-code "$adaptive_original_native_status" || true

@@ -159,7 +159,7 @@ public struct TaskRow: View {
             Text(title)
                 .font(compact ? .subheadline : .body.weight(.medium))
                 .foregroundStyle(status == .open ? style.text : style.muted)
-                .lineLimit(nil)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .overlay(alignment: .leading) {
                     // The strike draws from the leading edge over the text's own width.

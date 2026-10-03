@@ -121,14 +121,304 @@ class AdaptiveResultGateTests(unittest.TestCase):
             with self.assertRaises(helper.AdaptiveError):
                 helper.read_regular(root / 'build.log', 1)
 
+    def xctest_fixture(self, directory):
+        root = Path(directory).resolve()
+        path = root / 'Tests/MirrorAdaptiveUITests/MirrorAdaptiveUITests.swift'
+        path.parent.mkdir(parents=True)
+        path.write_text(('let value = 1 // synthetic XCTest diagnostic source\n') * 30)
+        return root, path
+
+    def xctest_row(self, path, line=1, column=5, owner=BUNDLE + '.MirrorAdaptiveUITests',
+                   case=CASE, payload='XCTAssertEqual failed: ' + PRIVATE):
+        coordinates = str(line) + (':' + str(column) if column is not None else '')
+        return str(path) + ':' + coordinates + ': error: -[' + owner + ' ' + case + '] : ' + payload
+
+    def test_xctest_diagnostics_emit_only_verified_coordinates_and_fixed_assertion_kinds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            rows = (self.xctest_row(path),
+                    self.xctest_row(helper.UI_FAILURE_SOURCE_FILE, 2, None, payload='failed - ' + PRIVATE),
+                    self.xctest_row(path, 3, 7, payload='XCTAssert' + PRIVATE + ' failed: ' + PRIVATE))
+            log = '\n'.join((event(), *rows, event(state='failed')))
+            expected = [
+                {'scope': 'stdoutOnly', 'method': CASE, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE,
+                 'line': 1, 'column': 5, 'assertionKind': 'XCTAssertEqual'},
+                {'scope': 'stdoutOnly', 'method': CASE, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE,
+                 'line': 2, 'assertionKind': 'XCTFail'},
+                {'scope': 'stdoutOnly', 'method': CASE, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE,
+                 'line': 3, 'column': 7, 'failureKind': 'unclassified'},
+            ]
+            reports = helper.xctest_failure_diagnostics(log, EXPECTED, root)
+            self.assertEqual(reports, expected)
+            self.assertEqual(helper.xctest_failure_diagnostics(log.replace('-[', '+['), EXPECTED, root), expected)
+            serialized = json.dumps(reports)
+            for forbidden in (PRIVATE, str(root), 'unknown XCTest', 'message', 'payload'):
+                self.assertNotIn(forbidden, serialized)
+
+    def test_xctest_diagnostics_require_the_exact_platform_bundle_and_case_allowlist(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            owner = 'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'
+            row = self.xctest_row(path, owner=owner, case=helper.NARROW)
+            log = '\n'.join((event(helper.NARROW, owner), row, event(helper.NARROW, owner, 'failed')))
+            reports = helper.xctest_failure_diagnostics(log, {'platform': 'macos', 'appearance': 'dark'}, root)
+            self.assertEqual(len(reports), 1)
+            self.assertEqual(reports[0]['method'], helper.NARROW)
+            self.assertEqual(helper.xctest_failure_diagnostics(log, EXPECTED, root), [])
+            mobile_log = log.replace('MirrorMacAdaptiveUITests', BUNDLE)
+            self.assertEqual(helper.xctest_failure_diagnostics(mobile_log, EXPECTED, root), [])
+            common = '\n'.join((event(), self.xctest_row(path), event(state='failed')))
+            self.assertEqual(len(helper.xctest_failure_diagnostics(common, {'platform': 'ipad', 'appearance': 'dark'}, root)), 1)
+
+    def test_xctest_diagnostics_require_observed_failed_terminal_for_the_same_instance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            row = self.xctest_row(path)
+            for lines in ((event(), row), (event(), row, event(state='passed')),
+                          (event(), row, event(state='skipped')), (row, event(), event(state='failed')),
+                          (event(), event(state='failed'), row)):
+                with self.subTest(lines=lines):
+                    self.assertEqual(helper.xctest_failure_diagnostics('\n'.join(lines), EXPECTED, root), [])
+
+    def test_xctest_diagnostics_reject_ambiguous_duplicate_foreign_and_silent_events(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            row = self.xctest_row(path)
+            good = (event(), row, event(state='failed'))
+            other = 'testMaximumTypeReviewAndWeekPicker'
+            invalid = (
+                (event(), event(), row, event(state='failed')),
+                (*good, *good),
+                (event(), event(other), row, event(state='failed')),
+                (event(owner='MirrorIOSUITests.MirrorUITests'), row, event(state='failed')),
+                (event(case='test' + PRIVATE), row, event(state='failed')),
+                (event() + ' ' + event(state='failed'), row),
+                (event(state='failed'), row),
+                (*good, event(state='failed')),
+                (*good, "Test Case '-[" + BUNDLE + '.MirrorAdaptiveUITests ' + CASE + "]' finished."),
+                (*good, event(other)),
+                (*good, event(owner='MirrorMacAdaptiveUITests.MirrorAdaptiveUITests')),
+            )
+            for lines in invalid:
+                with self.subTest(lines=lines):
+                    self.assertEqual(helper.xctest_failure_diagnostics('\n'.join(lines), EXPECTED, root), [])
+
+    def test_xctest_diagnostics_reject_implicit_wrong_owner_and_unverified_source_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            (path.parent / 'Link.swift').symlink_to(path)
+            other = root / 'Tests/MirrorUITests/MirrorUITests.swift'
+            other.parent.mkdir()
+            other.write_text('let value = 1\n')
+            paths = ('MirrorAdaptiveUITests.swift', '/private/' + helper.UI_FAILURE_SOURCE_FILE,
+                     'Tests/../' + helper.UI_FAILURE_SOURCE_FILE, 'Tests//MirrorAdaptiveUITests/MirrorAdaptiveUITests.swift',
+                     'Tests/MirrorAdaptiveUITests/Missing.swift', 'Tests/MirrorAdaptiveUITests/Link.swift',
+                     str(other), 'prefix ' + str(path), str(path) + '/' + PRIVATE)
+            rows = [self.xctest_row(value) for value in paths]
+            rows.extend((self.xctest_row(path, owner='MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'),
+                         self.xctest_row(path, owner='MirrorAdaptiveUITests'),
+                         self.xctest_row(path, case='test' + PRIVATE),
+                         str(path) + ':1:5: error: XCTAssertEqual failed: ' + PRIVATE,
+                         str(path) + ':1:5: error: -[malformed] : failed - ' + PRIVATE))
+            log = '\n'.join((event(), *rows, event(state='failed')))
+            self.assertEqual(helper.xctest_failure_diagnostics(log, EXPECTED, root), [])
+            self.assertEqual(helper.xctest_failure_diagnostics(log, {'platform': 'macos', 'appearance': 'dark'}, root), [])
+
+    def test_xctest_diagnostics_bound_actual_coordinates_unique_count_and_entire_event_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            invalid = [self.xctest_row(path, line, column) for line, column in
+                       ((0, 5), (100001, 5), (1, 0), (1, 100001), (29, 999), (31, 1), (31, None))]
+            self.assertEqual(helper.xctest_failure_diagnostics('\n'.join((event(), *invalid, event(state='failed'))),
+                                                              EXPECTED, root), [])
+            rows = [self.xctest_row(path, index) for index in range(1, 20)]
+            log = '\n'.join((event(), *(row for row in rows for _ in range(2)), event(state='failed')))
+            reports = helper.xctest_failure_diagnostics(log, EXPECTED, root)
+            self.assertEqual(len(reports), 12)
+            self.assertEqual([report['line'] for report in reports], list(range(1, 13)))
+            self.assertEqual(helper.xctest_failure_diagnostics(log + '\n' + event(), EXPECTED, root), [])
+            with mock.patch.object(helper, 'MAX_LOG', 32), self.assertRaises(helper.AdaptiveError):
+                helper.xctest_failure_diagnostics('x' * 33, EXPECTED, root)
+
+    def test_xctest_diagnostics_require_context_and_a_bounded_regular_test_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / 'test.log'
+            log.write_text(PRIVATE)
+            with mock.patch.object(helper, 'context_for', side_effect=helper.AdaptiveError('contextMismatch')), \
+                    mock.patch.object(helper, 'read_regular') as read, self.assertRaises(helper.AdaptiveError):
+                helper.test_diagnostics(root, EXPECTED)
+            read.assert_not_called()
+            with mock.patch.object(helper, 'context_for'), \
+                    mock.patch.object(helper, 'xctest_failure_diagnostics', return_value=[]) as parse, \
+                    mock.patch('builtins.print') as output:
+                helper.test_diagnostics(root, EXPECTED)
+            parse.assert_called_once_with(PRIVATE, EXPECTED)
+            self.assertNotIn(PRIVATE, output.call_args[0][0])
+            self.assertIn('noAcceptedXCTestFailureDiagnostics', output.call_args[0][0])
+            target = root / 'original.log'
+            log.rename(target)
+            log.symlink_to(target)
+            with mock.patch.object(helper, 'context_for'), self.assertRaises(OSError):
+                helper.test_diagnostics(root, EXPECTED)
+            log.unlink()
+            log.write_text(PRIVATE)
+            with mock.patch.object(helper, 'context_for'), mock.patch.object(helper, 'MAX_LOG', 1), \
+                    self.assertRaises(helper.AdaptiveError):
+                helper.test_diagnostics(root, EXPECTED)
+
+    def progress_fixture(self):
+        lines = ['import XCTest', '', 'final class MirrorAdaptiveUITests: XCTestCase {']
+        for case in helper.CASES:
+            lines.extend(('    @MainActor', '    func ' + case + '() throws {', '    }'))
+        lines.append('}')
+        source = '\n'.join(lines) + '\n'
+        return source, helper.source_method_entries(source, 'iphone')
+
+    def progress_row(self, case=CASE, phase='started', sequence=1, step=0, **extra):
+        return helper.PROGRESS_MARKER + json.dumps({'method': case + '()', 'phase': phase,
+                                                    'sequence': sequence, 'step': step, **extra})
+
+    def test_progress_reports_observed_prefix_without_a_terminal_or_result_inference(self):
+        _, entries = self.progress_fixture()
+        log = '\n'.join((event(), self.progress_row(), self.progress_row(phase='launchComplete', sequence=2)))
+        expected = {'method': CASE, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE, 'entryLine': 5,
+                    'phase': 'launchComplete', 'sequence': 2, 'step': 0}
+        self.assertEqual(helper.xctest_progress_diagnostics(log, EXPECTED, entries), expected)
+        for state in ('passed', 'failed', 'skipped'):
+            report = helper.xctest_progress_diagnostics(log + '\n' + event(state=state), EXPECTED, entries)
+            self.assertEqual(report, expected)
+            self.assertNotIn(state, json.dumps(report))
+        start = helper.xctest_progress_diagnostics(event(), EXPECTED, entries)
+        self.assertEqual(start, {'method': CASE, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE, 'entryLine': 5})
+        self.assertEqual(helper.xctest_progress_diagnostics(log.replace('-[', '+['), EXPECTED, entries), expected)
+        other = 'testMaximumTypeReviewAndWeekPicker'
+        switched = '\n'.join((log, event(state='failed'), event(other), self.progress_row(other)))
+        self.assertEqual(helper.xctest_progress_diagnostics(switched, EXPECTED, entries),
+                         {'method': other, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE, 'entryLine': 8,
+                          'phase': 'started', 'sequence': 1, 'step': 0})
+
+    def test_progress_accepts_only_the_fixed_contiguous_per_method_phase_and_step_prefix(self):
+        source, _ = self.progress_fixture()
+        mac = {'platform': 'macos', 'appearance': 'dark'}
+        entries = helper.source_method_entries(source, 'macos')
+        owner = 'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests'
+        for case in helper.required_cases('macos'):
+            rows = [event(case, owner)]
+            for sequence, (phase, step) in enumerate(helper.PROGRESS_PROTOCOL[case], 1):
+                rows.append(self.progress_row(case, phase, sequence, step))
+                report = helper.xctest_progress_diagnostics('\n'.join(rows), mac, entries)
+                self.assertEqual((report['method'], report['phase'], report['sequence'], report['step']),
+                                 (case, phase, sequence, step))
+        review = 'testMaximumTypeReviewAndWeekPicker'
+        rows = [event(review)] + [self.progress_row(review, phase, sequence, step)
+            for sequence, (phase, step) in enumerate(helper.PROGRESS_PROTOCOL[review][:11], 1)]
+        for phase, step in (('weekDayStarted', 4), ('weekDayVerified', 5), ('weekDayStarted', 6)):
+            with self.subTest(phase=phase, step=step):
+                self.assertIsNone(helper.xctest_progress_diagnostics(
+                    '\n'.join((*rows, self.progress_row(review, phase, 12, step))), EXPECTED,
+                    helper.source_method_entries(source, 'iphone')))
+
+    def test_progress_rejects_duplicate_reordered_foreign_malformed_and_noninteger_markers(self):
+        _, entries = self.progress_fixture()
+        start = (event(), self.progress_row())
+        invalid = (
+            (*start, self.progress_row()),
+            (*start, self.progress_row(phase='captureOpenStarted', sequence=2)),
+            (*start, self.progress_row(phase='launchComplete', sequence=3)),
+            (*start, self.progress_row(phase='launchComplete', sequence=True)),
+            (*start, self.progress_row(phase='launchComplete', sequence=2, step=False)),
+            (*start, self.progress_row(phase=PRIVATE, sequence=2)),
+            (*start, self.progress_row(case='test' + PRIVATE, phase='launchComplete', sequence=2)),
+            (*start, self.progress_row(phase='launchComplete', sequence=2, private=PRIVATE)),
+            (*start, helper.PROGRESS_MARKER + '{"method":"' + CASE + '()","phase":"started",'
+             '"sequence":2,"sequence":1,"step":0}'),
+            (*start, helper.PROGRESS_MARKER + PRIVATE),
+            (*start, 'prefix ' + self.progress_row(phase='launchComplete', sequence=2)),
+            (*start, 'UI adaptive progress ' + PRIVATE),
+            (self.progress_row(),),
+            (*start, event(state='failed'), self.progress_row(phase='launchComplete', sequence=2)),
+        )
+        for lines in invalid:
+            with self.subTest(lines=lines):
+                self.assertIsNone(helper.xctest_progress_diagnostics('\n'.join(lines), EXPECTED, entries))
+
+    def test_progress_rejects_ambiguous_native_events_and_requires_the_strict_event_prefix(self):
+        _, entries = self.progress_fixture()
+        good = (event(), self.progress_row(), event(state='failed'))
+        other = 'testMaximumTypeReviewAndWeekPicker'
+        invalid = ((*good, event()), (event(), event(other)), (event(state='failed'),),
+                   (event(owner='MirrorIOSUITests.MirrorUITests'), self.progress_row()),
+                   (event(case='test' + PRIVATE),), ('prefix ' + event(),), (' ' + event(),),
+                   (event() + ' ' + event(state='failed'),),
+                   (*good, "Test Case '-[" + BUNDLE + '.MirrorAdaptiveUITests ' + CASE + "]' finished."))
+        for lines in invalid:
+            with self.subTest(lines=lines):
+                self.assertIsNone(helper.xctest_progress_diagnostics('\n'.join(lines), EXPECTED, entries))
+        with mock.patch.object(helper, 'MAX_LOG', 32), self.assertRaises(helper.AdaptiveError):
+            helper.xctest_progress_diagnostics('x' * 33, EXPECTED, entries)
+
+    def test_progress_entry_line_binds_current_method_declarations_and_rejects_missing_or_duplicate_source(self):
+        source, entries = self.progress_fixture()
+        self.assertEqual(entries[CASE], 5)
+        for malformed in (source.replace('final class MirrorAdaptiveUITests: XCTestCase {', 'class Other {'),
+                          source.replace('    func ' + CASE + '() throws {', '    func ' + CASE + '() {'),
+                          source + '    func ' + CASE + '() throws {\n'):
+            self.assertIsNone(helper.source_method_entries(malformed, 'iphone'))
+        with self.assertRaises(helper.AdaptiveError):
+            helper.xctest_progress_diagnostics(event(), EXPECTED, {CASE: True})
+
+    def test_progress_always_emits_only_pinned_notice_when_context_log_or_source_is_unavailable(self):
+        source, _ = self.progress_fixture()
+        expected = {**EXPECTED, 'commitSHA': 'a' * 40, 'buildNumber': '12', 'runID': '34', 'runAttempt': '1'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / helper.UI_FAILURE_SOURCE_FILE
+            path.parent.mkdir(parents=True)
+            path.write_text(source)
+            with mock.patch.object(helper, 'context_for', side_effect=helper.AdaptiveError(PRIVATE)), \
+                    mock.patch.object(helper, 'read_regular') as read, mock.patch('builtins.print') as output:
+                helper.progress_diagnostics(root, expected)
+            read.assert_not_called()
+            self.assertIn('contextUnavailable', output.call_args[0][0])
+            self.assertNotIn(PRIVATE, output.call_args[0][0])
+            with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'context_for'), \
+                    mock.patch('builtins.print') as output:
+                helper.progress_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                (root / 'test.log').write_text('\n'.join((event(), self.progress_row())))
+                helper.progress_diagnostics(root, expected)
+                notice = output.call_args[0][0]
+                self.assertIn('reachedCodeBoundaryOnly', notice)
+                self.assertIn(expected['commitSHA'], notice)
+                for forbidden in (str(root), PRIVATE, 'xcodebuildExitCode', 'passedTests', 'failedTests'):
+                    self.assertNotIn(forbidden, notice)
+                log = root / 'test.log'
+                log.rename(root / 'original.log')
+                log.symlink_to(root / 'original.log')
+                helper.progress_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                log.unlink()
+                log.write_text(PRIVATE)
+                with mock.patch.object(helper, 'MAX_LOG', 1):
+                    helper.progress_diagnostics(root, expected)
+                self.assertIn('testLogUnavailable', output.call_args[0][0])
+                path.unlink()
+                helper.progress_diagnostics(root, expected)
+                self.assertIn('sourceUnavailable', output.call_args[0][0])
+
     def test_shell_preserves_original_native_failure_even_when_diagnostics_fail(self):
         self.run_stubbed_shell('build', native=65, receipt=0, expected_exit=65, expected_diagnostics=True)
 
-    def test_shell_does_not_diagnose_helper_failure_or_test_phase(self):
+    def test_shell_does_not_diagnose_a_helper_failure_after_native_success(self):
         self.run_stubbed_shell('build', native=0, receipt=72, expected_exit=72, expected_diagnostics=False)
-        self.run_stubbed_shell('test', native=65, receipt=0, expected_exit=65, expected_diagnostics=False)
 
-    def run_stubbed_shell(self, mode, native, receipt, expected_exit, expected_diagnostics):
+    def test_shell_preserves_original_native_failure_when_xctest_diagnostics_fail(self):
+        self.run_stubbed_shell('test', native=65, receipt=0, expected_exit=65, expected_diagnostics=False,
+                               expected_test_diagnostics=True)
+
+    def run_stubbed_shell(self, mode, native, receipt, expected_exit, expected_diagnostics,
+                          expected_test_diagnostics=False):
         # 실제 shell을 격리된 복사본에서 실행하고 모든 Python/Xcode 경계를 stub한다.
         # SDK·앱·네트워크를 실행하지 않고 EXIT trap의 원래 종료 코드 보존을 검증한다.
         with tempfile.TemporaryDirectory() as directory:
@@ -144,6 +434,7 @@ printf '%s\\n' "$2" >> "$ADAPTIVE_STUB_EVENTS"
 case "$2" in
   context) printf 'MirrorIOSAdaptiveUI\\tiphonesimulator\\tplatform=iOS Simulator,id=11111111-1111-1111-1111-111111111111\\n' ;;
   diagnostics) exit 73 ;;
+  test-diagnostics) exit 75 ;;
   receipt-record) exit "$ADAPTIVE_STUB_RECEIPT" ;;
   failure) printf '%s\\n' "$*" >> "$ADAPTIVE_STUB_FAILURE"; exit 74 ;;
 esac
@@ -161,8 +452,11 @@ esac
             self.assertEqual(result.returncode, expected_exit)
             events = (root / 'events').read_text().splitlines()
             self.assertEqual(events.count('diagnostics'), int(expected_diagnostics))
+            self.assertEqual(events.count('test-diagnostics'), int(expected_test_diagnostics))
             if expected_diagnostics:
                 self.assertLess(events.index('diagnostics'), events.index('failure'))
+            if expected_test_diagnostics:
+                self.assertLess(events.index('test-diagnostics'), events.index('failure'))
             failure = (root / 'failure').read_text()
             self.assertIn('--exit-code ' + str(expected_exit), failure)
             self.assertIn('--native-exit-code ' + str(native), failure)

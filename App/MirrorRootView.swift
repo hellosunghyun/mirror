@@ -13,7 +13,7 @@ struct MirrorRootView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var sceneExposureID = UUID()
-    @State private var adjacentCalendarVisible = true
+    @State private var adjacentCalendarVisible = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif

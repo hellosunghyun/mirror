@@ -666,7 +666,12 @@ final class AppModel {
         guard let context, let configuration else { return }
         selectedTaskID = nil
         if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty,
-           weekly == nil || weekly == review.isWeekly { showReview = true; return }
+           weekly == nil || weekly == review.isWeekly {
+            refreshUpcomingCards(renewCurrentCard: false)
+            persistSession()
+            showReview = true
+            return
+        }
         let cycleID = ReviewCycle.id(workspaceEpoch: configuration.workspaceEpoch, context: context)
         activeReviewMilliseconds = 0
         reviewExposureStart = nil
@@ -695,12 +700,8 @@ final class AppModel {
         if result { reviewSummary = summary; showReview = false; destination = .today }
     }
     func refreshReviewCard() async {
-        await refresh()
-        guard let session = review, let card = session.cards.first else { return }
-        if let latest = tasks.first(where: { $0.taskID == card.taskID }), latest.status == .open {
-            review?.cards[0] = ReviewCard(id: UUID().uuidString, taskID: card.taskID,
-                                         expected: ExpectedVersions(latest), decisionToken: UUID().uuidString)
-        } else { review?.cards.removeFirst() }
+        guard await refresh(), review != nil else { return }
+        refreshUpcomingCards()
         problem = nil
         persistSession()
     }
@@ -984,17 +985,23 @@ final class AppModel {
         refreshUpcomingCards()
         persistSession()
     }
-    private func refreshUpcomingCards() {
-        guard var session = review else { return }
+    private func refreshUpcomingCards(renewCurrentCard: Bool = true) {
+        guard var session = review, let configuration else { return }
+        let previousCurrentTaskID = session.cards.first?.taskID
         let latest = Dictionary(uniqueKeysWithValues: tasks.map { ($0.taskID, $0) })
+        let report = TaskReducer.reduce(records, workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch)
         let planningDay = session.context.planningDay
+        let cycleID = session.cycleID
         let reviewMode: ReviewMode = session.todayOverride ? .manualTodayOverride : .manualResume
         session.cards.removeAll { card in
-            guard let task = latest[card.taskID] else { return true }
+            guard let task = latest[card.taskID], task.isProjectionComplete else { return true }
             return !PlanningRules.isReviewCandidate(task.planningState, on: planningDay,
-                                                    acknowledgedCurrentPlan: false, mode: reviewMode)
+                                                    acknowledgedCurrentPlan: report.acknowledges(task: task, cycleID: cycleID),
+                                                    mode: reviewMode)
         }
-        if let next = session.cards.first, let task = latest[next.taskID] {
+        // 이어 정리는 유효한 현재 카드의 stale 검사와 token을 유지한다. 새로 노출하는 다음 카드는 최신화한다.
+        if let next = session.cards.first, let task = latest[next.taskID],
+           renewCurrentCard || next.taskID != previousCurrentTaskID {
             session.cards[0] = ReviewCard(id: UUID().uuidString, taskID: task.taskID,
                                           expected: ExpectedVersions(task), decisionToken: UUID().uuidString)
         }

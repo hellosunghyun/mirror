@@ -17,13 +17,13 @@ struct MirrorTodayView: View {
                             .font(.subheadline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                     }
                     MirrorActionGroup {
-                        Button { model.beginReview() } label: {
-                            Text(model.pendingTasks.isEmpty ? "오늘 정리" : "오늘 정리 · \(model.pendingTasks.count)개")
+                        Button { model.beginReview(mode: .manualResume) } label: {
+                            Text(reviewButtonTitle)
                                 .foregroundStyle(MirrorPalette.onAccent)
                         }
                             .buttonStyle(.borderedProminent).controlSize(.regular)
                             .frame(minHeight: 44)
-                            .accessibilityLabel("오늘 정리, 정하지 않은 일 \(model.pendingTasks.count)개")
+                            .accessibilityLabel(reviewButtonAccessibilityLabel)
                             .accessibilityIdentifier("today.review")
                         Menu {
                             if let review = model.review, !review.cards.isEmpty {
@@ -35,7 +35,7 @@ struct MirrorTodayView: View {
                             if model.reviewSummary != nil, !model.pendingTasks.isEmpty {
                                 Button("새로 넣은 일도 정리") { model.beginReview(mode: .manualResume, includeNewInputs: true) }
                             }
-                        } label: { Label("정리 옵션", systemImage: "ellipsis").frame(minHeight: 44) }
+                        } label: { Label("정리 옵션", systemImage: "ellipsis").frame(minWidth: 44, minHeight: 44) }
                             #if os(macOS)
                             .menuStyle(.borderlessButton)
                             #endif
@@ -103,6 +103,18 @@ struct MirrorTodayView: View {
         .onChange(of: model.showReview) { _, isPresented in
             if !isPresented { showReviewSummary = false }
         }
+    }
+    private var reviewButtonTitle: String {
+        if let session = model.review, !session.cards.isEmpty {
+            return "이어서 정리 · \(session.cards.count)개"
+        }
+        return model.pendingTasks.isEmpty ? "오늘 정리" : "오늘 정리 · \(model.pendingTasks.count)개"
+    }
+    private var reviewButtonAccessibilityLabel: String {
+        if let session = model.review, !session.cards.isEmpty {
+            return "이어서 정리, 남은 일 \(session.cards.count)개"
+        }
+        return "오늘 정리, 정하지 않은 일 \(model.pendingTasks.count)개"
     }
 }
 
@@ -840,6 +852,7 @@ struct MirrorPlanPicker: View {
     @State private var monthAnchor: LocalDate?
     @State private var useWeek = false
     @State private var showDates = false
+    @State private var showTaskTitles = false
     private var usesQuickChoices: Bool { request.review == nil && request.widgetState == nil }
     @ViewBuilder var body: some View {
         if model.completedWidgetPickerID == request.id {
@@ -850,9 +863,12 @@ struct MirrorPlanPicker: View {
         NavigationStack {
             Form {
                 Section {
-                    ForEach(request.taskIDs, id: \.self) { id in
-                        Text(model.tasks.first { $0.taskID == id }?.title ?? "작업을 찾을 수 없어요")
-                            .accessibilityIdentifier("plan.task.\(id.uuidString)")
+                    if request.taskIDs.count > 1 {
+                        DisclosureGroup("선택한 작업 \(request.taskIDs.count)개", isExpanded: $showTaskTitles) {
+                            taskTitles
+                        }
+                    } else {
+                        taskTitles
                     }
                 } footer: {
                     Text("계획 날짜를 바꿔도 실제 마감은 바뀌지 않아요.")
@@ -921,6 +937,15 @@ struct MirrorPlanPicker: View {
             .frame(minWidth: 300, idealWidth: 460, minHeight: 320, idealHeight: request.week == nil ? 400 : 560)
             #endif
             .modifier(MirrorDeadlineConfirmation(enabled: true))
+    }
+    @ViewBuilder private var taskTitles: some View {
+        ForEach(request.taskIDs, id: \.self) { id in
+            let title = model.tasks.first { $0.taskID == id }?.title ?? "작업을 찾을 수 없어요"
+            Text(title)
+                .lineLimit(2)
+                .accessibilityLabel(title)
+                .accessibilityIdentifier("plan.task.\(id.uuidString)")
+        }
     }
     private func weekDateGrid(_ week: WeekRange) -> some View {
         let singleColumn = [GridItem(.flexible(), alignment: .leading)]
@@ -1362,10 +1387,18 @@ private struct MirrorActionGroup<Content: View>: View {
     private let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }
     var body: some View {
-        let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(spacing: 12))
-        layout { content }.frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) { content }
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { content }
+                        .fixedSize(horizontal: true, vertical: false)
+                    VStack(alignment: .leading, spacing: 8) { content }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
