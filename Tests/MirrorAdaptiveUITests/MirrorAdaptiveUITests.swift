@@ -1,0 +1,967 @@
+import XCTest
+#if os(iOS)
+import UIKit
+#endif
+
+/// 기존 여섯 기능 사례와 다른 bundle에서 실제 큰 글자·접근성·창 경계를 검사한다.
+/// 매 launch는 앱의 기존 UI 테스트 모드로 새 실제 Core Data store를 연다.
+final class MirrorAdaptiveUITests: XCTestCase {
+    @MainActor private var screenshotSequence = 0
+    @MainActor private var progressSequence = 0
+    @MainActor private var diagnosticCase: DiagnosticCase?
+    @MainActor private var diagnosticRequestSequence = 0
+    @MainActor private var diagnosticAuditSequence = 0
+
+    @MainActor
+    func testMaximumTypeCaptureValidationAndRecovery() throws {
+        beginCaseDiagnostics(.captureValidation)
+        progress(.started)
+        let app = try launchApp()
+        progress(.launchComplete)
+        defer { app.terminate() }
+        progress(.captureOpenStarted)
+        try tap("capture.open", requestedElement: .captureOpen, in: app)
+        let title = try find("capture.title", requestedElement: .captureTitle, in: app)
+        progress(.captureOpened)
+        progress(.captureInputStarted)
+        try replaceText(title, with: "큰 글자로 입력", in: app)
+        progress(.captureInputComplete)
+        try assertVisible(try button("capture.save", requestedElement: .captureSave, in: app), in: app, outsideKeyboard: true)
+        progress(.recordStarted, step: 1)
+        try record("max-capture", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
+        try audit(app)
+        progress(.auditComplete, step: 1)
+
+        let original = String(repeating: "x", count: 500) + "Z"
+        progress(.overlongInputStarted)
+        try replaceText(title, with: original, in: app)
+        progress(.overlongInputComplete)
+        XCTAssertEqual(title.value as? String, original)
+        try tap("capture.save", requestedElement: .captureSave, in: app)
+        progress(.validationSubmitted)
+        let error = try find("state.error", requestedElement: .stateError, in: app)
+        try waitForText("제목은 500자 이하로 입력해 주세요.", in: error)
+        XCTAssertEqual(title.value as? String, original, "큰 글자에서도 501자 원문을 자르거나 지우지 않는다.")
+        try assertVisible(error, in: app, outsideKeyboard: true)
+        try assertVisible(try button("capture.save", requestedElement: .captureSave, in: app), in: app, outsideKeyboard: true)
+        try assertVisible(try button("capture.close", requestedElement: .captureClose, in: app), in: app)
+        progress(.validationVerified)
+        progress(.recordStarted, step: 2)
+        try record("max-validation", in: app)
+        progress(.recordComplete, step: 2)
+
+        // 정지사진의 접힌 카드 비침과 실제 접근 불가능을 구별한다.
+        progress(.optionalInputsStarted)
+        let more = try button("capture.more", requestedElement: .captureMoreButton, in: app)
+        try reveal(more, in: app)
+        try assertVisible(more, in: app, outsideKeyboard: true)
+        performActivation(more)
+        let note = try find("capture.note", requestedElement: .captureNote, in: app)
+        try reveal(note, in: app)
+        XCTAssertTrue(note.isHittable, "오류 뒤에도 선택 입력을 실제 스크롤로 열 수 있다.")
+        try reveal(more, in: app)
+        performActivation(more)
+        try reveal(title, in: app)
+        progress(.optionalInputsVerified)
+        progress(.recoveryInputStarted)
+        try replaceText(title, with: "오류 수정 뒤 저장", in: app)
+        progress(.recoveryInputComplete)
+        try tap("capture.save", requestedElement: .captureSave, in: app)
+        try waitForText("보관함에 넣었어요.", in: find("capture.feedback", requestedElement: .captureFeedback, in: app))
+        progress(.recoverySaved)
+        try assertVisible(try find("capture.feedback", requestedElement: .captureFeedback, in: app), in: app, outsideKeyboard: true)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "state.error").firstMatch.exists)
+        progress(.recordStarted, step: 3)
+        try record("max-recovery", in: app)
+        progress(.recordComplete, step: 3)
+        try tap("capture.close", requestedElement: .captureClose, in: app)
+        try gone("capture.title", in: app)
+        try destination("library", requestedElement: .destinationLibrary, title: "보관함", in: app)
+        let saved = try row("오류 수정 뒤 저장", in: app)
+        XCTAssertTrue((saved.value as? String ?? "").contains("아직 정하지 않음"))
+        progress(.storedRowVerified)
+    }
+
+    @MainActor
+    func testMaximumTypeReviewAndWeekPicker() throws {
+        beginCaseDiagnostics(.reviewWeek)
+        progress(.started)
+        let app = try launchApp()
+        progress(.launchComplete)
+        defer { app.terminate() }
+        progress(.captureStarted)
+        try capture("큰 글자 주간 선택", in: app)
+        progress(.captureComplete)
+        try tap("today.review", requestedElement: .todayReview, in: app)
+        try waitForText("큰 글자 주간 선택", in: find("review.card", requestedElement: .reviewCard, in: app))
+        progress(.reviewOpened)
+        for (id, requestedElement) in [("review.today", RequestedElement.reviewToday), ("review.tomorrow", RequestedElement.reviewTomorrow), ("review.nextWeek", RequestedElement.reviewNextWeek)] {
+            let choice = try button(id, requestedElement: requestedElement, in: app)
+            try reveal(choice, in: app)
+            try assertVisible(choice, in: app)
+            try assertMobileTarget(choice)
+        }
+        progress(.reviewControlsVerified)
+        progress(.recordStarted, step: 1)
+        try record("max-review", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
+        try audit(app)
+        progress(.auditComplete, step: 1)
+        try tap("review.nextWeek", requestedElement: .reviewNextWeek, in: app)
+        progress(.weekOpened)
+        var column: (x: CGFloat, width: CGFloat)?
+        for day in 5...11 {
+            progress(.weekDayStarted, step: day)
+            let id = String(format: "plan.day.2026-10-%02d", day)
+            let date = try weekDate(id, in: app)
+            try reveal(date, in: app)
+            try assertVisible(date, in: app)
+            try assertMobileTarget(date)
+            XCTAssertTrue(date.isEnabled)
+            // 각 스크롤 뒤 버튼과 실제 owner를 함께 관측한다. 이전 절대 frame은 재사용하지 않는다.
+            let surface = try weekSurface(in: app)
+            let bounds = surface.frame
+            let frame = date.frame
+            XCTAssertTrue(hasArea(bounds) && hasArea(frame) && bounds.contains(frame))
+            let x = (frame.minX - bounds.minX) / bounds.width
+            let width = frame.width / bounds.width
+            if let column {
+                XCTAssertEqual(x, column.x, accuracy: 1 / bounds.width, "7일 모두 같은 열의 왼쪽 경계를 사용한다.")
+                XCTAssertEqual(width, column.width, accuracy: 1 / bounds.width, "7일 모두 같은 열의 폭을 사용한다.")
+            } else { column = (x, width) }
+            if day > 5 {
+                let previous = app.buttons.matching(identifier: String(format: "plan.day.2026-10-%02d", day - 1))
+                if previous.count == 1 {
+                    let previousFrame = previous.firstMatch.frame
+                    if hasArea(previousFrame) {
+                        XCTAssertGreaterThanOrEqual(frame.minY, previousFrame.maxY, "같은 관측에서 연속 날짜 버튼이 수직으로 겹치지 않는다.")
+                    }
+                }
+            }
+            progress(.weekDayVerified, step: day)
+        }
+        progress(.recordStarted, step: 2)
+        try record("max-week", in: app)
+        progress(.recordComplete, step: 2)
+        progress(.auditStarted, step: 2)
+        try audit(app)
+        progress(.auditComplete, step: 2)
+        try tap("plan.day.2026-10-11", requestedElement: .planDay, in: app)
+        try gone("plan.cancel", in: app)
+        progress(.weekSelected)
+        try tap("review.finish", requestedElement: .reviewFinish, in: app)
+        try gone("review.finish", in: app)
+        try destination("library", requestedElement: .destinationLibrary, title: "보관함", in: app)
+        try replaceText(find("library.search", requestedElement: .librarySearch, in: app), with: "큰 글자 주간 선택", in: app)
+        XCTAssertTrue((try row("큰 글자 주간 선택", in: app).value as? String ?? "").contains("10월 11일"))
+        progress(.storedRowVerified)
+
+        // 주간 배치로 정리를 닫은 뒤 들어온 항목도 화면의 주 정리 버튼으로 확인한다.
+        progress(.newCaptureStarted)
+        try capture("정리 완료 뒤 새 입력", in: app)
+        progress(.newCaptureComplete)
+        try destination("today", requestedElement: .destinationToday, title: "오늘", in: app)
+        try tap("today.review", requestedElement: .todayReview, in: app)
+        try waitForText("정리 완료 뒤 새 입력", in: find("review.card", requestedElement: .reviewCard, in: app))
+        progress(.reviewResumeVerified)
+        try tap("review.finish", requestedElement: .reviewFinish, in: app)
+        try gone("review.finish", in: app)
+        progress(.reviewResumeClosed)
+    }
+
+    @MainActor
+    func testMaximumTypeSearchDetailCompletionAndUndo() throws {
+        beginCaseDiagnostics(.searchDetailUndo)
+        progress(.started)
+        let app = try launchApp()
+        progress(.launchComplete)
+        defer { app.terminate() }
+        let title = "큰 글자 검색과 내일"
+        progress(.captureStarted)
+        try capture(title, in: app)
+        progress(.captureComplete)
+        try destination("library", requestedElement: .destinationLibrary, title: "보관함", in: app)
+        let saved = try row(title, in: app)
+        let taskID = try XCTUnwrap(saved.identifier.components(separatedBy: "task.row.").last)
+        XCTAssertNotNil(UUID(uuidString: taskID))
+        progress(.postponeStarted)
+        try tap("task.postpone.\(taskID)", requestedElement: .taskPostpone, in: app)
+        let tomorrow = try button("plan.tomorrow", requestedElement: .planTomorrow, in: app)
+        try reveal(tomorrow, in: app)
+        try assertVisible(tomorrow, in: app)
+        try assertMobileTarget(tomorrow)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists)
+        performActivation(tomorrow)
+        try gone("plan.cancel", in: app)
+        progress(.postponeComplete)
+        try destination("today", requestedElement: .destinationToday, title: "오늘", in: app)
+        XCTAssertFalse(rowQuery(title, in: app).firstMatch.exists, "내일 배치는 오늘 목록에 나타나지 않는다.")
+        try destination("library", requestedElement: .destinationLibrary, title: "보관함", in: app)
+        let search = try find("library.search", requestedElement: .librarySearch, in: app)
+        progress(.searchInputStarted)
+        try replaceText(search, with: title, in: app)
+        progress(.searchInputComplete)
+        let future = try row(title, in: app)
+        XCTAssertTrue((future.value as? String ?? "").contains("10월 1일"))
+        for (id, requestedElement) in [("capture.open", RequestedElement.captureOpen), ("settings.button", RequestedElement.settingsButton)] {
+            try assertVisible(try button(id, requestedElement: requestedElement, in: app), in: app, outsideKeyboard: true)
+        }
+        progress(.searchVerified)
+        progress(.recordStarted, step: 1)
+        try record("max-search", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
+        try audit(app)
+        progress(.auditComplete, step: 1)
+        progress(.detailOpenStarted)
+        search.typeText("\n")
+        try reveal(future, in: app)
+        try assertVisible(future, in: app)
+        performActivation(future)
+        try waitForText(title, in: find("detail.contentTitle", requestedElement: .detailContentTitle, in: app))
+        XCTAssertTrue(text(try find("detail.plan", requestedElement: .detailPlan, in: app)).contains("10월 1일"))
+        progress(.detailVerified)
+        progress(.recordStarted, step: 2)
+        try record("max-detail", in: app)
+        progress(.recordComplete, step: 2)
+        progress(.auditStarted, step: 2)
+        try audit(app)
+        progress(.auditComplete, step: 2)
+        progress(.completionStarted)
+        try tap("task.complete", requestedElement: .taskComplete, in: app)
+        try waitForText("완료 취소 · 다시 열기", in: button("task.complete", requestedElement: .taskComplete, in: app))
+        progress(.completionVerified)
+        progress(.recordStarted, step: 3)
+        try record("max-completion", in: app)
+        progress(.recordComplete, step: 3)
+        progress(.undoStarted)
+        try tap("task.undo", requestedElement: .taskUndo, label: "직전 변경 되돌리기", in: app)
+        try waitForText("완료", in: button("task.complete", requestedElement: .taskComplete, in: app))
+        XCTAssertEqual(text(try find("detail.contentTitle", requestedElement: .detailContentTitle, in: app)), title)
+        XCTAssertTrue(text(try find("detail.plan", requestedElement: .detailPlan, in: app)).contains("10월 1일"))
+        progress(.undoVerified)
+        progress(.recordStarted, step: 4)
+        try record("max-undo", in: app)
+        progress(.recordComplete, step: 4)
+        progress(.auditStarted, step: 3)
+        try audit(app)
+        progress(.auditComplete, step: 3)
+    }
+
+    @MainActor
+    func testMaximumTypePlannedCaptureKeepsUnassignedDefault() throws {
+        beginCaseDiagnostics(.plannedCapture)
+        progress(.started)
+        let app = try launchApp()
+        progress(.launchComplete)
+        defer { app.terminate() }
+        progress(.defaultCaptureStarted)
+        let unassigned = "날짜 없는 큰 글자 입력"
+        try tap("capture.open", requestedElement: .captureOpen, in: app)
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "capture.planChoices").firstMatch.exists)
+        XCTAssertFalse(app.buttons.matching(identifier: "capture.planToday").firstMatch.exists)
+        try replaceText(find("capture.title", requestedElement: .captureTitle, in: app), with: unassigned, in: app)
+        try tap("capture.save", requestedElement: .captureSave, in: app)
+        try waitForText("보관함에 넣었어요.", in: find("capture.feedback", requestedElement: .captureFeedback, in: app))
+        try tap("capture.close", requestedElement: .captureClose, in: app)
+        try gone("capture.title", in: app)
+        try destination("library", requestedElement: .destinationLibrary, title: "보관함", in: app)
+        XCTAssertTrue((try row(unassigned, in: app).value as? String ?? "").contains("아직 정하지 않음"))
+        try destination("today", requestedElement: .destinationToday, title: "오늘", in: app)
+        XCTAssertFalse(rowQuery(unassigned, in: app).firstMatch.exists)
+        progress(.defaultCaptureComplete)
+
+        progress(.plannedCaptureStarted)
+        let planned = "오늘로 정한 큰 글자 입력"
+        try tap("capture.open", requestedElement: .captureOpen, in: app)
+        try replaceText(find("capture.title", requestedElement: .captureTitle, in: app), with: planned, in: app)
+        try tap("capture.more", requestedElement: .captureMoreButton, in: app)
+        try tap("capture.planToday", requestedElement: .capturePlanToday, in: app)
+        let summary = try find("capture.planSummary", requestedElement: .capturePlanSummary, in: app)
+        XCTAssertTrue(text(summary).contains("9월 30일"))
+        XCTAssertEqual(text(try button("capture.save", requestedElement: .captureSave, in: app)), "날짜에 넣기")
+        progress(.plannedCaptureReady)
+        progress(.recordStarted, step: 1)
+        try record("max-capture-plan", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
+        try audit(app)
+        progress(.auditComplete, step: 1)
+        try tap("capture.save", requestedElement: .captureSave, in: app)
+        try waitForText("9월 30일 수요일에 넣었어요.", in: find("capture.feedback", requestedElement: .captureFeedback, in: app))
+        progress(.plannedCaptureSaved)
+        try assertVisible(try find("capture.feedback", requestedElement: .captureFeedback, in: app), in: app, outsideKeyboard: true)
+        try tap("capture.close", requestedElement: .captureClose, in: app)
+        try gone("capture.title", in: app)
+        let saved = try row(planned, in: app)
+        XCTAssertTrue((saved.value as? String ?? "").contains("9월 30일"))
+        XCTAssertTrue((saved.value as? String ?? "").contains("미완료"), "날짜를 정한 입력은 완료가 아니다.")
+        XCTAssertFalse(rowQuery(unassigned, in: app).firstMatch.exists)
+        progress(.storedRowVerified)
+        progress(.recordStarted, step: 2)
+        try record("max-planned-today", in: app)
+        progress(.recordComplete, step: 2)
+    }
+
+    #if os(macOS)
+    @MainActor
+    func testNarrowMacWindowCaptureAndRequestedDetail() throws {
+        beginCaseDiagnostics(.narrowMac)
+        progress(.started)
+        let app = try launchApp(recordConfiguration: false)
+        progress(.launchComplete)
+        defer { app.terminate() }
+        XCTAssertEqual(app.windows.count, 1)
+        let window = app.windows.firstMatch
+        let before = window.frame
+        XCTAssertTrue(hasArea(before))
+        XCTAssertGreaterThan(before.width, 800, "실제 좁히기 전의 창은 목표 폭보다 넓어야 한다.")
+        // 둥근 모서리 밖을 피하고 시스템 창의 두 가장자리를 직접 drag한다.
+        progress(.windowResizeStarted)
+        let rightEdge = window.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+            .withOffset(CGVector(dx: -2, dy: 0))
+        let widthDestination = window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 780, dy: before.height / 2))
+        rightEdge.click(forDuration: 0.1, thenDragTo: widthDestination)
+        let widthAdjustedFrame = window.frame
+        let bottomEdge = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 1))
+            .withOffset(CGVector(dx: 0, dy: -2))
+        let heightDestination = window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: widthAdjustedFrame.width / 2, dy: 600))
+        bottomEdge.click(forDuration: 0.1, thenDragTo: heightDestination)
+        let resizeObservations = ResizeObservations()
+        let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let frame = window.frame
+            resizeObservations.record(frame)
+            return Self.hasArea(frame) && frame.width >= 760 && frame.width <= 800
+                && frame.height >= 520 && frame.height <= 640 && frame.width < before.width
+        }, object: window)
+        let resizeResult = XCTWaiter.wait(for: [resized], timeout: 15)
+        let resizeSnapshot = resizeObservations.snapshot()
+        resizeMeasurement(method: #function, before: before, observed: resizeSnapshot.frame,
+                          samples: resizeSnapshot.samples, result: resizeResult)
+        XCTAssertEqual(resizeResult, .completed,
+                       "현재 화면의 실제 창이 지원하는 좁은 폭과 높이로 줄어야 한다.")
+        try configuration(in: app, viewport: "narrow")
+        progress(.windowResizeVerified)
+        for (id, requestedElement) in [("capture.open", RequestedElement.captureOpen), ("settings.button", RequestedElement.settingsButton), ("today.review", RequestedElement.todayReview)] {
+            try assertVisible(try button(id, requestedElement: requestedElement, in: app), in: app)
+        }
+        progress(.recordStarted, step: 1)
+        try record("narrow-main", in: app)
+        progress(.recordComplete, step: 1)
+        progress(.auditStarted, step: 1)
+        try audit(app)
+        progress(.auditComplete, step: 1)
+        progress(.captureStarted)
+        try capture("좁은 창에서 저장", in: app)
+        progress(.captureComplete)
+        try destination("library", requestedElement: .destinationLibrary, title: "보관함", in: app)
+        let saved = try row("좁은 창에서 저장", in: app)
+        try reveal(saved, in: app)
+        progress(.detailOpenStarted)
+        performActivation(saved)
+        try waitForText("좁은 창에서 저장", in: find("detail.contentTitle", requestedElement: .detailContentTitle, in: app))
+        for (id, requestedElement) in [("detail.close", RequestedElement.detailClose), ("detail.postponeTomorrow", RequestedElement.detailPostponeTomorrow), ("task.complete", RequestedElement.taskComplete)] {
+            let control = try button(id, requestedElement: requestedElement, in: app)
+            try reveal(control, in: app)
+            try assertVisible(control, in: app)
+        }
+        XCTAssertTrue(window.frame.width <= 900, "요청 상세가 좁은 창을 화면 밖으로 확장하지 않는다.")
+        progress(.detailVerified)
+        progress(.recordStarted, step: 2)
+        try record("narrow-detail", in: app)
+        progress(.recordComplete, step: 2)
+        progress(.auditStarted, step: 2)
+        try audit(app)
+        progress(.auditComplete, step: 2)
+    }
+    #endif
+
+    @MainActor
+    private func launchApp(recordConfiguration: Bool = true, method: String = #function) throws -> XCUIApplication {
+        continueAfterFailure = false
+        screenshotSequence = 0
+        let app = XCUIApplication()
+        app.launchEnvironment["MIRROR_UI_TESTING"] = "1"
+        app.launchEnvironment["MIRROR_TEST_DATE"] = "2026-09-30T03:00:00Z"
+        app.launchEnvironment["MIRROR_UI_DYNAMIC_TYPE"] = "accessibility5"
+        app.launchEnvironment["MIRROR_UI_APPEARANCE"] = try appearance()
+        app.launchArguments = ["-AppleLanguages", "(ko)", "-AppleLocale", "ko_KR"]
+        app.launch()
+        do {
+            _ = try find("today.list", requestedElement: .todayList, in: app, timeout: 30)
+            if recordConfiguration { try configuration(in: app, viewport: "standard", method: method) }
+            return app
+        } catch {
+            app.terminate()
+            throw error
+        }
+    }
+
+    @MainActor
+    private func appearance() throws -> String {
+        let value = ProcessInfo.processInfo.environment["MIRROR_UI_APPEARANCE"] ?? "system"
+        guard value == "system" || value == "dark" else {
+            XCTFail("추가 UI scheme의 표시 모드는 system 또는 dark여야 한다.")
+            throw HarnessFailure.configuration
+        }
+        return value
+    }
+
+    @MainActor
+    private func configuration(in app: XCUIApplication, viewport: String, method: String = #function) throws {
+        let applied = try find("ui.appliedDynamicType", requestedElement: .appliedDynamicType, in: app)
+        let appliedValue = applied.value
+        let appliedString = appliedValue as? String
+        let appliedLabel = applied.label
+        configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: appliedLabel)
+        #if os(macOS)
+        // Mac의 contain 그룹 value는 빈 문자열이다. 실제 환경에서 만든 label을 확인한다.
+        XCTAssertEqual(appliedLabel, "글자 크기 환경: accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
+        #else
+        XCTAssertEqual(appliedString, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
+        #endif
+        XCTAssertEqual(app.state, .runningForeground)
+        #if os(iOS)
+        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
+        #else
+        let platform = "macos"
+        #endif
+        let metadata = ["dynamicType": "accessibility5", "appearance": try appearance(),
+                        "platform": platform, "viewport": viewport]
+        let data = try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys])
+        print("UI adaptive applied configuration: \(String(decoding: data, as: UTF8.self))")
+    }
+
+    @MainActor
+    private func audit(_ app: XCUIApplication) throws {
+        // 의도된 예외 목록은 비어 있다. 진단 probe·시스템 문제도 실제 근거 없이 무시하지 않는다.
+        // XCTest가 보고한 모든 종류의 accessibility issue를 그대로 실패로 남긴다.
+        diagnosticAuditSequence += 1
+        do {
+            try app.performAccessibilityAudit(for: .all)
+            recordAuditBoundary(.returned)
+        } catch {
+            recordAuditBoundary(.threw)
+            throw error
+        }
+    }
+
+    @MainActor
+    private func capture(_ title: String, in app: XCUIApplication) throws {
+        try tap("capture.open", requestedElement: .captureOpen, in: app)
+        try replaceText(find("capture.title", requestedElement: .captureTitle, in: app), with: title, in: app)
+        try tap("capture.save", requestedElement: .captureSave, in: app)
+        try waitForText("보관함에 넣었어요.", in: find("capture.feedback", requestedElement: .captureFeedback, in: app))
+        try tap("capture.close", requestedElement: .captureClose, in: app)
+        try gone("capture.title", in: app)
+    }
+
+    @MainActor
+    private func find(_ identifier: String, requestedElement: RequestedElement, in app: XCUIApplication, timeout: TimeInterval = 15) throws -> XCUIElement {
+        let query: XCUIElementQuery
+        switch identifier {
+        case "capture.title", "capture.note", "capture.url", "library.search":
+            // 입력 ID만 실제 TextField/TextView 역할을 확인한다.
+            let fields = app.textFields.matching(identifier: identifier)
+            if fields.firstMatch.exists { return try unique(fields, requestedElement: requestedElement, timeout: timeout) }
+            let textViews = app.textViews.matching(identifier: identifier)
+            if textViews.firstMatch.exists { return try unique(textViews, requestedElement: requestedElement, timeout: timeout) }
+            query = identifier == "library.search" ? fields : app.descendants(matching: .any).matching(identifier: identifier)
+        default:
+            query = app.descendants(matching: .any).matching(identifier: identifier)
+        }
+        if identifier == "state.error", query.firstMatch.waitForExistence(timeout: timeout), query.count > 1 {
+            // 오류가 modal과 배경에 함께 노출될 때 실제 조작 가능한 modal의 고유 후보를 사용한다.
+            let visible = query.allElementsBoundByAccessibilityElement.filter { $0.exists && $0.isHittable }
+            XCTAssertEqual(visible.count, 1)
+            return try XCTUnwrap(visible.first)
+        }
+        return try unique(query, requestedElement: requestedElement, timeout: timeout)
+    }
+
+    @MainActor
+    private func button(_ identifier: String, requestedElement: RequestedElement, label: String? = nil, in app: XCUIApplication) throws -> XCUIElement {
+        let query = label.map { app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", identifier, $0)) }
+            ?? app.buttons.matching(identifier: identifier)
+        #if os(macOS)
+        if identifier == "capture.more", !query.firstMatch.exists {
+            return try unique(app.descendants(matching: .disclosureTriangle).matching(identifier: identifier), requestedElement: .captureMoreDisclosure)
+        }
+        #endif
+        return try unique(query, requestedElement: requestedElement)
+    }
+
+    @MainActor
+    private func unique(_ query: XCUIElementQuery, requestedElement: RequestedElement, timeout: TimeInterval = 15) throws -> XCUIElement {
+        recordLookupRequest(requestedElement)
+        guard query.firstMatch.waitForExistence(timeout: timeout), query.count == 1 else {
+            XCTFail("필수 추가검증 요소는 실제 역할의 고유한 후보여야 한다.")
+            throw HarnessFailure.missingElement
+        }
+        return query.firstMatch
+    }
+
+    @MainActor
+    private func tap(_ identifier: String, requestedElement: RequestedElement, label: String? = nil, in app: XCUIApplication) throws {
+        let control = try button(identifier, requestedElement: requestedElement, label: label, in: app)
+        try reveal(control, in: app)
+        try assertVisible(control, in: app)
+        XCTAssertTrue(control.isEnabled)
+        performActivation(control)
+    }
+
+    @MainActor
+    private func performActivation(_ element: XCUIElement) {
+        #if os(macOS)
+        element.click()
+        #else
+        element.tap()
+        #endif
+    }
+
+    @MainActor
+    private func destination(_ identifier: String, requestedElement: RequestedElement, title: String, in app: XCUIApplication) throws {
+        let tabs = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", title))
+        if tabs.firstMatch.exists {
+            let tab = try unique(tabs, requestedElement: requestedElement)
+            try assertVisible(tab, in: app)
+            performActivation(tab)
+        } else { try tap("destination.\(identifier)", requestedElement: requestedElement, in: app) }
+    }
+
+    @MainActor
+    private func rowQuery(_ title: String, in app: XCUIApplication) -> XCUIElementQuery {
+        app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "task.row.", title))
+    }
+
+    @MainActor
+    private func row(_ title: String, in app: XCUIApplication) throws -> XCUIElement {
+        try unique(rowQuery(title, in: app), requestedElement: .taskRow)
+    }
+
+    @MainActor
+    private func weekSurface(in app: XCUIApplication) throws -> XCUIElement {
+        let dates = NSPredicate(format: "identifier BEGINSWITH %@", "plan.day.")
+        let candidates = app.scrollViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex
+            + app.collectionViews.allElementsBoundByIndex
+        var owners = candidates.filter { surface in
+            hasArea(surface.frame) && surface.isHittable && surface.buttons.matching(dates).firstMatch.exists
+        }
+        if owners.isEmpty {
+            // 첫 Section만 생성된 상태에도 같은 실제 날짜 Form에서 스크롤을 시작한다.
+            let task = NSPredicate(format: "identifier BEGINSWITH %@", "plan.task.")
+            owners = candidates.filter { surface in
+                hasArea(surface.frame) && surface.isHittable
+                    && surface.descendants(matching: .any).matching(task).firstMatch.exists
+            }
+        }
+        guard let owner = owners.min(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }) else {
+            XCTFail("현재 주간 날짜 버튼을 실제 소유한 Form의 스크롤 경계가 있어야 한다.")
+            throw HarnessFailure.missingElement
+        }
+        return owner
+    }
+
+    @MainActor
+    private func weekDate(_ identifier: String, in app: XCUIApplication) throws -> XCUIElement {
+        let query = app.buttons.matching(identifier: identifier)
+        let deadline = Date().addingTimeInterval(15)
+        for _ in 0..<8 {
+            if query.firstMatch.exists { return try unique(query, requestedElement: .planDay, timeout: 0) }
+            guard Date() < deadline else { break }
+            // LazyVGrid가 아직 만들지 않은 날짜는 현재 날짜를 소유한 실제 Form에서 전진한다.
+            let surface = try weekSurface(in: app)
+            #if os(macOS)
+            surface.scroll(byDeltaX: 0, deltaY: -180)
+            #else
+            surface.swipeUp()
+            #endif
+        }
+        XCTFail("현재 주간 Form을 스크롤해 요청한 날짜 버튼을 만들어야 한다.")
+        throw HarnessFailure.missingElement
+    }
+
+    @MainActor
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
+        let deadline = Date().addingTimeInterval(15)
+        for _ in 0..<8 {
+            let frame = element.frame
+            let identifier = element.identifier
+            let elementType = element.elementType
+            let windows = app.windows.allElementsBoundByIndex.map { $0.frame }
+            let ownerPredicate = NSPredicate(format: "identifier == %@", identifier)
+            let surfaces = app.scrollViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex
+                + app.collectionViews.allElementsBoundByIndex
+            // 같은 관측의 경계를 재사용하며, 다음 반복과 스크롤 뒤에는 새로 읽는다.
+            let owners: [(surface: XCUIElement, bounds: CGRect, area: CGFloat)] = surfaces.compactMap { surface in
+                let bounds = surface.frame
+                guard hasArea(bounds) && surface.isHittable
+                    && surface.descendants(matching: elementType).matching(ownerPredicate).firstMatch.exists
+                    && bounds.minX <= frame.midX && frame.midX <= bounds.maxX
+                    && windows.contains(where: { $0.intersects(bounds) }) else { return nil }
+                return (surface, bounds, bounds.width * bounds.height)
+            }
+            let viewport = owners.min(by: { $0.area < $1.area })
+            let viewportFrame = viewport?.bounds
+            let isScrollableInput = elementType == .textField || elementType == .textView
+            let oversizedInput = viewportFrame.map { isScrollableInput && frame.height > $0.height } ?? false
+            // 긴 입력란은 내용 자체를 스크롤할 수 있다. 동작/오류 버튼에는 항상 전체 표시를 요구한다.
+            let insideOwner = viewportFrame.map { oversizedInput ? hasArea($0.intersection(frame)) : $0.contains(frame) } ?? true
+            if element.isHittable, hasArea(frame), windows.contains(where: { $0.contains(frame) }), insideOwner { return }
+            guard Date() < deadline, let viewport else {
+                XCTFail("현재 대상의 실제 스크롤 소유자 안에서 요소에 도달해야 한다.")
+                throw HarnessFailure.unhittable
+            }
+            let surface = viewport.surface
+            let bounds = viewport.bounds
+            guard isScrollableInput || frame.height <= bounds.height else {
+                XCTFail("전체 표시가 필요한 동작의 높이가 실제 스크롤 viewport보다 크다.")
+                throw HarnessFailure.unhittable
+            }
+            let towardTop = frame.minY < bounds.minY
+            #if os(macOS)
+            surface.scroll(byDeltaX: 0, deltaY: towardTop ? 180 : -180)
+            #else
+            if towardTop { surface.swipeDown() } else { surface.swipeUp() }
+            #endif
+        }
+        XCTFail("8회 이내 실제 스크롤로 추가검증 요소에 도달해야 한다.")
+        throw HarnessFailure.unhittable
+    }
+
+    @MainActor
+    private func assertVisible(_ element: XCUIElement, in app: XCUIApplication, outsideKeyboard: Bool = false) throws {
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(element.exists && element.isHittable)
+        let frame = element.frame
+        XCTAssertTrue(hasArea(frame))
+        let owners = app.windows.containing(NSPredicate(format: "identifier == %@", element.identifier)).allElementsBoundByAccessibilityElement
+        XCTAssertEqual(owners.count, 1, "실제 앱 창의 소유를 확인한다.")
+        let window = try XCTUnwrap(owners.first)
+        XCTAssertTrue(window.frame.contains(frame), "표시된 요소 전체가 실제 소유 창 안에 있어야 한다.")
+        #if os(iOS)
+        if outsideKeyboard, app.keyboards.firstMatch.exists {
+            XCTAssertFalse(frame.intersects(app.keyboards.firstMatch.frame), "키보드가 현재 검증 요소를 가리지 않는다.")
+        }
+        if UIDevice.current.userInterfaceIdiom == .phone,
+           element.identifier == "capture.open" || element.identifier == "settings.button" {
+            let native = try find("ui.nativeStatusBar", requestedElement: .nativeStatusBar, in: app)
+            let values = (native.value as? String ?? "").split(separator: ",").compactMap { Double($0) }
+            XCTAssertEqual(values.count, 4)
+            guard values.count == 4 else { throw HarnessFailure.configuration }
+            let status = CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+            XCTAssertTrue(hasArea(status) && window.frame.contains(status))
+            XCTAssertGreaterThanOrEqual(frame.minY, status.maxY)
+        }
+        #endif
+    }
+
+    @MainActor
+    private func assertMobileTarget(_ element: XCUIElement) throws {
+        #if os(iOS)
+        let frame = element.frame
+        XCTAssertGreaterThanOrEqual(frame.width, 44)
+        XCTAssertGreaterThanOrEqual(frame.height, 44)
+        #endif
+    }
+
+    @MainActor
+    private func replaceText(_ field: XCUIElement, with value: String, in app: XCUIApplication) throws {
+        try reveal(field, in: app)
+        performActivation(field)
+        #if os(iOS)
+        try dismissKeyboardIntroduction(in: app)
+        let current = field.value as? String ?? ""
+        if !current.isEmpty, current != field.placeholderValue {
+            field.press(forDuration: 1.2)
+            let selectAll = NSPredicate(format: "label == %@ OR label == %@", "전체 선택", "Select All")
+            XCTAssertTrue(app.descendants(matching: .any).matching(selectAll).firstMatch.waitForExistence(timeout: 5))
+            let buttons = app.buttons.matching(selectAll)
+            let choice = try unique(buttons.firstMatch.exists ? buttons : app.menuItems.matching(selectAll), requestedElement: .selectAll, timeout: 0)
+            XCTAssertTrue(choice.isHittable && choice.isEnabled)
+            choice.tap()
+            field.typeText(XCUIKeyboardKey.delete.rawValue)
+        }
+        #else
+        field.typeKey("a", modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: [])
+        #endif
+        field.typeText(value)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: field)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed)
+    }
+
+    #if os(iOS)
+    @MainActor
+    private func dismissKeyboardIntroduction(in app: XCUIApplication) throws {
+        let prompt = NSPredicate(format: "label == %@", "Speed up your typing by sliding your finger across the letters to compose a word.")
+        let text = app.staticTexts.matching(prompt).firstMatch
+        if text.exists {
+            let predicate = NSPredicate(format: "label == %@", "Continue")
+            let next = try unique(app.buttons.matching(predicate), requestedElement: .keyboardContinue)
+            XCTAssertTrue(app.keyboards.firstMatch.exists)
+            let owners = app.windows.containing(prompt).containing(predicate)
+            XCTAssertEqual(owners.count, 1)
+            XCTAssertTrue(owners.firstMatch.frame.contains(next.frame) && next.isHittable && next.isEnabled)
+            next.tap()
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: text)
+            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 15), .completed)
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.keys.firstMatch.waitForExistence(timeout: 15))
+    }
+    #endif
+
+    @MainActor
+    private func waitForText(_ expected: String, in element: XCUIElement) throws {
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ OR (label == '' AND value == %@)", expected, expected), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed)
+    }
+
+    @MainActor
+    private func gone(_ identifier: String, in app: XCUIApplication) throws {
+        let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+        let absent = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [absent], timeout: 15), .completed)
+    }
+
+    @MainActor
+    private func text(_ element: XCUIElement) -> String {
+        element.label.isEmpty ? element.value as? String ?? "" : element.label
+    }
+
+    private static func hasArea(_ frame: CGRect) -> Bool {
+        [frame.minX, frame.minY, frame.width, frame.height].allSatisfy { $0.isFinite }
+            && frame.width > 0 && frame.height > 0
+    }
+
+    private func hasArea(_ frame: CGRect) -> Bool { Self.hasArea(frame) }
+
+    @MainActor
+    private func record(_ stage: String, in app: XCUIApplication) throws {
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertTrue(app.windows.firstMatch.exists)
+        screenshotSequence += 1
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "mirror-adaptive-\(stage)-\(screenshotSequence)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    private func configurationMeasurement(method: String, value: Any?, string: String?, label: String) {
+        let valueKind = value == nil ? "nil" : value is String ? "string" : value is NSNumber ? "number" : "other"
+        let castName = string.flatMap { Self.fontEnvironmentNames.contains($0) ? $0 : nil }
+        let castKind = string.map { $0.isEmpty ? "empty" : castName == nil ? "otherString" : "enum" } ?? "nil"
+        let prefix = "글자 크기 환경: "
+        let environmentName = label.hasPrefix(prefix) ? String(label.dropFirst(prefix.count)) : ""
+        let environmentKind = Self.fontEnvironmentNames.contains(environmentName) ? "enum"
+            : label.isEmpty ? "empty" : "unrecognized"
+        emitMeasurement("UI adaptive configuration measurement:", fields: [
+            "method": method, "valueKind": valueKind, "castKind": castKind,
+            "castName": castName.map { $0 as Any } ?? NSNull(),
+            "environmentKind": environmentKind,
+            "environmentName": environmentKind == "enum" ? environmentName as Any : NSNull(),
+        ])
+    }
+
+    @MainActor
+    private func resizeMeasurement(method: String, before: CGRect, observed: CGRect?,
+                                   samples: Int, result: XCTWaiter.Result) {
+        let resultName: String
+        switch result {
+        case .completed: resultName = "completed"
+        case .timedOut: resultName = "timedOut"
+        case .incorrectOrder: resultName = "incorrectOrder"
+        case .invertedFulfillment: resultName = "invertedFulfillment"
+        case .interrupted: resultName = "interrupted"
+        @unknown default: return
+        }
+        let frame = { (value: CGRect) in [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)] }
+        let beforeFrame = frame(before)
+        let observedFrame = observed.map(frame)
+        guard beforeFrame.allSatisfy({ $0.isFinite }), observedFrame?.allSatisfy({ $0.isFinite }) ?? true,
+              (0...10_000).contains(samples) else { return }
+        emitMeasurement("UI adaptive resize measurement:", fields: [
+            "method": method, "beforeFrame": beforeFrame,
+            "observedFrame": observedFrame.map { $0 as Any } ?? NSNull(), "samples": samples,
+            "waitResult": resultName, "waitCompleted": result == .completed,
+        ])
+    }
+
+    @MainActor
+    private func emitMeasurement(_ marker: String, fields: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
+        print("\(marker) \(String(decoding: data, as: UTF8.self))")
+    }
+
+    private static let fontEnvironmentNames: Set<String> = [
+        "xSmall", "small", "medium", "large", "xLarge", "xxLarge", "xxxLarge",
+        "accessibility1", "accessibility2", "accessibility3", "accessibility4", "accessibility5",
+    ]
+
+    /// XCTest의 predicate callback과 대기 종료 시점 사이의 관측 snapshot을 함께 보호한다.
+    private final class ResizeObservations: @unchecked Sendable {
+        private let lock = NSLock()
+        private var frame: CGRect?
+        private var samples = 0
+        func record(_ value: CGRect) {
+            lock.lock()
+            defer { lock.unlock() }
+            frame = value
+            samples += 1
+        }
+        func snapshot() -> (frame: CGRect?, samples: Int) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (frame, samples)
+        }
+    }
+
+    @MainActor
+    private func progress(_ phase: ProgressPhase, method: String = #function, step: Int = 0) {
+        if phase == .started { progressSequence = 0 }
+        progressSequence += 1
+        // 고정 사례명과 도달 경계만 기록하며 입력값·AX 요소·검증 결과를 포함하지 않는다.
+        print("UI adaptive progress: {\"method\":\"\(method)\",\"phase\":\"\(phase.rawValue)\",\"sequence\":\(progressSequence),\"step\":\(step)}")
+    }
+
+    private enum ProgressPhase: String {
+        case auditComplete
+        case auditStarted
+        case captureComplete
+        case captureInputComplete
+        case captureInputStarted
+        case captureOpenStarted
+        case captureOpened
+        case captureStarted
+        case completionStarted
+        case completionVerified
+        case defaultCaptureComplete
+        case defaultCaptureStarted
+        case detailOpenStarted
+        case detailVerified
+        case launchComplete
+        case newCaptureComplete
+        case newCaptureStarted
+        case optionalInputsStarted
+        case optionalInputsVerified
+        case overlongInputComplete
+        case overlongInputStarted
+        case plannedCaptureReady
+        case plannedCaptureSaved
+        case plannedCaptureStarted
+        case postponeComplete
+        case postponeStarted
+        case recordComplete
+        case recordStarted
+        case recoveryInputComplete
+        case recoveryInputStarted
+        case recoverySaved
+        case reviewControlsVerified
+        case reviewOpened
+        case reviewResumeClosed
+        case reviewResumeVerified
+        case searchInputComplete
+        case searchInputStarted
+        case searchVerified
+        case started
+        case storedRowVerified
+        case undoStarted
+        case undoVerified
+        case validationSubmitted
+        case validationVerified
+        case weekDayStarted
+        case weekDayVerified
+        case weekOpened
+        case weekSelected
+        case windowResizeStarted
+        case windowResizeVerified
+    }
+
+    // 아래 관측은 고정 사례와 조회 요청·SDK 반환 경계만 기록한다. AX·입력 원문은 읽지 않는다.
+    @MainActor
+    private func beginCaseDiagnostics(_ value: DiagnosticCase) {
+        diagnosticCase = value
+        diagnosticRequestSequence = 0
+        diagnosticAuditSequence = 0
+        emitMeasurement("UI adaptive case diagnostic:", fields: [
+            "schemaVersion": 1, "case": value.rawValue,
+            "requestSequence": 0, "requestedElement": NSNull(),
+        ])
+    }
+
+    @MainActor
+    private func recordLookupRequest(_ element: RequestedElement) {
+        guard let diagnosticCase else { return }
+        diagnosticRequestSequence += 1
+        emitMeasurement("UI adaptive case diagnostic:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "requestSequence": diagnosticRequestSequence, "requestedElement": element.rawValue,
+        ])
+    }
+
+    @MainActor
+    private func recordAuditBoundary(_ outcome: AuditOutcome) {
+        guard let diagnosticCase else { return }
+        emitMeasurement("UI adaptive audit boundary:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "auditSequence": diagnosticAuditSequence, "outcome": outcome.rawValue,
+        ])
+    }
+
+    private enum DiagnosticCase: String {
+        case captureValidation
+        case reviewWeek
+        case searchDetailUndo
+        case plannedCapture
+        case narrowMac
+    }
+
+    private enum AuditOutcome: String { case returned, threw }
+
+    private enum RequestedElement: String {
+        case appliedDynamicType
+        case captureClose
+        case captureFeedback
+        case captureMoreButton
+        case captureMoreDisclosure
+        case captureNote
+        case captureOpen
+        case capturePlanSummary
+        case capturePlanToday
+        case captureSave
+        case captureTitle
+        case destinationLibrary
+        case destinationToday
+        case detailClose
+        case detailContentTitle
+        case detailPlan
+        case detailPostponeTomorrow
+        case keyboardContinue
+        case librarySearch
+        case nativeStatusBar
+        case planDay
+        case planTomorrow
+        case reviewCard
+        case reviewFinish
+        case reviewNextWeek
+        case reviewToday
+        case reviewTomorrow
+        case selectAll
+        case settingsButton
+        case stateError
+        case taskComplete
+        case taskPostpone
+        case taskRow
+        case taskUndo
+        case todayList
+        case todayReview
+    }
+
+    private enum HarnessFailure: Error { case configuration, missingElement, unhittable }
+}

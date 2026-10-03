@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- UserDefaults 근거: App/AppModel.swift의 standard는 앱 자체 설정(CA92.1). Sources/MirrorSystem/SystemCompositionRoot.swift의 suiteName은 서명·설정된 앱 그룹 내 앱/확장 공유 설정(C56D.1). 그룹 미설정 시 확장은 configurationRequired이며 공유 성공으로 표시하지 않는다. 외부 전송·추적은 없다. -->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+				<string>C56D.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

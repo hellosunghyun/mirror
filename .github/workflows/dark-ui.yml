@@ -1,0 +1,81 @@
+name: 세 플랫폼 다크 UI 검증과 앱샷
+
+on:
+  push:
+    paths:
+      - 'App/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'tests/**'
+      - '.github/workflows/validation.yml'
+      - 'Mirror.xcodeproj/**'
+      - 'Package.swift'
+      - 'scripts/ci*'
+      - 'scripts/generate-xcode-project.py'
+      - '.github/workflows/swift.yml'
+      - '.github/workflows/dark-ui.yml'
+      - 'development-baseline.json'
+      - 'postpone-app-docs/fixtures/domain-cases.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dark-ui-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  preparation:
+    name: 원본과 배포 도구 회귀 검증
+    if: ${{ github.event.deleted != true }}
+    uses: ./.github/workflows/validation.yml
+
+  verification:
+    name: 네 경로 실제 검증
+    if: ${{ github.event.deleted != true }}
+    uses: ./.github/workflows/swift.yml
+    with:
+      preserve_run: true
+      ui_appearance: dark
+
+  ui-evidence:
+    name: 검증한 세 플랫폼 UI 앱샷 별도 게시
+    needs: [preparation, verification]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ui-screenshots-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-ui-input/iphone
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ui-screenshots-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-ui-input/ipad
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ui-screenshots-mac-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-ui-input/mac
+      - name: SHA·build·run과 모든 화면 증거를 다시 검증
+        run: >-
+          python3 scripts/ci-ui-evidence.py aggregate
+          --input-root "$RUNNER_TEMP/mirror-ui-input"
+          --output "$RUNNER_TEMP/mirror-ui-public"
+          --sha "$GITHUB_SHA" --build-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+      - name: 합성 UI 앱샷 전용 prerelease 게시
+        env:
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/ci-ui-evidence.py publish
+          --publish-dir "$RUNNER_TEMP/mirror-ui-public"
+          --sha "$GITHUB_SHA" --build-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

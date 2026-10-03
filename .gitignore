@@ -3,6 +3,7 @@
 __pycache__/
 *.py[cod]
 .build/
+.swiftpm/
 DerivedData/
 *.xcuserstate
 xcuserdata/

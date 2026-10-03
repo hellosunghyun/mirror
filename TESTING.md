@@ -1,10 +1,32 @@
 # 테스트 전략
 
+## 간편 일괄 미루기
+
+[전용 batch UI 검증](docs/BATCH_UI_REVIEW.md)은 iPhone·iPad·Mac에서 두 개와 스무 개 작업을 실제 입력·개별 선택하고 날짜를 바꾼다. 원래 UUID·전체 제목·미완료 상태, 선택하지 않은 작업의 날짜, 기본 접힌 제목과 달력을 확인한다. 앱 소스가 바뀐 push의 [batch workflow](.github/workflows/batch-ui.yml)에서 실행하며, 각 플랫폼의 현재 SHA·실행·attempt와 실제 typed 두 사례의 통과·실패0·skip0을 확인해야 한다.
+
+새 UI 두 사례와 결과 게이트 회귀15개는 작성된 검사이며 실제 통과 수와 구분한다. 기존 여섯 native UI 사례·143개 assertion·32개 XCTFail·원본46장과 기존 시간 제한·서명 및 게시 게이트는 유지한다. 일반 일괄 배치 성공은 Q-080의 stale 전체 거부·실기기·두 기기 수용을 대신하지 않는다. 로컬 클라우드에서 테스트나 앱 빌드를 실행하지 않는다.
+
 사용자 지시: **테스트코드를 적극적으로 활용한다.**
 
 ## 현재 실행 가능한 검사
 
+사용자 지정 실행 위치는 **GitHub Actions 러너**다. [Swift workflow](.github/workflows/swift.yml)는 SwiftPM 및 Xcode의 macOS·iPhone·iPad 환경에서 같은 생산 도메인·Core Data 저장·시스템 서비스 소스를 검사하고 iPhone·iPad·Mac에서 실제 XCUITest를 실행한다. 결과 파서는 실제 실행 수가 양수인지, 실패·skip이 없는지 확인하며 현재 실행의 로그·xcresult를 보존한다. 자세한 실행과 결과는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
+
+Swift 테스트는 원본 fixture 36개를 그대로 읽어 날짜 목적지, Today/Review 판정, 마감 확인, 신규 배치, receipt 우선 stale context 판정을 검사한다. 추가 사례는 윤년·연말·Gregorian 역사적 경계·DST·자정·잘못된 입력·주 구조·수동 검토와 마감 확인 바인딩을 검증한다. 원본 파일을 수정하거나 기대값을 생산 구현에서 계산하지 않는다.
+
 준비 검사와 회귀 테스트는 원본 문서의 무결성, 문서 연결, JSON 계약, fixture 기대값, FR / QA 매핑을 검증한다. 기존 검증기는 임시 복사본에서 실행한다. 준비 검사가 통과해도 실제 앱의 QA 상태 87개는 미실행으로 유지한다.
+
+현재 전체 구현에는 명령/reducer·실제 SQLite·Widget/알림/링크 계약과 UI 시나리오가 추가됐다. `2da19a9`의 Actions 36817569714에서 SwiftPM 151개, Mac 단위 151개·iPhone/iPad 단위 각각 150개와 세 플랫폼 UI 각각 6개를 최종 집계에서 통과했다. 서명은 별도 인증서 일치 검사에서 실패했다. 후속 검색·복원·프로세스·화면 보완은 새 SHA의 Actions에서 다시 검증한다. 이전 37개 날짜 테스트의 통과를 새 저장·UI·동기화의 성공으로 확장하지 않는다. 최종 집계는 필수 세 unit/integration bundle 및 UI의 양수 실행 수와 실패·skip 없음까지 요구한다. 원본 보고서의 상태를 덮어쓰지 않고 파생 검증 기록에 실행 범위를 남긴다.
+
+## 별도 프로세스 회귀
+
+`MirrorStoreProbe`는 테스트용 SwiftPM 실행 파일이며 앱에 포함하지 않는다. CI는 `.build/process-probe`에서 현재 소스를 빌드하고 공식 `--show-bin-path` 결과를 기록한다. Mac 저장 통합 테스트는 실제 생산 `MirrorStore`를 열어 두 프로세스의 동일 명령 경쟁과 원본 저장 후 SIGKILL·재시작을 검사한다. helper가 없으면 실패하며 skip하지 않는다. Python lock 경계 회귀도 유지한다. 이 결과로 실제 CloudKit 두 기기·OS 보호 데이터·실기기 위젯 검증을 대체하지 않는다.
+
+## 대용량 성능과 자체 백업 왕복
+
+Actions의 별도 Release 검사에서 합성 열린 작업 10,000개·유효 원본 기록 100,000개를 실제 저장소에 가져오고 조회·단건 명령·내보내기의 표본과 p50/p95를 기록한다. 내보낸 파일의 UTF-8 크기와 빈 저장소로의 전체 복원·동일 파일 재복원도 확인한다. 준비 시간은 명령 표본에서 제외하고 commit·러너·OS/SDK/Swift·빌드 종류를 함께 보존한다. 목표 초과는 실제 숫자와 함께 기록하며 실기기 저장 500ms·위젯 표시 2초나 전체 Q-086 통과로 바꾸지 않는다. EventKit 권한과 실제 캘린더가 없는 합성 일정은 실제 2,000개 조회 검증으로 간주하지 않는다.
+
+복원 UI의 임의 32MiB 상한은 제거했다. 허용된 20,000자 ASCII 메모 1,700개만으로도 그 상한을 넘으며 자체 내보내기에는 같은 제한이 없었기 때문이다. 파일은 기존 mapped read·형식 검증·미리보기·명시적 복원 동의를 계속 거친다. 대용량 데이터의 실제 메모리·시간과 복원 성공은 새 Actions baseline에서 확인한다.
 
 ## 앱 구현에 연결할 테스트
 
@@ -21,7 +43,7 @@
 
 ## SwiftPieces UI 검증
 
-UI는 사용자 지정 SwiftPieces를 사용한다. 현재는 적용 기준과 후보를 검토한 단계이며 아래 앱 검증은 아직 미실행이다. 실제 소스 도입 후 컴포넌트별 검증 결과를 FR / QA와 연결한다.
+UI는 사용자 지정 SwiftPieces를 사용한다. TaskRow/ExpandableText/StatusMorph를 실제 화면에 도입했고 한국어·MainActor·Mac 색상 대응을 적용했다. 아래 실제 접근성 검증은 아직 미실행이다. 실제 소스 도입 후 컴포넌트별 검증 결과를 FR / QA와 연결한다.
 
 | 검증 대상 | 필요한 시나리오 |
 |---|---|
@@ -43,4 +65,4 @@ UI는 사용자 지정 SwiftPieces를 사용한다. 현재는 적용 기준과 �
 4. 저장·동시성은 실제 선택된 저장소를 대상으로 통합 검증한다. mock 성공만으로 복구·동기화 완료를 판정하지 않는다.
 5. 수용 시나리오별 실행 대상, OS / SDK, 명령, 통과·실패·미실행 상태를 기록한다.
 
-Swift Testing, XCTest / XCUITest는 Apple 제공 테스트 도구를 사용한다. Xcode 프로젝트와 명령은 다음 구현 작업에서 실제 타깃 구성에 맞춰 확정한다.
+Swift Testing, XCTest / XCUITest는 Apple 제공 테스트 도구를 사용한다. 현재 Xcode 프로젝트·공유 scheme과 실행 명령은 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)에 기록했다. 후속 저장·명령·UI 검증은 실제 타깃 구성에 맞춰 확장한다.
