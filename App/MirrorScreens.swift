@@ -1438,11 +1438,28 @@ struct MirrorPlanPicker: View {
                 }
                 Section {
                     if request.taskIDs.count > 1 {
-                        DisclosureGroup("선택한 작업 \(request.taskIDs.count)개", isExpanded: $showTaskTitles) {
-                            taskTitles
+                        Button { showTaskTitles.toggle() } label: {
+                            HStack(spacing: 12) {
+                                Text("선택한 작업 \(request.taskIDs.count)개")
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                Image(systemName: showTaskTitles ? "chevron.up" : "chevron.down")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                            }
+                            #if os(iOS)
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            #else
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            #endif
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("선택한 작업 \(request.taskIDs.count)개")
                         .accessibilityIdentifier("plan.tasksDisclosure")
                         .accessibilityValue(showTaskTitles ? "펼쳐짐" : "접힘")
+                        if showTaskTitles { taskTitles }
                     } else {
                         taskTitles
                     }

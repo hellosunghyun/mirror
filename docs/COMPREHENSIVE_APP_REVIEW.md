@@ -310,3 +310,7 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 5dac의 한 사례 비교는 pinned와 system 모두 기존 420초 제한에 도달했다. pinned에서는 captureTitle/textField의 dynamicType, system에서는 식별자 other인 button의 missingDescription을 관측했지만 감사 완료 경계는 없었다. 따라서 pin이 원인이라거나 system에서 해당 감사가 통과했다고 판정하지 않는다. 이와 별개로 일반 iOS 적응형 검사의 단일 SwiftUI 값 고정을 제거하고 실제 시스템 최대 크기를 검사 환경으로 사용한다. iOS 기본은 명시적인 system이며 UIKit 최대값이나 실제 SwiftUI accessibility5가 없으면 실패한다. pinned는 기존 입력 단일 사례의 원인 분리 진단에서만 허용하고 Mac의 검사 환경은 유지한다.
 
 기존 unsigned build receipt와 같은 Simulator의 원래 category를 변경 전에 보관하고 최대값 설정·readback 뒤 원래 전체 사례를 실행한다. 루트와 실제 표시한 입력·정리·날짜·상세의 기존 probe에서 모드·범위·앱 UIKit 출처·UIKit 최대값·SwiftUI 최대값을 확인하며 원래 AX 값을 재사용한다. 성공·실패·test 단계 중단 뒤 별도 always 복구 단계가 같은 소유 정보로 원래 category를 복원하고 다시 읽는다. 빠진 journal이나 다른 실행의 기록을 성공 no-op로 바꾸지 않는다. 앱의 production 화면·도메인 로직, iOS 4개/Mac 5개 사례, 전체 감사·false handler·실제 조작 assertion·원래 시간 제한과 typed 결과·PNG 게이트는 유지한다. DEBUG probe 그룹의 구조 차이는 남아 있으므로 시스템 설정 전환이 그 차이까지 없앤다고 주장하지 않는다. 실제 네 iOS matrix의 완주·복원·접근성 수용은 다음 Actions 결과가 필요하다.
+
+### 선택한 작업 제목을 펼치는 전체 행
+
+8b91 Mac Batch의 Two 사례는 선택 작업 disclosureTriangle을 실제 활성화한 뒤 기존15초 펼침 대기에서 실패했고, 같은 요소의 사후 관측값은 NSNumber 0이었다. 이 관측만으로 작은 삼각형이나 native 값 변환을 원인으로 확정하지 않는다. 사용자가 선택한 작업을 쉽게 확인하도록 날짜 선택창의 해당 DisclosureGroup만 제목 행 전체를 누르는 plain Button과 조건부 제목 목록으로 바꾼다. 기존 showTaskTitles·최초 접힘·선택 ID·라벨·접힘/펼쳐짐 값·고유 식별자는 유지하며, 장식 chevron은 접근성에서 제외하고 큰 글자는 줄바꿈한다. 최소 행 높이는 iOS48pt/Mac44pt이고 한 작업 표시·빠른 날짜·취소·다시 열기 정책은 그대로다. 기존 Batch의 실제 Button 경로와 펼친 제목·다시 접은 뒤 제목 부재·날짜 배치 검사를 변경하지 않으며, 새 조작과 접근성 수용 및 기존 실패 해소 여부는 후속 Actions에서 확인한다.
