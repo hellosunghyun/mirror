@@ -513,21 +513,38 @@ final class CoreDataPersistence: @unchecked Sendable {
                 string("taskIndex"), string("workspaceKey"), string("workspaceEpoch"),
                 integer("schemaVersion", value: 1), integer("lamport", value: 0), string("idempotencyKey", optional: true),
                 string("requestDigest", optional: true), date("insertedAt")
+            ], indexes: [
+                ("OperationByID", ["operationID"]),
+                ("OperationByDecision", ["workspaceKey", "workspaceEpoch", "idempotencyKey"]),
+                ("OperationByLamport", ["workspaceKey", "workspaceEpoch", "lamport"])
             ])]
         } else {
             model.entities = [
-                entity("CacheValue", attributes: [string("key"), binary("value")]),
-                entity("Receipt", attributes: [string("key"), string("digest"), string("operationID"), binary("result")])
+                entity("CacheValue", attributes: [string("key"), binary("value")],
+                       indexes: [("CacheValueByKey", ["key"])]),
+                entity("Receipt", attributes: [string("key"), string("digest"), string("operationID"), binary("result")],
+                       indexes: [("ReceiptByKey", ["key"])])
             ]
         }
         return model
     }
 
-    private static func entity(_ name: String, attributes: [NSAttributeDescription]) -> NSEntityDescription {
+    private static func entity(_ name: String, attributes: [NSAttributeDescription],
+                               indexes: [(String, [String])] = []) -> NSEntityDescription {
         let entity = NSEntityDescription()
         entity.name = name
         entity.managedObjectClassName = "NSManagedObject"
         entity.properties = attributes
+        // 조회만 보조한다. 같은 operationID의 물리 중복과 서로 다른 원문은 모두 보존한다.
+        entity.indexes = indexes.map { indexName, propertyNames in
+            let elements = propertyNames.map { propertyName in
+                guard let property = entity.propertiesByName[propertyName] else {
+                    preconditionFailure("조회 인덱스의 속성이 모델에 없습니다: \(propertyName)")
+                }
+                return NSFetchIndexElementDescription(property: property, collationType: .binary)
+            }
+            return NSFetchIndexDescription(name: indexName, elements: elements)
+        }
         // CloudKit 원본은 unique constraint에 의존하지 않는다.
         return entity
     }

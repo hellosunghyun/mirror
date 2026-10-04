@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import MirrorDomain
 @testable import MirrorData
+import SQLite3
 import Testing
 
 private struct RecoveryMarker: Codable {
@@ -56,14 +57,48 @@ private func legacyRecoveryModel(payloadType: NSAttributeType = .binaryDataAttri
     return model
 }
 
+/// 인덱스 도입 직전의 모델을 고정한다. requestDigest와 Data() 기본값도 실제 기존 모델과 같다.
+private func preIndexRecoveryModel(canonical: Bool) -> NSManagedObjectModel {
+    func entity(_ name: String, _ attributes: [NSAttributeDescription]) -> NSEntityDescription {
+        let entity = NSEntityDescription()
+        entity.name = name; entity.managedObjectClassName = "NSManagedObject"; entity.properties = attributes
+        return entity
+    }
+    func string(_ name: String, optional: Bool = false) -> NSAttributeDescription {
+        recoveryAttribute(name, type: .stringAttributeType, optional: optional, defaultValue: optional ? nil : "")
+    }
+    func binary(_ name: String) -> NSAttributeDescription {
+        recoveryAttribute(name, type: .binaryDataAttributeType, defaultValue: Data())
+    }
+    let model = NSManagedObjectModel()
+    if canonical {
+        model.entities = [entity("Operation", [
+            string("recordID"), string("operationID"), string("payloadDigest"), binary("payload"),
+            string("taskIndex"), string("workspaceKey"), string("workspaceEpoch"),
+            recoveryAttribute("schemaVersion", type: .integer64AttributeType, defaultValue: Int64(1)),
+            recoveryAttribute("lamport", type: .integer64AttributeType, defaultValue: Int64(0)),
+            string("idempotencyKey", optional: true), string("requestDigest", optional: true),
+            recoveryAttribute("insertedAt", type: .dateAttributeType, defaultValue: Date(timeIntervalSince1970: 0))
+        ])]
+    } else {
+        model.entities = [entity("CacheValue", [string("key"), binary("value")]),
+                          entity("Receipt", [string("key"), string("digest"), string("operationID"), binary("result")])]
+    }
+    return model
+}
+
 private func openLegacyRecoveryStore(at url: URL, model: NSManagedObjectModel,
-                                     readOnly: Bool = false) async throws -> NSPersistentContainer {
+                                     readOnly: Bool = false, historyTracking: Bool = false) async throws -> NSPersistentContainer {
     let container = NSPersistentContainer(name: "RecoveryFixture", managedObjectModel: model)
     let description = NSPersistentStoreDescription(url: url)
     description.type = NSSQLiteStoreType
     description.shouldMigrateStoreAutomatically = false
     description.setOption(readOnly as NSNumber, forKey: NSReadOnlyPersistentStoreOption)
     description.setOption(["journal_mode": "WAL"] as NSDictionary, forKey: NSSQLitePragmasOption)
+    if historyTracking {
+        description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+        description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+    }
     container.persistentStoreDescriptions = [description]
     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
         container.loadPersistentStores { _, error in
@@ -115,8 +150,218 @@ private func insertLegacyStringPayload(in container: NSPersistentContainer) asyn
     }
 }
 
+private func indexedRecoveryOperations(configuration: StoreConfiguration) throws -> [StoredOperation] {
+    let deviceID = try #require(UUID(uuidString: configuration.deviceID))
+    let taskID = try #require(UUID(uuidString: "22222222-2222-4222-8222-222222222222"))
+    let otherTaskID = try #require(UUID(uuidString: "33333333-3333-4333-8333-333333333333"))
+    let instant = try recoveryContext().capturedAt
+    func record(_ id: String, task: UUID? = nil, schema: Int = 1, workspace: String? = nil,
+                epoch: String? = nil, lamport: Int64, decision: String? = "fixture-decision") throws -> StoredOperation {
+        let operation = try OperationRecord.create(operationID: id, schemaVersion: schema,
+            workspaceKey: workspace ?? configuration.workspaceKey, workspaceEpoch: epoch ?? configuration.workspaceEpoch,
+            deviceID: deviceID, lamport: lamport, recordedAt: instant, commandKind: .capture,
+            mutations: [TaskMutation(taskID: task ?? taskID, value: .content(try TaskContent(title: "인덱스 원본 보존 fixture")))],
+            idempotencyKey: decision, logicalCommandDigest: decision.map { "request-\($0)-\(lamport)" })
+        return StoredOperation(operationID: operation.operationID, payloadDigest: operation.payloadDigest,
+            payload: try CanonicalDigest.data(operation), taskIDs: operation.affectedTaskIDs.map(\.uuidString),
+            workspaceKey: operation.workspaceKey, workspaceEpoch: operation.workspaceEpoch, schemaVersion: operation.schemaVersion,
+            idempotencyKey: operation.idempotencyKey, requestDigest: operation.logicalCommandDigest, lamport: operation.lamport)
+    }
+    let original = try record("fixture-collision", lamport: 10)
+    return [original, original, // 같은 원문을 가진 물리 행 두 개도 유지해야 한다.
+            try record("fixture-collision", task: otherTaskID, lamport: 11),
+            try record("fixture-unsupported", schema: 99, lamport: 4_000, decision: nil),
+            try record("fixture-foreign-workspace", workspace: "foreign-workspace", lamport: Int64.max),
+            try record("fixture-foreign-epoch", epoch: "foreign-epoch", lamport: Int64.max)]
+}
+
+private func seedPreIndexRecoveryStores(configuration: StoreConfiguration, operations: [StoredOperation],
+                                        preferences: Data, receipt: StoredReceipt) async throws {
+    let canonical = try await openLegacyRecoveryStore(at: configuration.directory.appendingPathComponent("Canonical.sqlite"),
+        model: preIndexRecoveryModel(canonical: true), historyTracking: true)
+    defer { try? closeLegacyRecoveryStore(canonical) }
+    let writeCanonical = canonical.newBackgroundContext()
+    try await writeCanonical.perform {
+        for operation in operations {
+            let row = NSEntityDescription.insertNewObject(forEntityName: "Operation", into: writeCanonical)
+            row.setValue(UUID().uuidString, forKey: "recordID")
+            row.setValue(operation.operationID, forKey: "operationID")
+            row.setValue(operation.payloadDigest, forKey: "payloadDigest")
+            row.setValue(operation.payload, forKey: "payload")
+            row.setValue(operation.taskIDs.sorted().map { "|\($0)|" }.joined(), forKey: "taskIndex")
+            row.setValue(operation.workspaceKey, forKey: "workspaceKey")
+            row.setValue(operation.workspaceEpoch, forKey: "workspaceEpoch")
+            row.setValue(Int64(operation.schemaVersion), forKey: "schemaVersion")
+            row.setValue(operation.lamport, forKey: "lamport")
+            row.setValue(operation.idempotencyKey, forKey: "idempotencyKey")
+            row.setValue(operation.requestDigest, forKey: "requestDigest")
+            row.setValue(Date(timeIntervalSince1970: 1_791_000_000), forKey: "insertedAt")
+        }
+        try writeCanonical.save()
+    }
+    let projection = try await openLegacyRecoveryStore(at: configuration.directory.appendingPathComponent("LocalProjection.sqlite"),
+        model: preIndexRecoveryModel(canonical: false), historyTracking: true)
+    defer { try? closeLegacyRecoveryStore(projection) }
+    let writeProjection = projection.newBackgroundContext()
+    try await writeProjection.perform {
+        let preferenceRow = NSEntityDescription.insertNewObject(forEntityName: "CacheValue", into: writeProjection)
+        preferenceRow.setValue("local:system-preferences-v1", forKey: "key")
+        preferenceRow.setValue(preferences, forKey: "value")
+        let receiptRow = NSEntityDescription.insertNewObject(forEntityName: "Receipt", into: writeProjection)
+        receiptRow.setValue(receipt.key, forKey: "key")
+        receiptRow.setValue(receipt.digest, forKey: "digest")
+        receiptRow.setValue(receipt.operationID, forKey: "operationID")
+        receiptRow.setValue(receipt.result, forKey: "result")
+        try writeProjection.save()
+    }
+    try closeLegacyRecoveryStore(projection)
+    try closeLegacyRecoveryStore(canonical)
+}
+
+private func recoveryOperationMultiset(_ operations: [StoredOperation]) throws -> [Data: Int] {
+    var counts: [Data: Int] = [:]
+    for operation in operations { counts[try CanonicalDigest.data(operation), default: 0] += 1 }
+    return counts
+}
+
+private struct RecoverySQLiteIndex {
+    let columns: [String]
+    let unique: Bool
+    let partial: Bool
+}
+
+private struct RecoverySQLiteTable {
+    let columns: Set<String>
+    let indexes: [RecoverySQLiteIndex]
+}
+
+/// 이 helper는 schema만 읽는다. 오류에도 원문 payload나 SQLite 전체 메시지를 출력하지 않는다.
+private func recoverySchemaRows(_ database: OpaquePointer, sql: String) throws -> [[String]] {
+    var statement: OpaquePointer?
+    let prepared = sqlite3_prepare_v2(database, sql, -1, &statement, nil)
+    guard prepared == SQLITE_OK, let statement else {
+        if let statement { sqlite3_finalize(statement) }
+        throw NSError(domain: "MirrorRecoverySchemaInspection", code: Int(prepared))
+    }
+    defer { sqlite3_finalize(statement) }
+    var rows: [[String]] = []
+    while true {
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return rows }
+        guard status == SQLITE_ROW else { throw NSError(domain: "MirrorRecoverySchemaInspection", code: Int(status)) }
+        rows.append((0..<sqlite3_column_count(statement)).map { column in
+            sqlite3_column_text(statement, column).map { String(cString: $0) } ?? ""
+        })
+    }
+}
+
+private func recoverySQLiteSchema(at url: URL) throws -> [RecoverySQLiteTable] {
+    var connection: OpaquePointer?
+    let opened = sqlite3_open_v2(url.path, &connection, SQLITE_OPEN_READONLY, nil)
+    guard opened == SQLITE_OK, let connection else {
+        if let connection { sqlite3_close(connection) }
+        throw NSError(domain: "MirrorRecoverySchemaInspection", code: Int(opened))
+    }
+    defer { sqlite3_close(connection) }
+    func quoted(_ identifier: String) -> String { "\"" + identifier.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+    let tables = try recoverySchemaRows(connection, sql: "SELECT name FROM sqlite_master WHERE type = 'table'")
+    return try tables.map { table in
+        let name = try #require(table.first)
+        let columnRows = try recoverySchemaRows(connection, sql: "PRAGMA table_info(\(quoted(name)))")
+        let columns = try Set(columnRows.map { row in
+            try #require(row.count > 1)
+            return row[1].uppercased()
+        })
+        let indexRows = try recoverySchemaRows(connection, sql: "PRAGMA index_list(\(quoted(name)))")
+        let indexes = try indexRows.map { row in
+            try #require(row.count > 4)
+            let elements = try recoverySchemaRows(connection, sql: "PRAGMA index_info(\(quoted(row[1])))")
+            let ordered = try elements.map { element -> (Int, String) in
+                try #require(element.count > 2)
+                return (try #require(Int(element[0])), element[2].uppercased())
+            }.sorted { $0.0 < $1.0 }.map(\.1)
+            return RecoverySQLiteIndex(columns: ordered, unique: row[2] != "0", partial: row[4] != "0")
+        }
+        return RecoverySQLiteTable(columns: columns, indexes: indexes)
+    }
+}
+
+/// 현재 SDK가 만든 fixture의 schema를 관측한다. Core Data의 SQL 테이블명·자동 인덱스명은 고정하지 않는다.
+private func expectRecoveryPhysicalIndexes(in directory: URL, installed: Bool) throws {
+    let canonical = try recoverySQLiteSchema(at: directory.appendingPathComponent("Canonical.sqlite"))
+    let projection = try recoverySQLiteSchema(at: directory.appendingPathComponent("LocalProjection.sqlite"))
+    let operation = try #require(canonical.first { $0.columns.isSuperset(of: ["ZOPERATIONID", "ZPAYLOADDIGEST", "ZTASKINDEX"]) })
+    let cache = try #require(projection.first { $0.columns.isSuperset(of: ["ZKEY", "ZVALUE"]) })
+    let receipt = try #require(projection.first { $0.columns.isSuperset(of: ["ZKEY", "ZDIGEST", "ZRESULT"]) })
+    let requirements: [(RecoverySQLiteTable, [String])] = [
+        (operation, ["ZOPERATIONID"]),
+        (operation, ["ZWORKSPACEKEY", "ZWORKSPACEEPOCH", "ZIDEMPOTENCYKEY"]),
+        (operation, ["ZWORKSPACEKEY", "ZWORKSPACEEPOCH", "ZLAMPORT"]),
+        (cache, ["ZKEY"]), (receipt, ["ZKEY"])
+    ]
+    for (table, columns) in requirements {
+        let found = table.indexes.contains { $0.columns == columns && !$0.unique && !$0.partial }
+        #expect(found == installed, "실제 SQLite의 비고유 전체 인덱스 및 열 순서: \(columns)")
+    }
+}
+
 @Suite("손상 projection 격리와 migration 원본 보존", .serialized)
 struct PersistenceRecoveryTests {
+    @Test("새 저장소와 인덱스 이전 저장소는 첫 개설·재개설에 실제 인덱스와 모든 원문·로컬 값을 보존한다",
+          arguments: [false, true])
+    func physicalIndexesPreserveExistingRows(preExisting: Bool) async throws {
+        let configuration = recoveryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        try FileManager.default.createDirectory(at: configuration.directory, withIntermediateDirectories: true)
+        let operations = try indexedRecoveryOperations(configuration: configuration)
+        let expectedRows = try recoveryOperationMultiset(operations)
+        let preferences = Data(#"{"planningTimeZoneID":"Asia/Seoul","hideExternalTitles":true,"selectedCalendarIDs":["fixture-calendar"]}"#.utf8)
+        let receipt = StoredReceipt(key: "fixture-receipt", digest: "fixture-digest", operationID: "fixture-collision",
+            result: Data(#"{"state":"locallyCommitted","requestID":"fixture-request"}"#.utf8))
+        if preExisting {
+            try await seedPreIndexRecoveryStores(configuration: configuration, operations: operations,
+                preferences: preferences, receipt: receipt)
+            try expectRecoveryPhysicalIndexes(in: configuration.directory, installed: false)
+        }
+        for opening in 0..<2 {
+            let persistence = try await CoreDataPersistence.open(configuration: configuration)
+            do {
+                if !preExisting && opening == 0 {
+                    try await persistence.appendMany(operations)
+                    try await persistence.saveProjection(["local:system-preferences-v1": preferences], receipt: receipt)
+                }
+                let restored = try await persistence.operations()
+                // Bool만 진단하여 실패 로그에도 raw payload를 출력하지 않는다. Set 비교는 물리 중복을 놓친다.
+                let originalsMatch = try recoveryOperationMultiset(restored) == expectedRows
+                #expect(originalsMatch)
+                #expect(restored.count == 6)
+                let collisions = try await persistence.operation(operationID: "fixture-collision")
+                let collisionsMatch = try recoveryOperationMultiset(collisions) == recoveryOperationMultiset(Array(operations.prefix(3)))
+                #expect(collisionsMatch)
+                let decisions = try await persistence.operation(idempotencyKey: "fixture-decision",
+                    workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch)
+                let decisionsMatch = try recoveryOperationMultiset(decisions) == recoveryOperationMultiset(Array(operations.prefix(3)))
+                #expect(decisionsMatch)
+                #expect(try await persistence.maximumLamport(workspaceKey: configuration.workspaceKey,
+                    workspaceEpoch: configuration.workspaceEpoch) == 4_000)
+                let restoredPreferences = try await persistence.localValue(key: "local:system-preferences-v1")
+                let preferencesMatch = restoredPreferences == preferences
+                #expect(preferencesMatch)
+                let restoredReceipt = try #require(try await persistence.receipt(key: receipt.key))
+                let receiptMatches = restoredReceipt.key == receipt.key && restoredReceipt.digest == receipt.digest
+                    && restoredReceipt.operationID == receipt.operationID && restoredReceipt.result == receipt.result
+                #expect(receiptMatches)
+                try await persistence.close()
+            } catch {
+                try? await persistence.close()
+                throw error
+            }
+            try expectRecoveryPhysicalIndexes(in: configuration.directory, installed: true)
+        }
+        // 인덱스만의 metadata 변경이 backup을 요구하는지는 SDK의 호환성 판단에 맡긴다.
+        #expect(try recoveryChildren(in: configuration.directory.appendingPathComponent("ProjectionQuarantine")).isEmpty)
+    }
+
     @Test("물리 cache 손상을 격리하고 canonical에서 재생하며 같은 결정은 중복 저장하지 않는다")
     func corruptProjectionRecovery() async throws {
         let configuration = recoveryConfiguration()
