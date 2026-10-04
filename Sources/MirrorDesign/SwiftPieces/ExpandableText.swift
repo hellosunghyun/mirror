@@ -51,7 +51,7 @@ public struct ExpandableText: View {
 
         /// Pass only what you want to change; `nil` keeps the house palette value.
         public init(link: Color? = nil, linkWeight: Font.Weight = .semibold, fadeWidth: CGFloat = 40, fade: Color? = nil) {
-            self.link = link ?? adaptive(light: 0xD70000, dark: 0xFF3B30)
+            self.link = link ?? MirrorPalette.accent
             self.linkWeight = linkWeight
             self.fadeWidth = max(fadeWidth, 0)
             self.fade = fade
@@ -355,9 +355,4 @@ private struct HeightReader: ViewModifier {
             }
         }
     }
-}
-
-/// A house-palette color that follows the interface style.
-private func adaptive(light: UInt32, dark: UInt32) -> Color {
-    mirrorAdaptiveColor(light: light, dark: dark)
 }
