@@ -132,14 +132,23 @@ private struct MirrorCalendarDropTarget: ViewModifier {
 }
 
 @MainActor
+struct MirrorCalendarNavigationState {
+    var selectedDate: Date?
+    var weekly = false
+    let display = CalendarDisplayState()
+}
+
+@MainActor
 struct MirrorCalendarView: View {
     var compact = false
+    @Binding var navigation: MirrorCalendarNavigationState
     @Environment(AppModel.self) private var model
     @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selectedDate = Date()
-    @State private var weekly = false
-    @State private var initialized = false
+
+    private var selectedDate: Date { navigation.selectedDate ?? model.now }
+    private var weekly: Bool { navigation.weekly }
+    private var calendarProblem: String? { navigation.display.problem ?? model.calendarProblem }
 
     private var selectedContext: PlanningContext? {
         try? PlanningContext.capture(at: selectedDate, timeZoneID: model.preferences.timeZoneID,
@@ -168,7 +177,7 @@ struct MirrorCalendarView: View {
                         ForEach(days, id: \.self) { date in dayCard(date) }
                     }
                     if hasWeeklyTasks || (!compact && weekly) { weeklyBasket }
-                    if !compact || model.calendarProblem != nil { calendarAccess }
+                    if !compact || calendarProblem != nil { calendarAccess }
                 }
                 .frame(maxWidth: 1080)
                 .padding(.horizontal, 20)
@@ -179,16 +188,17 @@ struct MirrorCalendarView: View {
         }
         .environment(\.mirrorCalendarDropAvailable, true)
         .navigationTitle("일정")
-        .task {
-            if !initialized, let day = model.context?.planningDay {
-                selectedDate = AppDate.instant(day, zone: model.preferences.timeZoneID) ?? model.now
-                initialized = true
+        .task(id: navigation.display.id) {
+            if navigation.selectedDate == nil, let day = model.context?.planningDay {
+                navigation.selectedDate = AppDate.instant(day, zone: model.preferences.timeZoneID) ?? model.now
             }
             await loadEvents()
         }
         .onChange(of: selectedDate) { _, _ in Task { await loadEvents() } }
         .onChange(of: weekly) { _, _ in Task { await loadEvents() } }
         .onChange(of: model.preferences.selectedCalendars) { _, _ in Task { await loadEvents() } }
+        .onChange(of: model.preferences.timeZoneID) { _, _ in Task { await loadEvents() } }
+        .onChange(of: model.preferences.calendarEnabled) { _, _ in Task { await loadEvents() } }
     }
 
     private var calendarControls: some View {
@@ -212,13 +222,13 @@ struct MirrorCalendarView: View {
         }
     }
     private var scopePicker: some View {
-        Picker("보기", selection: $weekly) {
+        Picker("보기", selection: $navigation.weekly) {
             Text("일간").tag(false)
             Text("주간").tag(true)
         }.pickerStyle(.segmented)
     }
     private var datePicker: some View {
-        DatePicker("살펴볼 날짜", selection: $selectedDate, displayedComponents: .date)
+        DatePicker("살펴볼 날짜", selection: Binding(get: { selectedDate }, set: { navigation.selectedDate = $0 }), displayedComponents: .date)
             .datePickerStyle(.compact)
             .environment(\.timeZone, TimeZone(identifier: model.preferences.timeZoneID) ?? .gmt)
             .accessibilityIdentifier("calendar.date")
@@ -228,7 +238,7 @@ struct MirrorCalendarView: View {
     private var todayButton: some View {
         if let day = model.context?.planningDay,
            let instant = AppDate.instant(day, zone: model.preferences.timeZoneID) {
-            Button { selectedDate = instant } label: {
+            Button { navigation.selectedDate = instant } label: {
                 Text("오늘로")
                     .frame(minWidth: 44, minHeight: 44)
                     .contentShape(Rectangle())
@@ -341,7 +351,7 @@ struct MirrorCalendarView: View {
     private var calendarAccess: some View {
         calendarCard {
             Label("기존 캘린더 약속", systemImage: "calendar.badge.clock").font(.headline)
-            if let problem = model.calendarProblem {
+            if let problem = calendarProblem {
                 Text(problem).font(.callout).foregroundStyle(.secondary)
             }
             if model.preferences.calendarEnabled {
@@ -371,7 +381,7 @@ struct MirrorCalendarView: View {
 
     private func events(on date: LocalDate) -> [CalendarEventSummary] {
         guard let range = dayRange(date) else { return [] }
-        return model.calendarEvents.filter { $0.end > range.start && $0.start < range.end }
+        return navigation.display.events.filter { $0.end > range.start && $0.start < range.end }
     }
     private func dayRange(_ date: LocalDate) -> (start: Date, end: Date)? {
         guard let zone = TimeZone(identifier: model.preferences.timeZoneID),
@@ -397,7 +407,7 @@ struct MirrorCalendarView: View {
               let endDay = try? last.addingDays(1), let zone = TimeZone(identifier: model.preferences.timeZoneID),
               let startNoon = AppDate.instant(first, zone: zone.identifier), let endNoon = AppDate.instant(endDay, zone: zone.identifier) else { return }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = zone
-        await model.loadCalendar(from: calendar.startOfDay(for: startNoon), to: calendar.startOfDay(for: endNoon))
+        await model.loadCalendar(navigation.display, from: calendar.startOfDay(for: startNoon), to: calendar.startOfDay(for: endNoon))
     }
     private func timeLabel(_ instant: Date) -> String {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "ko_KR")
@@ -430,7 +440,9 @@ struct MirrorSettingsView: View {
     @State private var selectedZone = ""
     @State private var showLicenses = false
     @State private var confirmImport = false
-    @State private var accountImportConfirmed = false
+    @State private var importFileSelectionID: UUID?
+    @State private var importConfirmationID: UUID?
+    @State private var accountImportConfirmationID: UUID?
     @State private var cloudMergeConfirmed = false
     @State private var disableCloudConfirmed = false
     @State private var cloudDeleteSecondConfirmation = false
@@ -443,7 +455,7 @@ struct MirrorSettingsView: View {
         NavigationStack {
             Form {
                 operationErrorSection
-                planningSection
+                settingsOverview
                 if model.projectionRecovery != nil || model.recoveryConfigurationBlocked {
                     Section("목록 복구") {
                         Text("화면 캐시가 손상되어 원본에서 목록을 복구했어요. 외부 제목 노출·알림·캘린더 선택은 꺼져 있어요.")
@@ -458,13 +470,11 @@ struct MirrorSettingsView: View {
                         Text("확인 뒤 필요한 외부 기능을 각각 다시 켜 주세요.").font(.caption)
                     }
                 }
-                notificationsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
-                calendarsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
-                syncSection
-                privacySection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
+                preferenceDestinations
                 dataManagementSection
                 aboutSection
             }
+            .accessibilityIdentifier("settings.overview")
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             .frame(maxWidth: 720)
@@ -478,38 +488,53 @@ struct MirrorSettingsView: View {
                 model.archiveData = nil
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+                guard let selectionID = importFileSelectionID else { return }
+                importFileSelectionID = nil
                 switch result {
                 case let .success(url):
                     let access = url.startAccessingSecurityScopedResource()
                     defer { if access { url.stopAccessingSecurityScopedResource() } }
                     do {
                         let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
-                        Task { await model.previewImport(bytes) }
-                    } catch { model.problem = "파일을 읽지 못했어요. 원본은 유지했어요." }
-                case .failure: model.problem = "복원 파일을 선택하지 못했어요. 데이터는 바뀌지 않았어요."
+                        Task { await model.previewImport(bytes, selectionID: selectionID) }
+                    } catch { model.failImportSelection(id: selectionID, message: "파일을 읽지 못했어요. 원본은 유지했어요.") }
+                case .failure:
+                    model.failImportSelection(id: selectionID, message: "복원 파일을 선택하지 못했어요. 데이터는 바뀌지 않았어요.")
                 }
             }
             .confirmationDialog("이 기기의 원본·화면·알림·검색 자료를 지울까요? iCloud 자료는 지우지 않으며 동기화하면 다시 내려올 수 있어요.", isPresented: $model.showDeleteConfirmation, titleVisibility: .visible) {
                 Button("이 기기에서만 지우기", role: .destructive) { deleteConfirmed = true }
+                    .disabled(!model.canChangeWorkspace)
                 Button("취소", role: .cancel) {}
             }
             .alert("기기 데이터를 지우기", isPresented: $deleteConfirmed) {
                 Button("기기 데이터 삭제", role: .destructive) { Task { await model.deleteLocalData() } }
+                    .disabled(!model.canChangeWorkspace)
                 Button("취소", role: .cancel) {}
-            } message: { Text("이 기기에서 복원하려면 내보낸 파일이 필요해요. 다른 기기와 iCloud는 삭제하지 않아요.") }
+            } message: { Text(workspaceConfirmationMessage("이 기기에서 복원하려면 내보낸 파일이 필요해요. 다른 기기와 iCloud는 삭제하지 않아요.")) }
             .alert("전체 삭제 상태", isPresented: Binding(get: { model.cloudDeletionMessage != nil }, set: { if !$0 { model.cloudDeletionMessage = nil } })) {
                 Button("확인", role: .cancel) { model.cloudDeletionMessage = nil }
             } message: { Text(model.cloudDeletionMessage ?? "") }
             .alert("iCloud 연결 중지", isPresented: $disableCloudConfirmed) {
                 Button("기기 전용 공간으로 돌아가기") { Task { await model.disableCloudConnection() } }
+                    .disabled(!model.canChangeWorkspace)
                 Button("취소", role: .cancel) {}
-            } message: { Text("연결 전의 기기 전용 공간으로 돌아가요. iCloud 원본을 지우거나 현재 계정의 작업을 다른 로컬 공간으로 자동 복사하지 않아요. 필요하면 먼저 내보내세요.") }
-            .alert("다른 개인 공간의 백업 복원", isPresented: $confirmImport) {
+            } message: {
+                Text(workspaceConfirmationMessage(model.cloudSyncStatus == .accountTransitionRequired
+                     ? "이전 iCloud 계정의 작업을 열거나 지우지 않고, 연결 전의 기기 전용 공간으로 돌아가요. 새 계정 연결은 이후에 선택할 수 있어요."
+                     : "연결 전의 기기 전용 공간으로 돌아가요. iCloud 원본을 지우거나 현재 계정의 작업을 다른 로컬 공간으로 자동 복사하지 않아요. 필요하면 먼저 내보내세요."))
+            }
+            .alert("다른 개인 공간의 백업 복원", isPresented: $confirmImport, presenting: importConfirmationID) { previewID in
                 Button("기기 작업을 교체하고 원래 공간 복원", role: .destructive) {
-                    Task { await model.importArchive(confirmAccount: accountImportConfirmed, confirmWorkspace: true) }
+                    let accountConfirmationID = accountImportConfirmationID
+                    Task {
+                        await model.importArchive(previewID: previewID, accountConfirmationID: accountConfirmationID,
+                                                  workspaceConfirmationID: previewID)
+                    }
                 }
+                .disabled(!model.canChangeWorkspace)
                 Button("취소", role: .cancel) {}
-            } message: { Text("이 기기의 현재 작업을 백업의 작업과 변경 이력으로 교체해요. 필요하다면 먼저 내보내세요. iCloud와 다른 기기의 작업은 바꾸지 않아요.") }
+            } message: { _ in Text(workspaceConfirmationMessage("이 기기의 현재 작업을 백업의 작업과 변경 이력으로 교체해요. 필요하다면 먼저 내보내세요. iCloud와 다른 기기의 작업은 바꾸지 않아요.")) }
             .sheet(isPresented: $showLicenses) {
                 NavigationStack {
                     ScrollView { Text(MirrorOpenSourceNotice.text).font(.body).textSelection(.enabled).padding() }
@@ -518,8 +543,15 @@ struct MirrorSettingsView: View {
                 }
             }
             .onChange(of: model.cloudPreview?.token) { _, _ in cloudMergeConfirmed = false }
+            .onChange(of: model.importSelectionID) { _, _ in
+                accountImportConfirmationID = nil
+                importConfirmationID = nil
+                confirmImport = false
+            }
         .tint(MirrorPalette.accent)
+        #if os(macOS)
         .frame(minWidth: 300, idealWidth: 580, minHeight: 500)
+        #endif
     }
 
     @ToolbarContentBuilder
@@ -528,6 +560,64 @@ struct MirrorSettingsView: View {
             Button("닫기") { dismiss() }
                 .accessibilityIdentifier("settings.close")
         }
+    }
+
+    private var settingsOverview: some View {
+        Section {
+            LabeledContent("저장 상태") {
+                Text(model.storageLabel).accessibilityIdentifier("settings.syncState")
+            }
+            LabeledContent("iCloud") {
+                Text(cloudStatusLabel(model.cloudSyncStatus)).accessibilityIdentifier("settings.cloudState")
+            }
+        }
+    }
+
+    private var preferenceDestinations: some View {
+        Section {
+            NavigationLink {
+                settingsPage("정리와 날짜", identifier: "planning") { planningSection }
+            } label: { Label("정리와 날짜", systemImage: "calendar") }
+                .accessibilityIdentifier("settings.planning")
+            NavigationLink {
+                settingsPage("알림", identifier: "notifications") {
+                    notificationsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
+                }
+            } label: { Label("알림", systemImage: "bell") }
+                .accessibilityIdentifier("settings.notifications")
+            NavigationLink {
+                settingsPage("캘린더", identifier: "calendars") {
+                    calendarsSection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
+                }
+            } label: { Label("캘린더", systemImage: "calendar.badge.clock") }
+                .accessibilityIdentifier("settings.calendars")
+            NavigationLink {
+                settingsPage("개인정보", identifier: "privacy") {
+                    privacySection.disabled(model.projectionRecovery != nil || model.recoveryConfigurationBlocked)
+                }
+            } label: { Label("개인정보", systemImage: "hand.raised") }
+                .accessibilityIdentifier("settings.privacy")
+            NavigationLink {
+                settingsPage("동기화와 상태", identifier: "sync") { syncSection }
+            } label: { Label("동기화와 상태", systemImage: "icloud") }
+                .accessibilityIdentifier("settings.sync")
+        }
+    }
+
+    private func settingsPage<Content: View>(_ title: String, identifier: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        Form {
+            operationErrorSection
+            content()
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: 720)
+        .frame(maxWidth: .infinity)
+        .background(MirrorPalette.canvas)
+        .navigationTitle(title)
+        .accessibilityIdentifier("settings.\(identifier).page")
+        .toolbar { settingsCloseToolbar }
     }
 
     @ViewBuilder
@@ -681,7 +771,7 @@ struct MirrorSettingsView: View {
             Button("캘린더 읽기 중지") {
                 model.preferences.calendarEnabled = false
                 model.preferences.selectedCalendars = []
-                model.calendarEvents = []
+                model.clearCalendarDisplays()
                 model.savePreferences()
             }
         } header: {
@@ -693,6 +783,7 @@ struct MirrorSettingsView: View {
 
     private var syncSection: some View {
         Section {
+            workspaceChangeNotice
             LabeledContent("저장 상태") {
                 Text(model.storageLabel).accessibilityIdentifier("settings.syncState")
             }
@@ -700,21 +791,23 @@ struct MirrorSettingsView: View {
                 Text(cloudStatusLabel(model.cloudSyncStatus)).accessibilityIdentifier("settings.cloudState")
             }
             Button("선택적으로 iCloud 연결 시작") { Task { await model.previewCloudConnection() } }
-                .disabled(model.isSaving || model.cloudConnected)
+                .disabled(!model.canChangeWorkspace || model.cloudConnected || model.cloudSyncStatus == .accountTransitionRequired)
             if let preview = model.cloudPreview {
                 Text("이 기기의 원본 \(preview.localOperationCount)개 · 현재 수신된 계정 원본 \(preview.cloudOperationCount)개 · 중복 \(preview.duplicateCount)개")
                     .font(.callout)
                 ForEach(preview.warnings, id: \.self) { settingNote($0) }
                 Toggle("작업 제목과 변경 이력을 이 iCloud 개인 공간에 병합하는 데 동의", isOn: $cloudMergeConfirmed)
                 Button("확인한 계정에 연결하고 병합") { Task { await model.confirmCloudConnection() } }
-                    .disabled(!cloudMergeConfirmed || model.isSaving)
+                    .disabled(!cloudMergeConfirmed || !model.canChangeWorkspace)
                 Button("연결 취소") {
                     Task { await model.cancelCloudConnection() }
                     cloudMergeConfirmed = false
                 }
             }
-            Button("iCloud 연결 중지") { disableCloudConfirmed = true }
-                .disabled(!model.cloudConnected && model.cloudSyncStatus != .accountTransitionRequired)
+            Button(model.cloudSyncStatus == .accountTransitionRequired ? "기기 전용 공간으로 돌아가기" : "iCloud 연결 중지") {
+                disableCloudConfirmed = true
+            }
+                .disabled(!model.canChangeWorkspace || (!model.cloudConnected && model.cloudSyncStatus != .accountTransitionRequired))
             if model.quarantinedCount > 0 {
                 Label("검사할 원본 \(model.quarantinedCount)개가 격리되어 있어요. 조용히 덮어쓰지 않았어요.", systemImage: "exclamationmark.shield")
                     .font(.callout).foregroundStyle(.secondary)
@@ -760,25 +853,43 @@ struct MirrorSettingsView: View {
 
     private var archiveSection: some View {
         Section {
+            workspaceChangeNotice
             Button("JSON 내보내기") {
                 Task { await model.exportArchive(); exporting = model.archiveData != nil }
             }
-            Button("JSON 복원 파일 선택") { importing = true }
-            if let preview = model.importPreview {
-                Text(preview).font(.callout)
-                if model.archivePreview?.requiresAccountConfirmation == true {
-                    Toggle("다른 계정 출처의 원본 이력을 이 공간에 가져오는 데 동의", isOn: $accountImportConfirmed)
+            Button("JSON 복원 파일 선택") {
+                guard let selectionID = model.beginImportSelection() else { return }
+                importFileSelectionID = selectionID
+                accountImportConfirmationID = nil
+                importConfirmationID = nil
+                confirmImport = false
+                importing = true
+            }.disabled(!model.canChangeWorkspace)
+            if let preview = model.archiveImportPreview, let description = model.importPreview {
+                Text(description).font(.callout)
+                if preview.report.requiresAccountConfirmation {
+                    Toggle("다른 계정 출처의 원본 이력을 이 공간에 가져오는 데 동의", isOn: Binding(
+                        get: { accountImportConfirmationID == preview.id },
+                        set: { confirmed in
+                            guard model.importSelectionID == preview.id else { return }
+                            accountImportConfirmationID = confirmed ? preview.id : nil
+                        }))
                 }
                 Button("검사한 파일 복원") {
-                    if model.archivePreview?.requiresWorkspaceConfirmation == true { confirmImport = true }
-                    else { Task { await model.importArchive(confirmAccount: accountImportConfirmed) } }
-                }.disabled(model.archivePreview?.requiresAccountConfirmation == true && !accountImportConfirmed)
+                    if preview.report.requiresWorkspaceConfirmation {
+                        importConfirmationID = preview.id
+                        confirmImport = true
+                    } else {
+                        let accountConfirmationID = accountImportConfirmationID
+                        Task { await model.importArchive(previewID: preview.id, accountConfirmationID: accountConfirmationID) }
+                    }
+                }.disabled(!model.canChangeWorkspace || (preview.report.requiresAccountConfirmation && accountImportConfirmationID != preview.id))
                 Button("복원 취소") {
-                    model.importData = nil
-                    model.importPreview = nil
-                    model.archivePreview = nil
-                    accountImportConfirmed = false
-                }
+                    model.cancelImportSelection(id: preview.id)
+                    accountImportConfirmationID = nil
+                    importConfirmationID = nil
+                    confirmImport = false
+                }.disabled(model.isSaving)
             }
         } header: {
             Label("내보내기와 복원", systemImage: "arrow.up.doc")
@@ -789,7 +900,9 @@ struct MirrorSettingsView: View {
 
     private var deletionSection: some View {
         Section {
+            workspaceChangeNotice
             Button("이 기기에서만 지우기", role: .destructive) { model.showDeleteConfirmation = true }
+                .disabled(!model.canChangeWorkspace)
             Button("iCloud 포함 전체 삭제 지원 상태 확인") { Task { await model.inspectCloudDeletion() } }
         } header: {
             Label("데이터 삭제", systemImage: "trash")
@@ -814,6 +927,17 @@ struct MirrorSettingsView: View {
     private func settingNote(_ text: String) -> some View {
         Text(text).font(.caption).foregroundStyle(MirrorPalette.supportingText)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var workspaceChangeNotice: some View {
+        if let message = model.workspaceChangeBlockedMessage {
+            settingNote(message).accessibilityIdentifier("settings.workspaceChangeBlocked")
+        }
+    }
+
+    private func workspaceConfirmationMessage(_ message: String) -> String {
+        guard let reason = model.workspaceChangeBlockedMessage else { return message }
+        return message + "\n\n" + reason
     }
 }
 

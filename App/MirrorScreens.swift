@@ -1,6 +1,7 @@
 import MirrorDesign
 import MirrorDomain
 import MirrorSystem
+import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -593,24 +594,55 @@ enum LibraryFilter: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor @Observable
+final class MirrorLibraryNavigationState {
+    var filter: LibraryFilter = .inbox
+    var selecting = false
+    var selectedTaskIDs: Set<UUID> = []
+    var pendingBatchPickerID: UUID?
+    var search = ""
+    var searchRequested = false
+}
+
+nonisolated struct MirrorLibrarySearchAction: Equatable, Sendable {
+    let model: AppModel
+    let navigation: MirrorLibraryNavigationState
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.model === rhs.model && lhs.navigation === rhs.navigation }
+    @MainActor func callAsFunction() {
+        model.destination = .library
+        navigation.searchRequested = true
+    }
+}
+
 @MainActor
 struct MirrorLibraryView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var filter: LibraryFilter = .inbox
-    @State private var selecting = false
-    @State private var selectedTaskIDs: Set<UUID> = []
-    @State private var pendingBatchPickerID: UUID?
+    @Binding private var filter: LibraryFilter
+    @Binding private var selecting: Bool
+    @Binding private var selectedTaskIDs: Set<UUID>
+    @Binding private var pendingBatchPickerID: UUID?
+    @Binding private var search: String
+    @Binding private var searchRequested: Bool
     @FocusState private var searchFocused: Bool
     @State private var textEditingOwnerID = UUID()
+    init(navigation: MirrorLibraryNavigationState) {
+        @Bindable var state = navigation
+        _filter = $state.filter
+        _selecting = $state.selecting
+        _selectedTaskIDs = $state.selectedTaskIDs
+        _pendingBatchPickerID = $state.pendingBatchPickerID
+        _search = $state.search
+        _searchRequested = $state.searchRequested
+    }
     private var filtered: [TaskProjection] {
         model.tasks.filter { task in
-            let matchesSearch = model.search.isEmpty || task.title.localizedStandardContains(model.search)
-                || task.content.note?.localizedStandardContains(model.search) == true
-                || task.content.sourceURL?.localizedStandardContains(model.search) == true
+            let matchesSearch = search.isEmpty || task.title.localizedStandardContains(search)
+                || task.content.note?.localizedStandardContains(search) == true
+                || task.content.sourceURL?.localizedStandardContains(search) == true
             guard matchesSearch else { return false }
-            if !model.search.isEmpty, filter == .inbox { return task.status != .deleted }
+            if !search.isEmpty, filter == .inbox { return task.status != .deleted }
             switch filter {
             case .inbox: return task.status == .open && task.plan.target == .unassigned
             case .past:
@@ -629,7 +661,7 @@ struct MirrorLibraryView: View {
     private var selectableTaskIDs: Set<UUID> {
         Set(filtered.filter { $0.status == .open }.map(\.taskID))
     }
-    private var searchesWholeLibrary: Bool { !model.search.isEmpty && filter == .inbox }
+    private var searchesWholeLibrary: Bool { !search.isEmpty && filter == .inbox }
     var body: some View {
         @Bindable var model = model
         let eligibleTaskIDs = filtered.filter { $0.status == .open }.map(\.taskID)
@@ -642,11 +674,11 @@ struct MirrorLibraryView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                        TextField(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색", text: $model.search)
+                        TextField(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색", text: $search)
                             .textFieldStyle(.plain).focused($searchFocused).accessibilityIdentifier("library.search")
                             .onSubmit { searchFocused = false; model.setTextEditing(false, ownerID: textEditingOwnerID) }
-                        if !model.search.isEmpty {
-                            Button { model.search = "" } label: {
+                        if !search.isEmpty {
+                            Button { search = "" } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .frame(minWidth: 44, minHeight: 44)
                                     .contentShape(Rectangle())
@@ -660,7 +692,7 @@ struct MirrorLibraryView: View {
                     MirrorActionGroup {
                         Picker("목록", selection: $filter) {
                             ForEach(LibraryFilter.allCases) { option in
-                                Text(option == .inbox && !model.search.isEmpty ? "전체에서 검색" : option.label).tag(option)
+                                Text(option == .inbox && !search.isEmpty ? "전체에서 검색" : option.label).tag(option)
                             }
                         }.pickerStyle(.menu).labelsHidden()
                             .accessibilityLabel(searchesWholeLibrary ? "검색 범위, 전체" : "목록")
@@ -679,7 +711,7 @@ struct MirrorLibraryView: View {
                             .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
                             .accessibilityIdentifier("library.selectToggle")
                     }
-                    if !model.search.isEmpty {
+                    if !search.isEmpty {
                         Text(searchesWholeLibrary ? "미래·완료·보관한 일까지 검색해요. 휴지통은 제외해요." : "\(filter.label)에서 검색해요.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -740,7 +772,7 @@ struct MirrorLibraryView: View {
                     }.listRowSeparator(.hidden).listRowBackground(Color.clear)
                 }
             } header: {
-                Text(model.search.isEmpty ? filter.label : "검색 결과")
+                Text(search.isEmpty ? filter.label : "검색 결과")
                     .accessibilityIdentifier("library.resultsTitle")
             }
             .listRowSeparator(.hidden).listRowBackground(Color.clear)
@@ -767,7 +799,8 @@ struct MirrorLibraryView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.bordered)
-                    .disabled(selectedIDs.isEmpty || selectedIDs.count > 20)
+                    .disabled(selectedIDs.isEmpty || selectedIDs.count > 20 || model.isSaving
+                              || model.projectionPending || model.isDetailEditing)
                     .accessibilityIdentifier("library.batchPlan")
                     #if os(macOS)
                     .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 560 : 320)
@@ -782,14 +815,14 @@ struct MirrorLibraryView: View {
                 .accessibilityIdentifier("library.batchFooter")
             }
         }
-        .onChange(of: model.completedBatchPickerID) { _, receipt in
+        .onChange(of: model.completedBatchPickerID, initial: true) { _, receipt in
             guard let pendingBatchPickerID, let receipt, receipt == pendingBatchPickerID else { return }
             selecting = false; selectedTaskIDs.removeAll(); self.pendingBatchPickerID = nil
         }
-        .onChange(of: selectableTaskIDs) { _, visibleIDs in
+        .onChange(of: selectableTaskIDs, initial: true) { _, visibleIDs in
             selectedTaskIDs.formIntersection(visibleIDs)
         }
-        .onChange(of: model.searchRequested, initial: true) { _, requested in if requested { searchFocused = true; model.searchRequested = false } }
+        .onChange(of: searchRequested, initial: true) { _, requested in if requested { searchFocused = true; searchRequested = false } }
         .onChange(of: searchFocused, initial: true) { _, focused in model.setTextEditing(focused, ownerID: textEditingOwnerID) }
         .onDisappear { model.setTextEditing(false, ownerID: textEditingOwnerID) }
     }

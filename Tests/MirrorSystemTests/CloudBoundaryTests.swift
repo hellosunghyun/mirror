@@ -1,5 +1,6 @@
 import Foundation
 import CloudKit
+import MirrorDomain
 import MirrorData
 import Testing
 @testable import MirrorSystem
@@ -114,6 +115,100 @@ struct CloudBoundaryTests {
         var iterator = stream.makeAsyncIterator()
         #expect(await iterator.next() == .localOnly)
         #expect(await iterator.next() == nil)
+    }
+
+    @Test("재시작의 계정 불일치와 전환 latch는 명시적 로컬 복귀까지 원래 공간을 그대로 보존한다",
+          arguments: [false, true])
+    func coldStartTransitionCanReturnToLocal(_ transitionRequired: Bool) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorCloudRecovery-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let localConfiguration = StoreConfiguration(directory: root.appendingPathComponent("Mirror/local"),
+            deviceID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+        let accountConfiguration = StoreConfiguration(directory: root.appendingPathComponent("Mirror/accounts/\(Self.fingerprint)"),
+            deviceID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+        let localID = UUID(), accountID = UUID(), newID = UUID()
+        let local = try await MirrorStore(configuration: localConfiguration)
+        try await Self.capture(localID, title: "기기에 남긴 작업", into: local)
+        try await local.suspend()
+        // Apple importer를 켜지 않고 실제 SQLite 원본으로 이전 계정 디렉터리의 보존을 검사한다.
+        let previous = try await MirrorStore(configuration: accountConfiguration)
+        try await Self.capture(accountID, title: "이전 계정에만 있는 작업", into: previous)
+        let previousRecords = try await previous.snapshot().records
+        try await previous.suspend()
+        let pointer = try Self.writePointer(root: root, transitionRequired: transitionRequired)
+        let pointerBytes = try Data(contentsOf: pointer)
+        let service = CloudSyncService(localConfiguration: localConfiguration, setup: Self.setup)
+        let stream = await service.statuses()
+        await #expect(throws: CloudSyncServiceError.accountTransitionRequired) {
+            _ = try await service.restoreActiveConfiguration(root: root, identityMatches: { _ in false })
+        }
+        #expect(await service.status() == .accountTransitionRequired)
+        var statuses = stream.makeAsyncIterator()
+        let nextStatus = await statuses.next()
+        #expect(nextStatus == .accountTransitionRequired)
+        #expect(try Data(contentsOf: pointer) == pointerBytes)
+
+        // 사용자 확인에 대응하는 disable을 호출하기 전에는 pointer를 고치거나 로컬 공간을 열지 않는다.
+        let recovered = try await service.disable()
+        #expect(await service.status() == .localOnly)
+        #expect(!FileManager.default.fileExists(atPath: pointer.path))
+        #expect(try await recovered.snapshot().tasks.map(\.taskID) == [localID])
+        try await Self.capture(newID, title: "복귀 뒤 저장한 작업", into: recovered)
+        try await recovered.suspend()
+        let restarted = CloudSyncService(localConfiguration: localConfiguration, setup: Self.setup)
+        let active = try await restarted.restoreActiveConfiguration(root: root, identityMatches: { _ in
+            Issue.record("opt-in pointer가 없으면 계정 바인딩도 조회하지 않아야 합니다.")
+            return false
+        })
+        #expect(active == nil)
+        #expect(await restarted.status() == .localOnly)
+        let reopened = try await MirrorStore(configuration: localConfiguration)
+        #expect(Set(try await reopened.snapshot().tasks.map(\.taskID)) == Set([localID, newID]))
+        try await reopened.suspend()
+        let preserved = try await MirrorStore(configuration: accountConfiguration)
+        #expect(try await preserved.snapshot().records == previousRecords)
+        #expect(try await preserved.snapshot().tasks.map(\.taskID) == [accountID])
+        try await preserved.suspend()
+    }
+
+    @Test("일치하는 시작 pointer는 계정별 구성만 반환하고 pointer나 원본을 변경하지 않는다")
+    func coldStartMatchingIdentityKeepsConfiguration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorCloudMatching-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pointer = try Self.writePointer(root: root, transitionRequired: false)
+        let bytes = try Data(contentsOf: pointer)
+        let service = CloudSyncService(localConfiguration: Self.configuration(), setup: Self.setup)
+        let active = try #require(try await service.restoreActiveConfiguration(root: root, identityMatches: { _ in true }))
+        #expect(active.cloudSync?.accountScope == Self.fingerprint)
+        #expect(active.cloudSync?.containerIdentifier == Self.setup.containerIdentifier)
+        #expect(active.directory == root.appendingPathComponent("Mirror/accounts", isDirectory: true)
+            .appendingPathComponent(Self.fingerprint, isDirectory: true))
+        #expect(try Data(contentsOf: pointer) == bytes)
+        #expect(!FileManager.default.fileExists(atPath: active.directory.path))
+    }
+
+    private static let fingerprint = String(repeating: "a", count: 64)
+    private static let setup = CloudSyncSetup(containerIdentifier: "iCloud.example.mirror", appGroupIdentifier: "group.example.mirror")
+    private static func writePointer(root: URL, transitionRequired: Bool) throws -> URL {
+        let url = root.appendingPathComponent("Mirror/ActiveCloud.json")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let object: [String: Any] = [
+            "version": 1, "optedIn": true, "transitionRequired": transitionRequired,
+            "containerIdentifier": "iCloud.example.mirror", "accountFingerprint": fingerprint,
+            "identityTokenArchive": Data("test-account-binding".utf8).base64EncodedString(),
+            "workspaceKey": "personal-v1", "workspaceEpoch": "local-v1",
+            "initialTimeZoneID": "Asia/Seoul", "initialPolicyRevision": "policy-v1"
+        ]
+        try JSONSerialization.data(withJSONObject: object, options: .sortedKeys).write(to: url, options: .atomic)
+        return url
+    }
+    private static func capture(_ id: UUID, title: String, into store: MirrorStore) async throws {
+        let instant = Date(timeIntervalSince1970: 1_790_000_000)
+        let context = try await store.currentContext(at: instant)
+        let command = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: id.uuidString, source: .app,
+            context: context, workspaceEpoch: "local-v1", payload: .capture(taskID: id, content: try TaskContent(title: title)))
+        let result = await store.execute(command, at: instant)
+        #expect(result.state == .locallyCommitted)
     }
 
     private static func streamAfterServiceScopeEnds() async -> AsyncStream<CloudSyncStatus> {

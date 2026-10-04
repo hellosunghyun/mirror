@@ -1,5 +1,6 @@
 import Foundation
 import EventKit
+import Observation
 
 public enum CalendarAccess: String, Codable, Sendable {
     case notDetermined, fullAccess, writeOnly, denied, restricted, unknown
@@ -20,6 +21,39 @@ public struct CalendarEventSummary: Identifiable, Hashable, Sendable {
     public init(id: String, calendarID: String, title: String, start: Date, end: Date, isAllDay: Bool) {
         self.id = id; self.calendarID = calendarID; self.title = title
         self.start = start; self.end = end; self.isAllDay = isAllDay
+    }
+}
+
+/// 화면이 소유하는 읽기 상태다. 다른 창의 조회와 오래된 응답이 현재 범위를 바꾸지 않는다.
+@MainActor @Observable
+public final class CalendarDisplayState {
+    public let id = UUID()
+    public private(set) var events: [CalendarEventSummary] = []
+    public private(set) var problem: String?
+    public private(set) var range: DateInterval?
+    @ObservationIgnored private var requestID = UUID()
+
+    public init() {}
+
+    public func begin(from start: Date, to end: Date) -> UUID {
+        requestID = UUID()
+        range = DateInterval(start: start, end: end)
+        events = []; problem = nil
+        return requestID
+    }
+
+    public func isCurrent(_ request: UUID) -> Bool { requestID == request }
+
+    @discardableResult
+    public func complete(_ request: UUID, events: [CalendarEventSummary], problem: String? = nil) -> Bool {
+        guard isCurrent(request) else { return false }
+        self.events = events; self.problem = problem
+        return true
+    }
+
+    public func invalidate() {
+        requestID = UUID()
+        events = []; problem = nil
     }
 }
 

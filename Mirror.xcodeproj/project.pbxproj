@@ -85,6 +85,13 @@
 			name = Sources/MirrorDomain;
 			sourceTree = "<group>";
 		};
+		36AE26FE344549CAF9DC742A = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = ArchiveImportSelection.swift;
+			path = Sources/MirrorData/ArchiveImportSelection.swift;
+			sourceTree = SOURCE_ROOT;
+		};
 		E4D5C2BEEAD654428779B23F = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -116,6 +123,7 @@
 		8E7C031082D149344F5E17B6 = {
 			isa = PBXGroup;
 			children = (
+				36AE26FE344549CAF9DC742A,
 				E4D5C2BEEAD654428779B23F,
 				0E09B6D5DC72BB3713FC2D8C,
 				0D2EFB1E2C4189F0AB3B3D34,
@@ -337,6 +345,13 @@
 			name = Tests/MirrorDomainTests;
 			sourceTree = "<group>";
 		};
+		31088974638225336887EBB9 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			name = ArchiveImportSelectionTests.swift;
+			path = Tests/MirrorDataTests/ArchiveImportSelectionTests.swift;
+			sourceTree = SOURCE_ROOT;
+		};
 		A0A867C3FED37E1493884A31 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -368,6 +383,7 @@
 		06E89160D6DF398D40794C31 = {
 			isa = PBXGroup;
 			children = (
+				31088974638225336887EBB9,
 				A0A867C3FED37E1493884A31,
 				C90E835B6CEDFC82ADC874AD,
 				0EA3D49A8ADD3456B8495136,
@@ -1029,6 +1045,10 @@
 			productReference = 1C7CD20E6F843A4FAB2D975C;
 			productType = "com.apple.product-type.framework";
 		};
+		E3C1C5C98E0C2960D1362274 = {
+			isa = PBXBuildFile;
+			fileRef = 36AE26FE344549CAF9DC742A;
+		};
 		A6A592ECB4476AD21BCB3CAA = {
 			isa = PBXBuildFile;
 			fileRef = E4D5C2BEEAD654428779B23F;
@@ -1049,6 +1069,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E3C1C5C98E0C2960D1362274,
 				A6A592ECB4476AD21BCB3CAA,
 				A0B048F16CF3A3C99550A782,
 				1B656BC91E8956F71650A494,
@@ -1631,6 +1652,10 @@
 			productReference = 317AE10D594FB10C3C9C1F7C;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		83A755562AAD79E78F1310F4 = {
+			isa = PBXBuildFile;
+			fileRef = 31088974638225336887EBB9;
+		};
 		BCED82F99EC357DF7E5BA661 = {
 			isa = PBXBuildFile;
 			fileRef = A0A867C3FED37E1493884A31;
@@ -1651,6 +1676,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				83A755562AAD79E78F1310F4,
 				BCED82F99EC357DF7E5BA661,
 				22C1BC69B1FD8B55D6E645B8,
 				F523727B0E5F15DCB028B8B2,

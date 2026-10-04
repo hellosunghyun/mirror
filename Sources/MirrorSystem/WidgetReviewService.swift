@@ -37,12 +37,15 @@ public struct WidgetReviewState: Hashable, Codable, Sendable {
     public var undoExpected: [TaskVersionExpectation]
     public var message: String?
     public var manualTodayOverride: Bool
+    /// 이전 저장 상태에 없는 값은 nil로 읽는다. 명시적으로 다시 연 이 세션만 주기 종료를 우회한다.
+    public var manualResumeOverride: Bool?
 
     public init(scopeKey: String = "default", mode: WidgetDisplayMode, context: PlanningContext? = nil) {
         self.scopeKey = scopeKey; self.mode = mode; self.context = context
         panel = .card; panelVersion = 0; sessionID = UUID(); cycleID = ""
         queue = []; queuePlanVersions = [:]; card = nil; today = []
         lastOperationID = nil; undoExpected = []; message = nil; manualTodayOverride = false
+        manualResumeOverride = nil
     }
 }
 
@@ -143,10 +146,18 @@ public actor WidgetReviewService {
                     if let visible = state.card, affected.contains(visible.taskID) {
                         state.card = nil; state.panel = .card; state.panelVersion += 1
                     }
-                    if let operationID = result.operationID,
-                       let operation = try await store.snapshot().records.first(where: { $0.operationID == operationID }) {
-                        state.lastOperationID = operationID
-                        state.undoExpected = operation.undoExpectations()
+                    if let operationID = result.operationID {
+                        let records = try await store.snapshot().records
+                        if let operation = records.first(where: { $0.operationID == operationID }) {
+                            let previous = state.lastOperationID.flatMap { id in records.first { $0.operationID == id } }
+                            // 같은 세션의 지연 영수증은 최신 Undo를 되감지 않는다.
+                            // 원본 저장 뒤 presentation 저장이 중단됐다면 더 최신 영수증으로 복구한다.
+                            if state.lastOperationID == nil || state.lastOperationID == operationID
+                                || previous.map({ $0.lamport < operation.lamport }) == true {
+                                state.lastOperationID = operationID
+                                state.undoExpected = operation.undoExpectations()
+                            }
+                        }
                     }
                     state.message = result.safeUserMessage
                     try await save(state)
@@ -199,8 +210,21 @@ public actor WidgetReviewService {
             let result = await store.execute(envelope, context: context)
             var state = try await loadAndRefresh(scopeKey: scopeKey, now: now)
             state.message = result.safeUserMessage
-            if [.locallyCommitted, .alreadyApplied].contains(result.state) {
+            if [.locallyCommitted, .alreadyApplied].contains(result.state), state.lastOperationID == operationID {
+                // 직전 Undo의 재시도만 표시 복구를 마친다. 뒤늦은 이전 Undo로 새 세션을 되감지 않는다.
+                let restored = Set(result.affectedTaskIDs)
+                state.queue.removeAll { restored.contains($0) }
+                state.queue.insert(contentsOf: result.affectedTaskIDs, at: 0)
+                for id in result.affectedTaskIDs {
+                    state.queuePlanVersions[id.uuidString] = try await store.taskProjection(id)?.versions[.plan]?.headsDigest
+                }
+                // 원래 카드의 늦은 receipt 재시도가 복원된 카드를 다시 진행시키지 않게 세션도 바꾼다.
+                state.sessionID = UUID()
+                state.mode = .review; state.card = nil; state.panel = .card; state.panelVersion += 1
+                state.manualResumeOverride = !state.manualTodayOverride
                 state.lastOperationID = nil; state.undoExpected = []
+                try await save(state)
+                state = try await loadAndRefresh(scopeKey: scopeKey, now: now)
             }
             try await save(state)
             return result
@@ -239,6 +263,7 @@ public actor WidgetReviewService {
         updated.message = result.safeUserMessage
         if [.locallyCommitted, .alreadyApplied].contains(result.state) {
             updated.mode = .today; updated.card = nil; updated.panel = .card; updated.manualTodayOverride = false
+            updated.manualResumeOverride = false
         }
         try await save(updated)
         return result
@@ -258,6 +283,7 @@ public actor WidgetReviewService {
         else {
             state = .init(scopeKey: scopeKey, mode: .review, context: context)
             state.cycleID = cycle; state.manualTodayOverride = todayOnly
+            state.manualResumeOverride = manuallyStarted && !todayOnly
             let mode: ReviewMode = todayOnly ? .manualTodayOverride : manuallyStarted ? .manualResume : .automatic
             let candidates = snapshot.tasks.filter {
                 $0.isProjectionComplete && PlanningRules.isReviewCandidate($0.planningState, on: context.planningDay,
@@ -276,7 +302,9 @@ public actor WidgetReviewService {
             .prefix(5).compactMap { task in
                 task.versions[.status].map { .init(taskID: task.taskID, title: preferences.hideExternalTitles ? "할 일" : task.title, expectedStatus: $0.headsDigest) }
             }
-        if report.isCycleClosed(cycle), !state.manualTodayOverride { state.mode = .today; state.card = nil }
+        if report.isCycleClosed(cycle), !state.manualTodayOverride, state.manualResumeOverride != true {
+            state.mode = .today; state.card = nil
+        }
         if state.mode == .review || state.mode == .empty {
             let indexed = Dictionary(uniqueKeysWithValues: snapshot.tasks.map { ($0.taskID, $0) })
             state.queue.removeAll { id in

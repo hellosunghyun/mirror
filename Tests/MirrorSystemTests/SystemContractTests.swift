@@ -279,6 +279,230 @@ struct SystemContractTests {
         let restored = try #require(try await h.store.snapshot().tasks.first { $0.taskID == card.taskID })
         #expect(restored.title == "새 제목")
         #expect(restored.plan.target == .unassigned)
+        let visible = try await h.widget.snapshot(at: fixedInstant), restoredCard = try #require(visible.card)
+        #expect(restoredCard.taskID == card.taskID)
+        #expect(restoredCard.title == "새 제목")
+        #expect(restoredCard.expected == ExpectedVersions(restored))
+        #expect(restoredCard.cardID != card.cardID)
+        #expect(restoredCard.decisionToken != card.decisionToken)
+        #expect(visible.sessionID != state.sessionID)
+        #expect(visible.queue == [card.taskID] + committed.queue)
+        #expect(visible.queuePlanVersions[card.taskID.uuidString] == restored.versions[.plan]?.headsDigest)
+
+        // Undo 전 카드의 지연 재시도는 원래 영수증만 반환하고 복원한 카드를 넘기지 않는다.
+        let oldDecision = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+                                                    target: .day(try h.context.planningDay.addingDays(1)), at: fixedInstant)
+        #expect(oldDecision.state == .alreadyApplied)
+        let afterOldDecision = try await h.widget.snapshot(at: fixedInstant)
+        #expect(afterOldDecision.card == restoredCard)
+        #expect(afterOldDecision.queue == visible.queue)
+
+        _ = try await h.widget.commit(scopeKey: visible.scopeKey, sessionID: visible.sessionID, card: restoredCard,
+                                      target: .day(try h.context.planningDay.addingDays(2)), at: fixedInstant)
+        let newer = try await h.widget.snapshot(at: fixedInstant)
+        let beforeRetry = try await h.store.snapshot().records
+        let repeated = try await h.widget.undo(scopeKey: state.scopeKey, operationID: operation,
+                                               expected: committed.undoExpected, at: fixedInstant)
+        #expect(repeated.state == .alreadyApplied)
+        let afterRetry = try await h.widget.snapshot(at: fixedInstant)
+        #expect(afterRetry.card == newer.card)
+        #expect(afterRetry.sessionID == newer.sessionID)
+        #expect(afterRetry.lastOperationID == newer.lastOperationID)
+        #expect(afterRetry.undoExpected == newer.undoExpected)
+        #expect(try await h.store.snapshot().records == beforeRetry)
+    }
+
+    @Test("같은 위젯 세션의 이전 결정 영수증은 최신 Undo와 현재 카드를 되감지 않는다",
+          .timeLimit(.minutes(1)), arguments: [false, true])
+    func oldDecisionReceiptPreservesLatestUndo(changeTarget: Bool) async throws {
+        let h = try await harness(), thirdID = UUID()
+        let captured = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: thirdID.uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .capture(taskID: thirdID, content: try TaskContent(title: "세 번째 작업"))), at: fixedInstant)
+        #expect(captured.state == .locallyCommitted)
+        let initial = try await h.widget.snapshot(at: fixedInstant), first = try #require(initial.card)
+        let target = PlanTarget.day(try h.context.planningDay.addingDays(1))
+        let firstResult = try await h.widget.commit(scopeKey: initial.scopeKey, sessionID: initial.sessionID,
+            card: first, target: target, at: fixedInstant)
+        #expect(firstResult.state == .locallyCommitted)
+        let advanced = try await h.widget.snapshot(at: fixedInstant), second = try #require(advanced.card)
+        let secondResult = try await h.widget.commit(scopeKey: advanced.scopeKey, sessionID: advanced.sessionID,
+            card: second, target: target, at: fixedInstant)
+        #expect(secondResult.state == .locallyCommitted)
+        let latest = try await h.widget.snapshot(at: fixedInstant), current = try #require(latest.card)
+        let latestOperation = try #require(latest.lastOperationID)
+        #expect(latest.sessionID == initial.sessionID)
+        #expect(latestOperation == secondResult.operationID)
+        #expect(current.taskID != first.taskID && current.taskID != second.taskID)
+        let records = try await h.store.snapshot().records
+
+        let reopened = WidgetReviewService(store: h.store, directory: h.directory, workspaceEpoch: "local-v1")
+        let repeated = try await reopened.commit(scopeKey: initial.scopeKey, sessionID: initial.sessionID,
+            card: first, target: changeTarget ? .day(h.context.planningDay) : target, at: fixedInstant)
+        #expect(repeated.state == (changeTarget ? .alreadyDecided : .alreadyApplied))
+        #expect(repeated.operationID == firstResult.operationID)
+        #expect(repeated.affectedTaskIDs == [first.taskID])
+        let afterRetry = try await h.widget.snapshot(at: fixedInstant)
+        #expect(afterRetry.sessionID == latest.sessionID)
+        #expect(afterRetry.card == current)
+        #expect(afterRetry.queue == latest.queue)
+        #expect(afterRetry.lastOperationID == latestOperation)
+        #expect(afterRetry.undoExpected == latest.undoExpected)
+        #expect(try await h.store.snapshot().records == records)
+
+        let undone = try await reopened.undo(scopeKey: afterRetry.scopeKey,
+            operationID: try #require(afterRetry.lastOperationID), expected: afterRetry.undoExpected, at: fixedInstant)
+        #expect(undone.state == .locallyCommitted)
+        #expect(undone.affectedTaskIDs == [second.taskID])
+        #expect(try await h.store.taskProjection(first.taskID)?.plan.target == target)
+        #expect(try await h.store.taskProjection(second.taskID)?.plan.target == .unassigned)
+        let afterUndo = try await h.widget.snapshot(at: fixedInstant)
+        #expect(afterUndo.card?.taskID == second.taskID)
+        #expect(afterUndo.queue == [second.taskID] + latest.queue)
+    }
+
+    @Test("최신 위젯 결정 영수증은 화면 저장이 중단된 뒤에도 Undo를 복구한다", .timeLimit(.minutes(1)))
+    func latestDecisionReceiptRecoversUndoAfterPresentationInterruption() async throws {
+        let h = try await harness(), thirdID = UUID()
+        let captured = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: thirdID.uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .capture(taskID: thirdID, content: try TaskContent(title: "세 번째 작업"))), at: fixedInstant)
+        #expect(captured.state == .locallyCommitted)
+        let initial = try await h.widget.snapshot(at: fixedInstant)
+        let first = try #require(initial.card)
+        let target = PlanTarget.day(try h.context.planningDay.addingDays(1))
+        let firstResult = try await h.widget.commit(scopeKey: initial.scopeKey, sessionID: initial.sessionID,
+            card: first, target: target, at: fixedInstant)
+        #expect(firstResult.state == .locallyCommitted)
+        let previous = try await h.widget.snapshot(at: fixedInstant), second = try #require(previous.card)
+        let secondResult = try await h.widget.commit(scopeKey: previous.scopeKey, sessionID: previous.sessionID,
+            card: second, target: target, at: fixedInstant)
+        #expect(secondResult.state == .locallyCommitted)
+        let operation = try #require(secondResult.operationID)
+        // 원본은 완료됐지만 presentation 저장 직전에 종료된 상태를 디스크에 재현한다.
+        try await h.store.setLocalValue(JSONEncoder().encode(previous), forKey: "widget-presentation-v1:\(previous.scopeKey)")
+        let reopened = WidgetReviewService(store: h.store, directory: h.directory, workspaceEpoch: "local-v1")
+        let refreshed = try await reopened.snapshot(at: fixedInstant)
+        #expect(refreshed.lastOperationID == firstResult.operationID)
+        #expect(!refreshed.queue.contains(second.taskID))
+        let records = try await h.store.snapshot().records
+        let repeated = try await reopened.commit(scopeKey: previous.scopeKey, sessionID: previous.sessionID,
+            card: second, target: target, at: fixedInstant)
+        #expect(repeated.state == .alreadyApplied)
+        let recovered = try await reopened.snapshot(at: fixedInstant)
+        let expectedUndo = try #require(records.first { $0.operationID == operation }).undoExpectations()
+        #expect(recovered.lastOperationID == operation)
+        #expect(recovered.undoExpected == expectedUndo)
+        #expect(recovered.card == refreshed.card)
+        #expect(try await h.store.snapshot().records == records)
+        let undone = try await reopened.undo(scopeKey: recovered.scopeKey, operationID: operation,
+            expected: recovered.undoExpected, at: fixedInstant)
+        #expect(undone.state == .locallyCommitted)
+        #expect(undone.affectedTaskIDs == [second.taskID])
+        #expect(try await h.store.taskProjection(first.taskID)?.plan.target == target)
+        #expect(try await h.store.taskProjection(second.taskID)?.plan.target == .unassigned)
+    }
+
+    @Test("마지막 카드 Undo는 닫힌 주기를 이 세션에서만 다시 열고 새 입력을 자동으로 끼워 넣지 않는다", .timeLimit(.minutes(1)))
+    func undoLastWidgetCardResumesFrozenQueue() async throws {
+        let h = try await harness(twoTasks: false), initial = try await h.widget.snapshot(at: fixedInstant)
+        let card = try #require(initial.card)
+        _ = try await h.widget.commit(scopeKey: initial.scopeKey, sessionID: initial.sessionID, card: card,
+                                      target: .day(try h.context.planningDay.addingDays(1)), at: fixedInstant)
+        let closed = try await h.widget.snapshot(at: fixedInstant)
+        #expect(closed.mode == .today)
+        let operation = try #require(closed.lastOperationID)
+        let added = UUID()
+        let captured = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: added.uuidString,
+            source: .share, context: h.context, workspaceEpoch: "local-v1",
+            payload: .capture(taskID: added, content: try TaskContent(title: "정리 뒤 새 입력"))), at: fixedInstant)
+        #expect(captured.state == .locallyCommitted)
+        let undone = try await h.widget.undo(scopeKey: closed.scopeKey, operationID: operation,
+                                            expected: closed.undoExpected, at: fixedInstant)
+        #expect(undone.state == .locallyCommitted)
+        let resumed = try await h.widget.snapshot(at: fixedInstant), restoredCard = try #require(resumed.card)
+        #expect(resumed.mode == .review)
+        #expect(resumed.manualResumeOverride == true)
+        #expect(!resumed.manualTodayOverride)
+        #expect(resumed.queue == [card.taskID])
+        #expect(restoredCard.taskID == card.taskID)
+        #expect(restoredCard.decisionToken != card.decisionToken)
+        let snapshot = try await h.store.snapshot()
+        #expect(TaskReducer.reduce(snapshot.records, workspaceKey: snapshot.workspaceKey,
+                                   workspaceEpoch: snapshot.workspaceEpoch).isCycleClosed(initial.cycleID))
+        let reopened = WidgetReviewService(store: h.store, directory: h.directory, workspaceEpoch: "local-v1")
+        #expect(try await reopened.snapshot(at: fixedInstant).card == restoredCard)
+        let otherScope = try await reopened.snapshot(scopeKey: "other", at: fixedInstant)
+        #expect(otherScope.mode == .today)
+        _ = try await reopened.finish(scopeKey: resumed.scopeKey, sessionID: resumed.sessionID, at: fixedInstant)
+        let finished = try await h.widget.snapshot(at: fixedInstant)
+        #expect(finished.mode == .today)
+        #expect(finished.manualResumeOverride != true)
+        #expect(finished.card == nil)
+    }
+
+    @Test("위젯 Undo는 이미 받은 후속 계획을 덮거나 정리 큐에 복원하지 않는다", .timeLimit(.minutes(1)))
+    func staleWidgetUndoKeepsCurrentCard() async throws {
+        let h = try await harness(), initial = try await h.widget.snapshot(at: fixedInstant)
+        let card = try #require(initial.card)
+        _ = try await h.widget.commit(scopeKey: initial.scopeKey, sessionID: initial.sessionID, card: card,
+                                      target: .day(try h.context.planningDay.addingDays(1)), at: fixedInstant)
+        let committed = try await h.widget.snapshot(at: fixedInstant), operation = try #require(committed.lastOperationID)
+        let task = try #require(try await h.store.taskProjection(card.taskID))
+        let target = PlanTarget.day(try h.context.planningDay.addingDays(2))
+        let newer = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: card.taskID, expected: .init(task)), target: target, review: nil)), at: fixedInstant)
+        #expect(newer.state == .locallyCommitted)
+        let undone = try await h.widget.undo(scopeKey: committed.scopeKey, operationID: operation,
+                                            expected: committed.undoExpected, at: fixedInstant)
+        #expect(undone.state == .staleSnapshot)
+        let after = try await h.widget.snapshot(at: fixedInstant)
+        #expect(after.card == committed.card)
+        #expect(after.queue == committed.queue)
+        #expect(after.sessionID == committed.sessionID)
+        #expect(try await h.store.taskProjection(card.taskID)?.plan.target == target)
+    }
+
+    @Test("오늘 다시 정리의 Undo는 Today 범위와 남은 카드를 유지한다", .timeLimit(.minutes(1)))
+    func undoWithinManualTodayKeepsTodayScope() async throws {
+        let h = try await harness()
+        for id in [h.first, h.second] {
+            let task = try #require(try await h.store.taskProjection(id))
+            let result = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+                source: .app, context: h.context, workspaceEpoch: "local-v1",
+                payload: .setPlan(item: .init(taskID: id, expected: .init(task)), target: .day(h.context.planningDay), review: nil)), at: fixedInstant)
+            #expect(result.state == .locallyCommitted)
+        }
+        let initial = try await h.widget.snapshot(at: fixedInstant)
+        _ = try await h.widget.finish(scopeKey: initial.scopeKey, sessionID: initial.sessionID, at: fixedInstant)
+        let resumed = try await h.widget.startReview(todayOnly: true, at: fixedInstant), card = try #require(resumed.card)
+        _ = try await h.widget.commit(scopeKey: resumed.scopeKey, sessionID: resumed.sessionID, card: card,
+                                      target: .day(try h.context.planningDay.addingDays(1)), at: fixedInstant)
+        let committed = try await h.widget.snapshot(at: fixedInstant), operation = try #require(committed.lastOperationID)
+        _ = try await h.widget.undo(scopeKey: committed.scopeKey, operationID: operation,
+                                    expected: committed.undoExpected, at: fixedInstant)
+        let after = try await h.widget.snapshot(at: fixedInstant)
+        #expect(after.mode == .review)
+        #expect(after.manualTodayOverride)
+        #expect(after.manualResumeOverride != true)
+        #expect(after.card?.taskID == card.taskID)
+        #expect(after.queue == resumed.queue)
+    }
+
+    @Test("재개 상태가 없는 기존 위젯 저장값도 카드와 토큰을 유지하여 읽는다")
+    func legacyWidgetPresentationDecodesWithoutResumeFlag() async throws {
+        let h = try await harness(), initial = try await h.widget.snapshot(at: fixedInstant)
+        var object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(initial)) as? [String: Any])
+        object.removeValue(forKey: "manualResumeOverride")
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(WidgetReviewState.self, from: data)
+        #expect(decoded.manualResumeOverride == nil)
+        try await h.store.setLocalValue(data, forKey: "widget-presentation-v1:\(initial.scopeKey)")
+        let reloaded = try await h.widget.snapshot(at: fixedInstant)
+        #expect(reloaded.card == initial.card)
+        #expect(reloaded.sessionID == initial.sessionID)
+        #expect(reloaded.queue == initial.queue)
     }
 
     @Test("공개 단축어는 대표 여섯 개이며 내부 위젯 명령은 검색 노출하지 않는다")

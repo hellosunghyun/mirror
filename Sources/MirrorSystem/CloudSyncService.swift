@@ -170,6 +170,27 @@ public actor CloudSyncService {
     deinit {
         for continuation in statusContinuations.values { continuation.finish() }
     }
+    /// 시작 시 계정이 달라도 명시적인 로컬 복귀에 필요한 공유 위치와 전환 상태는 보존한다.
+    /// 확인되지 않은 계정 저장소는 열지 않고 pointer도 사용자 선택 전에는 바꾸지 않는다.
+    public func restoreActiveConfiguration() throws -> StoreConfiguration? {
+        guard let groupID = setup.appGroupIdentifier else { return nil }
+        guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID) else {
+            currentStatus = .configurationRequired([.signedAppGroupAccess])
+            throw CloudSyncServiceError.configurationRequired
+        }
+        return try restoreActiveConfiguration(root: root, identityMatches: Self.identityMatches)
+    }
+    /// 실제 pointer 경로와 검증을 공유하며 OS 계정 바인딩만 주입하는 내부 경계다.
+    func restoreActiveConfiguration(root: URL, identityMatches: @Sendable (Data) -> Bool) throws -> StoreConfiguration? {
+        rootDirectory = root
+        do {
+            return try Self.resolveActiveConfiguration(root: root, deviceID: localConfiguration.deviceID,
+                expectedContainerIdentifier: setup.containerIdentifier, identityMatches: identityMatches)
+        } catch CloudSyncServiceError.accountTransitionRequired {
+            currentStatus = .accountTransitionRequired
+            throw CloudSyncServiceError.accountTransitionRequired
+        }
+    }
     public func resumeActiveStore(_ active: MirrorStore) async throws {
         try await resumeActiveStore(active: active)
     }
@@ -364,6 +385,12 @@ public actor CloudSyncService {
         guard let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
             throw CloudSyncServiceError.configurationRequired
         }
+        return try resolveActiveConfiguration(root: root, deviceID: deviceID,
+            expectedContainerIdentifier: expectedContainerIdentifier, identityMatches: identityMatches)
+    }
+    private static func resolveActiveConfiguration(root: URL, deviceID: String,
+                                                   expectedContainerIdentifier: String?,
+                                                   identityMatches: @Sendable (Data) -> Bool) throws -> StoreConfiguration? {
         let url = pointerURL(root: root)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let pointer = try JSONDecoder().decode(ActiveCloudPointer.self, from: Data(contentsOf: url))

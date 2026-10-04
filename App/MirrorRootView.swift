@@ -15,6 +15,9 @@ struct MirrorRootView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var sceneOwner = CaptureSceneOwner()
     @State private var adjacentCalendarVisible = false
+    @State private var libraryNavigation = MirrorLibraryNavigationState()
+    @State private var calendarNavigation = MirrorCalendarNavigationState()
+    @State private var adjacentCalendarNavigation = MirrorCalendarNavigationState()
     @State private var detailCloseRequestedID: UUID?
     @State private var detailDraftTaskID: UUID?
     @State private var detailSelectionRequested: MirrorTaskSelectionRequest?
@@ -69,6 +72,7 @@ struct MirrorRootView: View {
         .environment(\.mirrorCaptureOpen, captureOpenAction)
         #if os(macOS)
         .focusedSceneValue(\.mirrorCaptureOpen, captureOpenAction)
+        .focusedSceneValue(\.mirrorLibrarySearch, MirrorLibrarySearchAction(model: model, navigation: libraryNavigation))
         #endif
         .tint(MirrorPalette.accent)
         .sheet(item: capturePresentation) { request in MirrorCaptureView(request: request) }
@@ -77,6 +81,12 @@ struct MirrorRootView: View {
         .sheet(item: basePicker, onDismiss: { model.finishWidgetPickerDismissal() }) { MirrorPlanPicker(request: $0) }
         .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
         .task { await model.start() }
+        .onChange(of: model.sceneNavigationGeneration) { _, _ in
+            libraryNavigation = MirrorLibraryNavigationState()
+            calendarNavigation = MirrorCalendarNavigationState()
+            adjacentCalendarNavigation = MirrorCalendarNavigationState()
+            adjacentCalendarVisible = false
+        }
         .onChange(of: scenePhase, initial: true) { _, phase in
             model.setSceneActive(sceneExposureID, active: phase == .active)
             if phase == .active {
@@ -183,7 +193,11 @@ struct MirrorRootView: View {
         #endif
     }
     @ViewBuilder private func content(_ destination: MirrorDestination) -> some View {
-        switch destination { case .today: MirrorTodayView(); case .calendar: MirrorCalendarView(); case .library: MirrorLibraryView() }
+        switch destination {
+        case .today: MirrorTodayView()
+        case .calendar: MirrorCalendarView(navigation: $calendarNavigation)
+        case .library: MirrorLibraryView(navigation: libraryNavigation)
+        }
     }
     private func phoneNavigation(_ destination: MirrorDestination) -> some View {
         NavigationStack {
@@ -238,7 +252,7 @@ struct MirrorRootView: View {
             if showCalendar {
                 Divider()
                 NavigationStack {
-                    MirrorCalendarView(compact: true).accessibilityIdentifier("ipad.adjacentCalendar")
+                    MirrorCalendarView(compact: true, navigation: $adjacentCalendarNavigation).accessibilityIdentifier("ipad.adjacentCalendar")
                         #if os(iOS)
                         .navigationBarTitleDisplayMode(.inline)
                         #endif
@@ -361,7 +375,7 @@ struct MirrorRootView: View {
             ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
             : AnyLayout(HStackLayout(spacing: 12))
         return layout {
-            if model.problem != nil || model.projectionPending {
+            if model.problem != nil || model.projectionPending || model.systemProblem != nil {
                 Button { Task { await model.retry() } } label: {
                     Text("다시 확인")
                         #if os(iOS)

@@ -574,6 +574,15 @@ final class MirrorUITests: XCTestCase {
         try requireNoElement("detail.keepEditing", in: app)
         XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
                        "다른 작업으로 이동을 취소하면 현재 상세의 제목 초안 원문을 그대로 유지한다.")
+        try activate("library.selectToggle", in: app)
+        try activate("library.selectAll", in: app)
+        let batchWhileEditing = try requireElement("library.batchPlan", in: app, preferButtons: true)
+        XCTAssertEqual(batchWhileEditing.label, "선택한 1개 날짜 배치")
+        XCTAssertFalse(batchWhileEditing.isEnabled, "상세 편집 중 배경의 일괄 미루기도 실행하지 않는다.")
+        XCTAssertFalse(app.buttons.matching(identifier: "plan.cancel").firstMatch.exists)
+        XCTAssertEqual(value(of: try requireElement("detail.title", in: app)), edited,
+                       "일괄 대상을 골라도 상세의 미저장 원문을 유지한다.")
+        try activate("library.selectToggle", in: app)
         try showToday(in: app)
         let reviewWhileEditing = try requireElement("today.review", in: app, preferButtons: true)
         XCTAssertFalse(reviewWhileEditing.isEnabled, "미저장 상세 편집 중에는 정리로 이동하지 않는다.")
@@ -1338,7 +1347,7 @@ final class MirrorUITests: XCTestCase {
     private func verifySettingsPages(in app: XCUIApplication) throws {
         for section in ["diagnostics", "archive", "deletion"] {
             try activate("settings.button", in: app)
-            try activate("settings.\(section)", in: app)
+            try activateSettingsPage(section, in: app)
             let pageID = "settings.\(section).page"
             let page = try requireElement(pageID, in: app)
             XCTAssertTrue(page.isHittable, "요청한 설정 페이지를 실제 화면에서 사용할 수 있어야 한다.")
@@ -1347,6 +1356,36 @@ final class MirrorUITests: XCTestCase {
             try requireNoElement(pageID, in: app)
             try requireNoElement("settings.close", in: app)
         }
+    }
+
+    @MainActor
+    private func activateSettingsPage(_ section: String, in app: XCUIApplication) throws {
+        // Form의 화면 밖 링크는 native lazy row라 아직 AX에 없을 수 있다.
+        // 고유한 실제 설정 목록만 스크롤하고 표시된 링크를 직접 눌러 진입한다.
+        let deadline = Date().addingTimeInterval(15)
+        let overview = try requireElement("settings.overview", in: app,
+                                          timeout: max(0, deadline.timeIntervalSinceNow))
+        let link = overview.descendants(matching: .any).matching(identifier: "settings.\(section)").firstMatch
+        for attempt in 0...8 {
+            guard app.state == .runningForeground, overview.exists, overview.isHittable,
+                  Date() < deadline else { break }
+            if link.exists, link.isHittable, link.isEnabled {
+                #if os(macOS)
+                link.click()
+                #else
+                link.tap()
+                #endif
+                return
+            }
+            guard attempt < 8 else { break }
+            #if os(macOS)
+            overview.scroll(byDeltaX: 0, deltaY: -250)
+            #else
+            overview.swipeUp()
+            #endif
+        }
+        XCTFail("실제 설정 목록을 스크롤하여 요청한 설정 페이지에 접근할 수 있어야 한다.")
+        throw UIHarnessError.missingElement("settings.\(section)")
     }
 
     @MainActor

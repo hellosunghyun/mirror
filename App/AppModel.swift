@@ -86,8 +86,6 @@ final class AppModel {
             selectedTaskIDBacking = newValue
         }
     }
-    var search = ""
-    var searchRequested = false
     private var textEditingOwnership = TextEditingOwnershipState()
     var isTextEditing: Bool { textEditingOwnership.isEditing }
     func setTextEditing(_ active: Bool, ownerID: UUID) {
@@ -105,6 +103,18 @@ final class AppModel {
     var selectedTaskIDs: Set<UUID> = []
     private let capturePresentationCoordinator = CapturePresentationCoordinator()
     var showCapture: Bool { capturePresentationCoordinator.request != nil }
+    private var workspaceChangeInProgress = false
+    var workspaceChangeBlockedMessage: String? {
+        switch WorkspaceChangeBlocker.current(detailEditing: isDetailEditing, capture: showCapture,
+                                              projectionPending: projectionPending, saving: isSaving) {
+        case .detailEditing: "편집 중인 내용을 저장하거나 편집을 취소한 뒤 저장 공간을 바꿀 수 있어요."
+        case .capture: "열린 입력을 저장하거나 닫은 뒤 저장 공간을 바꿀 수 있어요."
+        case .projectionPending: "저장 결과를 먼저 다시 확인한 뒤 저장 공간을 바꿀 수 있어요."
+        case .saving: "현재 저장을 마친 뒤 저장 공간을 바꿀 수 있어요."
+        case nil: nil
+        }
+    }
+    var canChangeWorkspace: Bool { workspaceChangeBlockedMessage == nil }
     var showSettings = false
     var showReview = false
     var picker: PlanPickerRequest?
@@ -136,15 +146,20 @@ final class AppModel {
     var syncState: StoreSyncState = .localOnly
     var quarantinedCount = 0
     var context: PlanningContext?
+    private(set) var sceneNavigationGeneration = UUID()
     var archiveData: Data?
     var exportFileName = "Mirror-backup"
-    var importData: Data?
-    var importPreview: String?
-    var archivePreview: ImportPreview?
+    private var archiveImportSelection = ArchiveImportSelection()
+    @ObservationIgnored private var importObservationID: UUID?
+    var importSelectionID: UUID? { archiveImportSelection.selectionID }
+    var archiveImportPreview: ArchiveImportSelection.Preview? { archiveImportSelection.preview }
+    var importPreview: String? {
+        guard let report = archiveImportPreview?.report else { return nil }
+        return "작업 \(report.taskCount)개 · 새 작업 \(report.newTaskCount)개 · 원본 기록 \(report.operationCount)개 · 중복 \(report.duplicateCount)개 · 격리·미해석 원본 \(report.quarantinedRecordCount)개. \(report.warnings.joined(separator: " ")) 변경 이력의 개인 정보도 복원될 수 있어요."
+    }
     var showDeleteConfirmation = false
     var records: [OperationRecord] = []
     var calendars: [CalendarDescriptor] = []
-    var calendarEvents: [CalendarEventSummary] = []
     var calendarAccess: CalendarAccess = .notDetermined
     var calendarProblem: String?
     var notificationsAuthorized = false
@@ -154,7 +169,17 @@ final class AppModel {
     var cloudDeletionMessage: String?
 
     @ObservationIgnored private var store: MirrorStore?
-    @ObservationIgnored private var configuration: StoreConfiguration?
+    @ObservationIgnored private var configuration: StoreConfiguration? {
+        didSet {
+            if oldValue?.directory.standardizedFileURL != configuration?.directory.standardizedFileURL
+                || oldValue?.workspaceKey != configuration?.workspaceKey
+                || oldValue?.workspaceEpoch != configuration?.workspaceEpoch
+                || oldValue?.cloudSync != configuration?.cloudSync {
+                sceneNavigationGeneration = UUID()
+                clearCalendarDisplays()
+            }
+        }
+    }
     @ObservationIgnored private var services: SystemServices?
     @ObservationIgnored private var cloud: CloudSyncService?
     @ObservationIgnored private var cloudStatusObservation: Task<Void, Never>?
@@ -183,10 +208,15 @@ final class AppModel {
     @ObservationIgnored private var captureInputProblemRevision: UInt64? = nil
     @ObservationIgnored private var retryEnvelope: CommandEnvelope?
     @ObservationIgnored private var pendingImportFeedback: String?
-    @ObservationIgnored private var calendarDisplayRange: (start: Date, end: Date)?
+    private final class CalendarDisplayReference {
+        weak var value: CalendarDisplayState?
+        init(_ value: CalendarDisplayState) { self.value = value }
+    }
+    @ObservationIgnored private var calendarDisplays: [UUID: CalendarDisplayReference] = [:]
     @ObservationIgnored private var calendarLoadID = UUID()
     @ObservationIgnored private var widgetDecision: (request: PlanPickerRequest, target: PlanTarget)?
     @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private let systemPreferenceJournal = SystemPreferenceUpdateJournal(defaults: .standard)
     @ObservationIgnored private let preferenceKey = "Mirror.preferences.v1"
     @ObservationIgnored private let sessionKey = "Mirror.review.session.v1"
     @ObservationIgnored private var reviewExposures: Set<UUID> = []
@@ -308,10 +338,7 @@ final class AppModel {
             cloud = CloudSyncService(localConfiguration: config, setup: setup)
             if let cloud { observeCloudStatus(cloud) }
             configuration = config
-            if !isUITesting, let configuredGroup, !configuredGroup.isEmpty,
-               let active = try await CloudSyncService.resolveActiveConfiguration(appGroupIdentifier: configuredGroup,
-                                                                                    deviceID: deviceID,
-                                                                                    expectedContainerIdentifier: setup.containerIdentifier) { config = active }
+            if !isUITesting, let cloud, let active = try await cloud.restoreActiveConfiguration() { config = active }
             configuration = config
             let system = try await SystemCompositionRoot.open(configuration: config)
             services = system
@@ -327,19 +354,13 @@ final class AppModel {
                 try await cloud.resumeActiveStore(store)
                 await system.attachCloudMonitor(cloud)
             }
-            if projectionRecovery == nil, !recoveryConfigurationBlocked, !isUITesting,
-               let bytes = try await store?.localValue(forKey: "system-preferences-v1"),
-               let systemPreferences = try? JSONDecoder().decode(SystemPreferences.self, from: bytes) {
-                preferences.hideExternalTitles = systemPreferences.hideExternalTitles
-                preferences.spotlightEnabled = systemPreferences.spotlightEnabled
-                preferences.selectedCalendars = systemPreferences.selectedCalendarIDs
-                preferences.calendarEnabled = !systemPreferences.selectedCalendarIDs.isEmpty
-                preferences.reviewNotifications = systemPreferences.reviewNotification.enabled
-                preferences.reviewHour = systemPreferences.reviewNotification.hour
-                preferences.reviewMinute = systemPreferences.reviewNotification.minute
-                preferences.weeklyWeekday = systemPreferences.reviewNotification.weeklyWeekday
-                preferences.deadlineNotifications = systemPreferences.notificationsOnThisDevice && !systemPreferences.deadlineNotifications.isEmpty
-                preferences.deadlineAlarmDates = Dictionary(uniqueKeysWithValues: systemPreferences.deadlineNotifications.map { ($0.taskID, $0.fireAt) })
+            if projectionRecovery == nil, !recoveryConfigurationBlocked, !isUITesting {
+                let pending = try systemPreferenceJournal.pending(for: config)
+                let bytes = try await store?.localValue(forKey: "system-preferences-v1")
+                let saved = bytes.flatMap { try? JSONDecoder().decode(SystemPreferences.self, from: $0) }
+                if let systemPreferences = pending?.preferences ?? saved {
+                    applySystemPreferences(systemPreferences)
+                }
             }
             if let store { await observeCanonicalChanges(store) }
             await refresh()
@@ -347,6 +368,12 @@ final class AppModel {
                let saved = try? JSONDecoder().decode(AppReviewSession.self, from: bytes),
                saved.context.planningDay == context?.planningDay,
                saved.context.policyRevision == context?.policyRevision { review = saved }
+        } catch CloudSyncServiceError.accountTransitionRequired {
+            stopCanonicalObservation()
+            store = nil; services = nil
+            clearTransientData()
+            cloudSyncStatus = .accountTransitionRequired
+            problem = "iCloud 계정이 바뀌어 이전 개인 공간을 열지 않았어요. 설정에서 기기 전용 공간으로 돌아간 뒤 새 계정 연결을 선택할 수 있어요."
         } catch {
             problem = "저장소를 열지 못했어요. 원본은 지우지 않았어요. 다시 시도해 주세요."
         }
@@ -443,6 +470,9 @@ final class AppModel {
         }
     }
     private func stopCanonicalObservation() {
+        archiveImportSelection.clear()
+        importObservationID = nil
+        clearCalendarDisplays()
         canonicalObservation?.cancel(); canonicalObservation = nil
         canonicalRefreshTask?.cancel(); canonicalRefreshTask = nil
         systemReconciliationTask?.cancel(); systemReconciliationTask = nil
@@ -508,11 +538,58 @@ final class AppModel {
         isSaving = false
         drainCanonicalChanges()
     }
+    private func permitWorkspaceChange() -> Bool {
+        guard let reason = workspaceChangeBlockedMessage else { return true }
+        feedback = reason
+        if isDetailEditing { detailEditingFeedback = reason }
+        return false
+    }
+    private func beginWorkspaceChange() -> Bool {
+        guard permitWorkspaceChange() else { return false }
+        workspaceChangeInProgress = true
+        isSaving = true
+        return true
+    }
+    private func finishWorkspaceChange() {
+        workspaceChangeInProgress = false
+        finishSaving()
+    }
 
     func savePreferences() {
         if projectionRecovery != nil || recoveryConfigurationBlocked { resetExternalPreferencesAfterRecovery() }
         if let bytes = try? JSONEncoder().encode(preferences) { defaults.set(bytes, forKey: preferenceKey) }
+        if let configuration {
+            do { try systemPreferenceJournal.record(requestedSystemPreferences(), for: configuration) }
+            catch {
+                systemProblem = "변경한 설정을 보존하지 못했어요. 외부 제목 숨김이나 알림 끄기가 아직 완료되지 않았어요. 다시 확인해 주세요."
+                return
+            }
+        }
         requestSystemReconciliation()
+    }
+    private func requestedSystemPreferences() -> SystemPreferences {
+        SystemPreferences(planningTimeZoneID: context?.timeZoneID ?? preferences.timeZoneID,
+            policyRevision: context?.policyRevision ?? preferences.policyRevision,
+            hideExternalTitles: preferences.hideExternalTitles, spotlightEnabled: preferences.spotlightEnabled,
+            notificationsOnThisDevice: preferences.reviewNotifications || preferences.deadlineNotifications,
+            selectedCalendarIDs: preferences.selectedCalendars,
+            reviewNotification: .init(enabled: preferences.reviewNotifications, hour: preferences.reviewHour,
+                                      minute: preferences.reviewMinute, weeklyWeekday: preferences.weeklyWeekday),
+            deadlineNotificationsEnabled: preferences.deadlineNotifications,
+            deadlineNotifications: preferences.deadlineAlarmDates.map { DeadlineNotificationPreference(taskID: $0.key, fireAt: $0.value) }
+                .sorted { $0.taskID.uuidString < $1.taskID.uuidString })
+    }
+    private func applySystemPreferences(_ value: SystemPreferences) {
+        preferences.hideExternalTitles = value.hideExternalTitles
+        preferences.spotlightEnabled = value.spotlightEnabled
+        preferences.selectedCalendars = value.selectedCalendarIDs
+        preferences.calendarEnabled = !value.selectedCalendarIDs.isEmpty
+        preferences.reviewNotifications = value.reviewNotification.enabled
+        preferences.reviewHour = value.reviewNotification.hour
+        preferences.reviewMinute = value.reviewNotification.minute
+        preferences.weeklyWeekday = value.reviewNotification.weeklyWeekday
+        preferences.deadlineNotifications = value.deadlineNotificationsEnabled
+        preferences.deadlineAlarmDates = Dictionary(uniqueKeysWithValues: value.deadlineNotifications.map { ($0.taskID, $0.fireAt) })
     }
     private func resetExternalPreferencesAfterRecovery() {
         preferences.hideExternalTitles = true; preferences.spotlightEnabled = false
@@ -564,6 +641,10 @@ final class AppModel {
         capturePresentationCoordinator.presentation(for: ownerSceneID)
     }
     func openCapture(owner: CaptureSceneOwner, single: Bool = false) {
+        guard !workspaceChangeInProgress else {
+            feedback = "저장 공간 변경을 마친 뒤 새 입력을 열 수 있어요."
+            return
+        }
         guard !isLoading, context != nil else { return }
         guard capturePresentationCoordinator.open(owner: owner, single: single, contextID: storeObservationID) else {
             feedback = "다른 창에서 입력 중이에요. 그 창에서 입력을 마무리해 주세요."
@@ -681,7 +762,8 @@ final class AppModel {
 
     func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil,
                     reviewSession: AppReviewSession? = nil) {
-        guard let context, (1...20).contains(taskIDs.count) else { return }
+        guard !isSaving, !projectionPending, !isDetailEditing,
+              let context, (1...20).contains(taskIDs.count) else { return }
         if reviewCard != nil {
             guard let reviewSession, review?.id == reviewSession.id else { return }
         }
@@ -907,27 +989,63 @@ final class AppModel {
         do { archiveData = try await store.exportArchive(exportedAt: now); exportFileName = "Mirror-\(context?.planningDay.iso8601 ?? "backup")" }
         catch { problem = "내보내기 파일을 만들지 못했어요. 저장된 원본은 유지했어요." }
     }
-    func previewImport(_ bytes: Data) async {
+    func beginImportSelection() -> UUID? {
+        guard permitWorkspaceChange() else { return nil }
+        importObservationID = storeObservationID
+        return archiveImportSelection.begin()
+    }
+    func cancelImportSelection(id: UUID) {
+        if archiveImportSelection.discard(id: id) { importObservationID = nil }
+    }
+    func failImportSelection(id: UUID, message: String) {
+        guard archiveImportSelection.discard(id: id) else { return }
+        importObservationID = nil
+        problem = message
+    }
+    func previewImport(_ bytes: Data, selectionID: UUID) async {
+        guard archiveImportSelection.selectionID == selectionID, importObservationID == storeObservationID,
+              !isSaving else { return }
+        let observationID = storeObservationID
         do {
             let report: ImportPreview
             if let store { report = try await store.previewArchive(bytes) }
             else if let configuration, configuration.cloudSync == nil { report = try MirrorStore.previewArchiveForRecovery(bytes, configuration: configuration) }
-            else { problem = "개인 공간의 설정을 먼저 복구해야 해요. 현재 원본은 지우지 않았어요."; return }
-            importData = bytes
-            archivePreview = report
-            importPreview = "작업 \(report.taskCount)개 · 새 작업 \(report.newTaskCount)개 · 원본 기록 \(report.operationCount)개 · 중복 \(report.duplicateCount)개 · 격리·미해석 원본 \(report.quarantinedRecordCount)개. \(report.warnings.joined(separator: " ")) 변경 이력의 개인 정보도 복원될 수 있어요."
-        } catch { problem = "파일의 버전·개인 공간·원본 형식을 확인해 주세요. 현재 데이터는 바뀌지 않았어요." }
+            else {
+                failImportSelection(id: selectionID, message: "개인 공간의 설정을 먼저 복구해야 해요. 현재 원본은 지우지 않았어요.")
+                return
+            }
+            guard !Task.isCancelled, storeObservationID == observationID else { cancelImportSelection(id: selectionID); return }
+            archiveImportSelection.complete(id: selectionID, data: bytes, report: report)
+        } catch {
+            failImportSelection(id: selectionID, message: "파일의 버전·개인 공간·원본 형식을 확인해 주세요. 현재 데이터는 바뀌지 않았어요.")
+        }
     }
-    func importArchive(confirmAccount: Bool = false, confirmWorkspace: Bool = false) async {
-        guard let bytes = importData, !isSaving else { return }
-        if archivePreview?.requiresAccountConfirmation == true, !confirmAccount {
-            problem = "다른 계정의 자료를 이 공간에 가져올지 먼저 확인해 주세요."; return
+    func importArchive(previewID: UUID, accountConfirmationID: UUID? = nil, workspaceConfirmationID: UUID? = nil) async {
+        guard beginWorkspaceChange() else { return }
+        defer { finishWorkspaceChange() }
+        guard importObservationID == storeObservationID else {
+            cancelImportSelection(id: previewID)
+            problem = "개인 공간이 바뀌었어요. 복원 파일을 다시 선택하고 미리보기를 확인해 주세요."
+            return
         }
-        if archivePreview?.requiresWorkspaceConfirmation == true, !confirmWorkspace {
-            problem = "현재 기기의 작업을 교체하고 원래 자료의 공간을 복원할지 확인해 주세요."; return
+        let selected: ArchiveImportSelection.Preview
+        do {
+            selected = try archiveImportSelection.authorizedPreview(id: previewID, accountConfirmationID: accountConfirmationID,
+                                                                   workspaceConfirmationID: workspaceConfirmationID)
+        } catch {
+            switch error as? ArchiveImportSelection.AuthorizationError {
+            case .accountConfirmationRequired:
+                problem = "다른 계정의 자료를 이 공간에 가져올지 먼저 확인해 주세요."
+            case .workspaceConfirmationRequired:
+                problem = "현재 기기의 작업을 교체하고 원래 자료의 공간을 복원할지 확인해 주세요."
+            default:
+                problem = "복원 파일이 바뀌었어요. 현재 미리보기를 확인하고 다시 복원해 주세요."
+            }
+            return
         }
-        isSaving = true
-        defer { finishSaving() }
+        let bytes = selected.data
+        let confirmAccount = accountConfirmationID == selected.id
+        let confirmWorkspace = workspaceConfirmationID == selected.id
         var sourceRestored = false
         do {
             let oldServices = services
@@ -938,7 +1056,7 @@ final class AppModel {
                 sourceRestored = true
                 try await openRestoredWorkspace(restoration.newConfiguration, replacing: oldServices)
                 report = restoration.importReport
-            } else if let store, archivePreview?.requiresWorkspaceConfirmation == true {
+            } else if let store, selected.report.requiresWorkspaceConfirmation {
                 let restoration = try await store.restoreArchiveAsLocalWorkspace(bytes, confirmed: confirmWorkspace)
                 sourceRestored = true
                 try await openRestoredWorkspace(restoration.newConfiguration, replacing: oldServices)
@@ -950,7 +1068,7 @@ final class AppModel {
             problem = nil
             feedback = report.projectionPending ? "원본 자료는 복원했어요. 화면을 갱신하고 있어요. 다시 확인을 선택해 주세요." : nil
             projectionPending = report.projectionPending
-            importData = nil; importPreview = nil; archivePreview = nil
+            cancelImportSelection(id: selected.id)
             if !(await refresh()) {
                 projectionPending = true
                 feedback = "원본 자료는 복원했어요. 화면을 갱신하고 있어요. 다시 확인을 선택해 주세요."
@@ -972,15 +1090,18 @@ final class AppModel {
         await observeCanonicalChanges(next)
     }
     func deleteLocalData() async {
-        guard let store, !isSaving else { return }
-        isSaving = true
-        defer { finishSaving() }
+        guard let store, beginWorkspaceChange() else { return }
+        defer { finishWorkspaceChange() }
         var sourceDeleted = false
+        var preferenceCleanupFailed = false
         do {
             let oldServices = services
+            let removedConfiguration = await store.configuration
             let report = try await store.deleteLocalData()
             guard report.deleted, let config = report.newConfiguration else { problem = report.safeUserMessage; return }
             sourceDeleted = true
+            do { try systemPreferenceJournal.discard(for: removedConfiguration) }
+            catch { preferenceCleanupFailed = true }
             stopCanonicalObservation()
             self.store = nil; services = nil
             configuration = config
@@ -989,6 +1110,9 @@ final class AppModel {
             preferences.reviewNotifications = false; preferences.deadlineNotifications = false
             preferences.spotlightEnabled = false; preferences.selectedCalendars = []; preferences.calendarEnabled = false
             if let oldServices { await reportCleanup(await oldServices.eraseLocalSurfaceData()) }
+            if preferenceCleanupFailed {
+                cleanupProblem = "원본은 지웠지만 이 공간의 미완료 알림 설정 정리를 확인하지 못했어요. 새 공간에는 적용하지 않아요."
+            }
             let next = try await MirrorStore(configuration: config)
             self.store = next
             services = SystemServices(store: next, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
@@ -1212,37 +1336,48 @@ final class AppModel {
             preferences.calendarEnabled = granted
             calendarAccess = await calendar.authorization()
             if granted { calendars = try await calendar.calendars(); calendarProblem = nil }
-            else { calendars = []; calendarEvents = []; calendarProblem = "캘린더 접근을 허용하지 않았어요. 할 일 날짜 배치는 계속 사용할 수 있어요." }
+            else { calendars = []; clearCalendarDisplays(); calendarProblem = "캘린더 접근을 허용하지 않았어요. 할 일 날짜 배치는 계속 사용할 수 있어요." }
             savePreferences()
         } catch { calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요." }
     }
-    func loadCalendar(from start: Date, to end: Date) async {
-        let loadID = UUID()
-        calendarLoadID = loadID
-        calendarDisplayRange = (start, end)
-        guard let services, preferences.calendarEnabled else { calendarEvents = []; return }
+    private var liveCalendarDisplays: [CalendarDisplayState] {
+        calendarDisplays = calendarDisplays.filter { $0.value.value != nil }
+        return calendarDisplays.values.compactMap(\.value)
+    }
+    func clearCalendarDisplays() {
+        calendarLoadID = UUID()
+        for display in liveCalendarDisplays { display.invalidate() }
+    }
+    func loadCalendar(_ display: CalendarDisplayState, from start: Date, to end: Date) async {
+        _ = liveCalendarDisplays
+        calendarDisplays[display.id] = CalendarDisplayReference(display)
+        let loadID = display.begin(from: start, to: end)
+        guard let services, preferences.calendarEnabled else { return }
         let identity = storeObservationID
+        let selectedCalendars = preferences.selectedCalendars
         let calendar = await services.calendar
         let access = await calendar.authorization()
-        guard storeObservationID == identity, calendarLoadID == loadID else { return }
+        guard storeObservationID == identity, display.isCurrent(loadID),
+              preferences.calendarEnabled, selectedCalendars == preferences.selectedCalendars else { return }
         calendarAccess = access
         guard access == .fullAccess else {
-            calendarEvents = []; calendars = []
+            clearCalendarDisplays(); calendars = []
             calendarProblem = "캘린더 권한이 없어요. 할 일 날짜 배치는 계속 사용할 수 있어요."
             await calendar.clearCache()
             return
         }
         do {
             let available = try await calendar.calendars()
-            let events = try await calendar.events(from: start, to: end, calendarIDs: preferences.selectedCalendars, now: now)
-            guard storeObservationID == identity, calendarLoadID == loadID, preferences.calendarEnabled else { return }
+            let events = try await calendar.events(from: start, to: end, calendarIDs: selectedCalendars, now: now)
+            guard storeObservationID == identity, display.isCurrent(loadID), preferences.calendarEnabled,
+                  selectedCalendars == preferences.selectedCalendars else { return }
             calendars = available
-            calendarEvents = events
+            display.complete(loadID, events: events)
             calendarProblem = nil
         } catch {
-            guard storeObservationID == identity, calendarLoadID == loadID else { return }
-            calendarEvents = []; calendars = []
-            calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요."
+            guard storeObservationID == identity, display.isCurrent(loadID), preferences.calendarEnabled,
+                  selectedCalendars == preferences.selectedCalendars else { return }
+            display.complete(loadID, events: [], problem: "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요.")
             await calendar.clearCache()
         }
     }
@@ -1257,15 +1392,19 @@ final class AppModel {
         guard storeObservationID == identity, calendarLoadID == loadID else { return }
         calendarAccess = access
         guard access == .fullAccess else {
-            calendarEvents = []; calendars = []
+            clearCalendarDisplays(); calendars = []
             if preferences.calendarEnabled {
                 calendarProblem = "캘린더 권한이 없어요. 할 일 날짜 배치는 계속 사용할 수 있어요."
             }
             return
         }
-        guard preferences.calendarEnabled else { calendarEvents = []; calendars = []; return }
-        if let calendarDisplayRange {
-            await loadCalendar(from: calendarDisplayRange.start, to: calendarDisplayRange.end)
+        guard preferences.calendarEnabled else { clearCalendarDisplays(); calendars = []; return }
+        let displays = liveCalendarDisplays
+        if !displays.isEmpty {
+            for display in displays {
+                guard storeObservationID == identity, calendarLoadID == loadID else { return }
+                if let range = display.range { await loadCalendar(display, from: range.start, to: range.end) }
+            }
         } else {
             do {
                 let available = try await calendar.calendars()
@@ -1274,7 +1413,7 @@ final class AppModel {
                 calendarProblem = nil
             } catch {
                 guard storeObservationID == identity, calendarLoadID == loadID else { return }
-                calendarEvents = []; calendars = []
+                clearCalendarDisplays(); calendars = []
                 calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요."
             }
         }
@@ -1392,28 +1531,29 @@ final class AppModel {
         }
     }
     private func reconcileSystemServices(identity: UUID) async {
-        guard !Task.isCancelled, storeObservationID == identity, let services, let context else { return }
+        guard !Task.isCancelled, storeObservationID == identity, let services, context != nil, let configuration else { return }
         do {
-            let reviewPreference = ReviewNotificationPreference(enabled: preferences.reviewNotifications,
-                                                                 hour: preferences.reviewHour, minute: preferences.reviewMinute,
-                                                                 weeklyWeekday: preferences.weeklyWeekday)
-            let deadlinePreferences = preferences.deadlineNotifications ? preferences.deadlineAlarmDates.map { DeadlineNotificationPreference(taskID: $0.key, fireAt: $0.value) } : []
-            let systemPreferences = SystemPreferences(planningTimeZoneID: context.timeZoneID, policyRevision: context.policyRevision,
-                                                      hideExternalTitles: preferences.hideExternalTitles, spotlightEnabled: preferences.spotlightEnabled,
-                                                      notificationsOnThisDevice: preferences.reviewNotifications || preferences.deadlineNotifications,
-                                                      selectedCalendarIDs: preferences.selectedCalendars,
-                                                      reviewNotification: reviewPreference, deadlineNotifications: deadlinePreferences)
+            if projectionRecovery != nil || recoveryConfigurationBlocked { resetExternalPreferencesAfterRecovery() }
+            let requested = requestedSystemPreferences()
+            var pending = try systemPreferenceJournal.pending(for: configuration)
+            if projectionRecovery != nil || recoveryConfigurationBlocked,
+               let previous = pending, previous.preferences != requested {
+                pending = try systemPreferenceJournal.record(requested, for: configuration)
+            }
+            let systemPreferences = pending?.preferences ?? requested
+            if pending != nil { applySystemPreferences(systemPreferences) }
             try await services.savePreferences(systemPreferences)
             guard !Task.isCancelled, storeObservationID == identity else { return }
             let report = await services.reconcileExternalSurfaces(at: now)
             guard !Task.isCancelled, storeObservationID == identity else { return }
             notificationOmittedCount = report.omittedNotificationCount
             WidgetReload.request()
+            if let pending { try systemPreferenceJournal.acknowledge(pending, after: report) }
             systemProblem = report.safeUserMessage ?? (projectionRecovery != nil || recoveryConfigurationBlocked
                 ? "목록을 복구한 뒤 외부 노출·알림을 꺼 두었어요. 설정에서 복구 상태를 확인해 주세요." : nil)
         } catch {
             guard !Task.isCancelled, storeObservationID == identity else { return }
-            systemProblem = "할 일은 저장되어 있어요. 알림 또는 시스템 검색 갱신을 다시 확인해 주세요."
+            systemProblem = "설정 적용을 마치지 못했어요. 외부 제목 숨김이나 알림 끄기가 아직 완료되지 않았을 수 있어요. 다시 확인해 주세요."
         }
     }
     private func commitWidget(_ request: PlanPickerRequest, target: PlanTarget, acknowledgment: DeadlineAcknowledgment? = nil) async -> Bool {
@@ -1482,16 +1622,14 @@ final class AppModel {
         }
     }
     func previewCloudConnection() async {
-        guard let cloud, let store, !isSaving else { return }
-        isSaving = true
-        defer { finishSaving() }
+        guard let cloud, let store, beginWorkspaceChange() else { return }
+        defer { finishWorkspaceChange() }
         cloudPreview = await cloud.previewEnable(localStore: store, explicitOptIn: true, at: now)
         cloudSyncStatus = await cloud.status()
     }
     func confirmCloudConnection() async {
-        guard let cloud, let preview = cloudPreview, !isSaving else { return }
-        isSaving = true
-        defer { finishSaving() }
+        guard let cloud, let preview = cloudPreview, beginWorkspaceChange() else { return }
+        defer { finishWorkspaceChange() }
         if let cloudStore = await cloud.confirmEnable(token: preview.token, consentToMerge: true) {
             let config = await cloudStore.configuration
             self.store = cloudStore; configuration = config
@@ -1529,19 +1667,26 @@ final class AppModel {
         await cloud.cancelPreview(); cloudPreview = nil; cloudSyncStatus = await cloud.status()
     }
     func disableCloudConnection() async {
-        guard let cloud, !isSaving else { return }
-        isSaving = true
-        defer { finishSaving() }
+        guard let cloud, beginWorkspaceChange() else { return }
+        defer { finishWorkspaceChange() }
         do {
             let local = try await cloud.disable()
             let config = await local.configuration
+            stopCanonicalObservation()
+            clearTransientData()
             self.store = local; configuration = config
             services = SystemServices(store: local, directory: config.directory, workspaceEpoch: config.workspaceEpoch)
             await observeCanonicalChanges(local)
             cloudPreview = nil; review = nil; lastUndo = nil; cloudSyncStatus = .localOnly
             await refresh()
             feedback = "동기화 연결을 중지했어요. 연결 전의 기기 전용 공간으로 돌아왔어요. iCloud 원본은 지우거나 자동 복사하지 않았어요."
-        } catch { problem = "동기화 연결을 중지하지 못했어요. 이전 공간을 유지하고 있어요." }
+        } catch {
+            stopCanonicalObservation()
+            store = nil; services = nil
+            clearTransientData()
+            cloudSyncStatus = await cloud.status()
+            problem = "기기 전용 공간을 열지 못했어요. 원본은 지우지 않았어요. 다시 확인해 주세요."
+        }
     }
     func inspectCloudDeletion() async {
         guard let cloud else { return }
@@ -1594,6 +1739,7 @@ final class AppModel {
         try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome))
     }
     private func clearTransientData() {
+        sceneNavigationGeneration = UUID()
         endReviewExposureSegment()
         activeReviewMilliseconds = 0; reviewExposures = []
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
@@ -1603,12 +1749,13 @@ final class AppModel {
         completedBatchPickerID = nil; batchPickerOwner = nil
         projectionRecovery = nil; recoveryConfigurationBlocked = false
         lamportByOperationID = [:]
-        retryEnvelope = nil; widgetDecision = nil; archiveData = nil; importData = nil
-        pendingImportFeedback = nil; calendarDisplayRange = nil
-        calendarLoadID = UUID()
+        retryEnvelope = nil; widgetDecision = nil; archiveData = nil; archiveImportSelection.clear()
+        importObservationID = nil
+        pendingImportFeedback = nil
+        clearCalendarDisplays()
         detailEditingOwners.removeAll()
-        importPreview = nil; archivePreview = nil; selectedTaskIDBacking = nil; selectedTaskIDs = []
-        calendarEvents = []; calendars = []; showReview = false; projectionPending = false
+        selectedTaskIDBacking = nil; selectedTaskIDs = []
+        calendars = []; showReview = false; projectionPending = false
         detailEditingFeedback = nil
         feedback = nil; problem = nil
         defaults.removeObject(forKey: sessionKey)

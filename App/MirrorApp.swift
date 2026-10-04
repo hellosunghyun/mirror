@@ -188,8 +188,15 @@ struct MirrorMenuBarContent: View {
 private struct MirrorCaptureOpenFocusedKey: FocusedValueKey {
     typealias Value = MirrorCaptureOpenAction
 }
+private struct MirrorLibrarySearchFocusedKey: FocusedValueKey {
+    typealias Value = MirrorLibrarySearchAction
+}
 
 extension FocusedValues {
+    var mirrorLibrarySearch: MirrorLibrarySearchAction? {
+        get { self[MirrorLibrarySearchFocusedKey.self] }
+        set { self[MirrorLibrarySearchFocusedKey.self] = newValue }
+    }
     var mirrorCaptureOpen: MirrorCaptureOpenAction? {
         get { self[MirrorCaptureOpenFocusedKey.self] }
         set { self[MirrorCaptureOpenFocusedKey.self] = newValue }
@@ -200,6 +207,7 @@ extension FocusedValues {
 struct MirrorCommands: Commands {
     let model: AppModel
     @FocusedValue(\.mirrorCaptureOpen) private var openCapture
+    @FocusedValue(\.mirrorLibrarySearch) private var searchLibrary
     var body: some Commands {
         CommandGroup(after: .newItem) {
             Button("할 일 일단 넣기") { openCapture?.callAsFunction() }
@@ -207,7 +215,8 @@ struct MirrorCommands: Commands {
                 .disabled(openCapture == nil)
         }
         CommandGroup(after: .textEditing) {
-            Button("전체 작업 검색") { model.destination = .library; model.searchRequested = true }.keyboardShortcut("f", modifiers: .command)
+            Button("전체 작업 검색") { searchLibrary?.callAsFunction() }.keyboardShortcut("f", modifiers: .command)
+                .disabled(searchLibrary == nil)
         }
         CommandGroup(after: .undoRedo) {
             Button("미러의 직전 작업 되돌리기") { Task { await model.undo() } }

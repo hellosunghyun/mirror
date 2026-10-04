@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import Observation
 import UniformTypeIdentifiers
 import MirrorSystem
 
@@ -47,22 +46,14 @@ public final class MirrorShareViewController: NSViewController {
 private enum SharedValue: Sendable { case text(String), url(String) }
 private enum ShareLoadError: Error { case unsupported }
 
-@MainActor @Observable
+@MainActor
 private final class MirrorShareModel {
-    var title = ""
-    var note = ""
-    var sourceURL = ""
-    var message: String?
-    var isLoading = true
-    var isSaving = false
-    var didSave = false
+    let session = ShareCaptureSession()
     private let context: NSExtensionContext?
-    private let decisionKey = UUID().uuidString
     init(context: NSExtensionContext?) { self.context = context }
 
     func load() async {
-        defer { isLoading = false }
-        do {
+        await session.load {
             let items = context?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
             var text: [String] = [], links: [String] = []
             for item in items {
@@ -75,32 +66,24 @@ private final class MirrorShareModel {
                     }
                 }
             }
-            let raw = text.joined(separator: "\n")
-            note = ([raw] + links).filter { !$0.isEmpty }.joined(separator: "\n")
-            // 긴 원문을 자동으로 잘라내지 않는다. 메모에 보존하고 제목을 사용자에게 받는다.
-            title = raw.count <= 500 ? raw : ""
-            sourceURL = links.first ?? ""
-            if raw.isEmpty { title = sourceURL.count <= 500 ? sourceURL : "" }
-            if text.isEmpty && links.isEmpty { message = "공유된 텍스트나 URL을 읽을 수 없어요." }
-            if links.count > 1 { message = "여러 링크가 있어요. 저장할 링크 하나를 확인하세요. 원문을 자동으로 가져오지 않아요." }
-        } catch { message = "공유한 텍스트나 URL을 읽을 수 없어요. 입력을 확인하세요." }
+            return (text, links)
+        }
     }
 
     func save() async {
-        guard !isSaving, !didSave else { return }
-        isSaving = true; message = nil
-        defer { isSaving = false }
-        do {
+        let saved = await session.save { draft, decisionKey in
             let services = try await SystemCompositionRoot.open(role: .sharedExtension)
-            _ = try await services.capture(title: title, note: note.isEmpty ? nil : note,
-                                           sourceURL: sourceURL.isEmpty ? nil : sourceURL,
+            _ = try await services.capture(title: draft.title, note: draft.note.isEmpty ? nil : draft.note,
+                                           sourceURL: draft.sourceURL.isEmpty ? nil : draft.sourceURL,
                                            source: .share, key: decisionKey)
-            didSave = true; message = "저장했어요. 날짜는 아직 정하지 않았어요."
-            context?.completeRequest(returningItems: nil)
-        } catch { message = (error as? SystemServiceError)?.errorDescription ?? "저장하지 못했어요. 입력을 유지했으니 확인하고 다시 시도하세요." }
+        }
+        if saved { context?.completeRequest(returningItems: nil) }
     }
 
-    func cancel() { context?.cancelRequest(withError: NSError(domain: "Mirror.Share", code: NSUserCancelledError)) }
+    func cancel() {
+        guard session.cancel() else { return }
+        context?.cancelRequest(withError: NSError(domain: "Mirror.Share", code: NSUserCancelledError))
+    }
 
     private func read(_ provider: NSItemProvider, type: String) async throws -> SharedValue {
         try await withCheckedThrowingContinuation { continuation in
@@ -121,24 +104,31 @@ private final class MirrorShareModel {
 }
 
 private struct MirrorShareView: View {
-    @Bindable var model: MirrorShareModel
+    let model: MirrorShareModel
     var body: some View {
+        @Bindable var session = model.session
         VStack(alignment: .leading, spacing: 12) {
             Text("미러에 넣기").font(.title2.bold())
             Text("한 작업으로 저장해요. 제목만 필요하고 날짜는 나중에 정해도 돼요.").font(.caption)
-            if model.isLoading { ProgressView("공유한 내용 읽는 중…") }
-            TextField("제목 (500자 이내)", text: $model.title)
+            if session.isLoading { ProgressView("공유한 내용 읽는 중…") }
+            TextField("제목 (500자 이내)", text: $session.title)
                 .accessibilityLabel("할 일 제목")
+                .disabled(!session.canEdit)
             Text("공유한 원문과 메모").font(.caption)
-            TextEditor(text: $model.note).frame(minHeight: 100)
+            TextEditor(text: $session.note).frame(minHeight: 100)
                 .accessibilityLabel("공유한 원문과 메모")
-            TextField("원문 링크 (선택)", text: $model.sourceURL)
-            if let message = model.message { Text(message).font(.caption).accessibilityAddTraits(.updatesFrequently) }
+                .disabled(!session.canEdit)
+            TextField("원문 링크 (선택)", text: $session.sourceURL)
+                .disabled(!session.canEdit)
+            if let message = session.message { Text(message).font(.caption).accessibilityAddTraits(.updatesFrequently) }
             HStack {
                 Button("취소") { model.cancel() }
+                    .disabled(!session.canCancel)
                 Spacer()
-                Button(model.isSaving ? "저장 중…" : "한 작업으로 저장") { Task { await model.save() } }
-                    .disabled(model.isLoading || model.isSaving || model.didSave)
+                Button(session.isSaving ? "저장 중…" : session.needsSaveConfirmation ? "이전 저장 확인" : "한 작업으로 저장") {
+                    Task { await model.save() }
+                }
+                    .disabled(!session.canSave)
             }
         }.padding(20)
     }

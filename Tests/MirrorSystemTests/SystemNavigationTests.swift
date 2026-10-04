@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 import UserNotifications
 import CoreSpotlight
@@ -28,6 +29,82 @@ private func notificationEvent(_ route: MirrorRoute, request: String,
 
 @Suite("시스템 탐색과 복구 중 외부 노출")
 struct SystemNavigationTests {
+    @Test("상세·빠른 입력·저장 결과가 모두 끝난 경우에만 명시적 공간 변경을 허용한다")
+    func workspaceChangeRequiresAllEditingAndWritesToFinish() {
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: false, saving: false) == nil)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: true, capture: false, projectionPending: false, saving: false) == .detailEditing)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: true, projectionPending: false, saving: false) == .capture)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: true, saving: false) == .projectionPending)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: false, saving: true) == .saving)
+    }
+
+    @Test("다른 창의 입력 하나가 끝나도 남은 초안과 미확인 저장은 공간 변경을 계속 막는다")
+    func workspaceChangeRemainsBlockedUntilEveryReasonClears() {
+        #expect(WorkspaceChangeBlocker.current(detailEditing: true, capture: true, projectionPending: true, saving: true) == .detailEditing)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: true, projectionPending: true, saving: true) == .capture)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: true, saving: true) == .projectionPending)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: true, saving: false) == .projectionPending)
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: false, saving: false) == nil)
+    }
+
+    @Test("서로 다른 일정 화면의 조회는 각 날짜의 약속을 유지한다")
+    @MainActor
+    func calendarDisplaysKeepIndependentRangesAndEvents() {
+        let first = CalendarDisplayState(), second = CalendarDisplayState()
+        let tomorrow = navigationInstant.addingTimeInterval(86_400)
+        let firstEvent = CalendarEventSummary(id: "first", calendarID: "calendar", title: "첫 날짜 약속",
+            start: navigationInstant, end: navigationInstant.addingTimeInterval(3_600), isAllDay: false)
+        let secondEvent = CalendarEventSummary(id: "second", calendarID: "calendar", title: "다음 날짜 약속",
+            start: tomorrow, end: tomorrow.addingTimeInterval(3_600), isAllDay: false)
+        let firstRequest = first.begin(from: navigationInstant, to: tomorrow)
+        let secondRequest = second.begin(from: tomorrow, to: tomorrow.addingTimeInterval(86_400))
+        #expect(!first.complete(secondRequest, events: [secondEvent]))
+        #expect(second.complete(secondRequest, events: [secondEvent]))
+        #expect(first.complete(firstRequest, events: [firstEvent]))
+        #expect(first.events == [firstEvent])
+        #expect(second.events == [secondEvent])
+        #expect(first.range?.start == navigationInstant)
+        #expect(second.range?.start == tomorrow)
+    }
+
+    @Test("같은 화면의 늦은 일정 응답과 오류는 새 날짜를 덮지 않는다")
+    @MainActor
+    func calendarDisplayRejectsOldRangeCompletion() {
+        let display = CalendarDisplayState()
+        let tomorrow = navigationInstant.addingTimeInterval(86_400)
+        let oldRequest = display.begin(from: navigationInstant, to: tomorrow)
+        let currentRequest = display.begin(from: tomorrow, to: tomorrow.addingTimeInterval(86_400))
+        let event = CalendarEventSummary(id: "current", calendarID: "calendar", title: "현재 날짜 약속",
+            start: tomorrow, end: tomorrow.addingTimeInterval(3_600), isAllDay: false)
+        #expect(display.complete(currentRequest, events: [event]))
+        #expect(!display.complete(oldRequest, events: [], problem: "이전 조회 실패"))
+        #expect(display.events == [event])
+        #expect(display.problem == nil)
+        #expect(display.range?.start == tomorrow)
+    }
+
+    @Test("캘린더 읽기를 중지하면 표시와 대기 응답을 폐기하고 탐색 범위는 유지한다")
+    @MainActor
+    func calendarDisplayInvalidationRejectsPendingRead() {
+        let display = CalendarDisplayState()
+        let end = navigationInstant.addingTimeInterval(86_400)
+        let event = CalendarEventSummary(id: "event", calendarID: "calendar", title: "숨길 약속",
+            start: navigationInstant, end: navigationInstant.addingTimeInterval(3_600), isAllDay: false)
+        let completed = display.begin(from: navigationInstant, to: end)
+        #expect(display.complete(completed, events: [event]))
+        display.invalidate()
+        #expect(display.events.isEmpty)
+        #expect(!display.complete(completed, events: [event]))
+        #expect(display.range == DateInterval(start: navigationInstant, end: end))
+        let pending = display.begin(from: navigationInstant, to: end)
+        display.invalidate()
+        #expect(!display.complete(pending, events: [event]))
+        #expect(display.events.isEmpty)
+        let reopened = display.begin(from: navigationInstant, to: end)
+        #expect(display.complete(reopened, events: [event]))
+        #expect(display.events == [event])
+    }
+
     @Test("한 입력 owner가 끝나도 다른 owner의 편집은 계속 단축키를 차단한다")
     func textEditingOneOwnerEndsWithoutClearingAnother() {
         let first = UUID(), second = UUID()
@@ -490,6 +567,178 @@ struct SystemNavigationTests {
         #expect(unset.deadlineKind == .notSet && unset.deadlineDay == nil && unset.deadlineInstant == nil && unset.deadlineTimeZoneID == nil)
     }
 
+    @Test("마감 알림을 꺼도 저장된 작업별 시각은 재시작과 재활성화 뒤 유지된다")
+    func pausedDeadlinePreferencesRoundTrip() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorDeadlinePreference-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let configuration = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
+        let store = try await MirrorStore(configuration: configuration)
+        let context = try await store.currentContext(at: navigationInstant)
+        let id = UUID()
+        let captured = await store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .capture(taskID: id, content: try TaskContent(title: "마감 설정 유지"))), at: navigationInstant)
+        #expect(captured.state == .locallyCommitted)
+        let task = try #require(try await store.taskProjection(id))
+        let deadline = Deadline.day(localDate: try context.planningDay.addingDays(1), timeZoneID: context.timeZoneID)
+        let saved = await store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .setDeadline(taskID: id, deadline: deadline,
+                expectedDeadline: try #require(task.versions[.deadline]?.headsDigest))), at: navigationInstant)
+        #expect(saved.state == .locallyCommitted)
+        let selected = DeadlineNotificationPreference(taskID: id, fireAt: navigationInstant.addingTimeInterval(3_600))
+        let disabled = SystemPreferences(notificationsOnThisDevice: true, deadlineNotificationsEnabled: false,
+                                         deadlineNotifications: [selected])
+        try await store.setLocalValue(JSONEncoder().encode(disabled), forKey: "system-preferences-v1")
+        try await store.suspend()
+        let reopened = try await MirrorStore(configuration: configuration)
+        var restored = try await SystemPreferenceRecoveryPolicy.load(store: reopened)
+        #expect(!restored.deadlineNotificationsEnabled)
+        #expect(restored.deadlineNotifications == [selected])
+        let snapshot = try await reopened.snapshot()
+        #expect(try SurfaceReconciliationPlan.notifications(snapshot: snapshot, preferences: restored, at: navigationInstant).requests.isEmpty)
+        restored.deadlineNotificationsEnabled = true
+        let plan = try SurfaceReconciliationPlan.notifications(snapshot: snapshot, preferences: restored, at: navigationInstant)
+        #expect(plan.requests.count == 1)
+        #expect(plan.requests.first?.taskID == id && plan.requests.first?.fireAt == selected.fireAt)
+        try await reopened.suspend()
+    }
+
+    @Test("마감 알림 허용은 빈 목록에서도 유지하고 이전 설정 형식의 의미도 보존한다")
+    func deadlinePermissionAndLegacyPreferences() throws {
+        let enabled = SystemPreferences(notificationsOnThisDevice: true, deadlineNotificationsEnabled: true)
+        let restored = try JSONDecoder().decode(SystemPreferences.self, from: JSONEncoder().encode(enabled))
+        #expect(restored.deadlineNotificationsEnabled && restored.deadlineNotifications.isEmpty)
+        for permitsNotifications in [false, true] {
+            let old = SystemPreferences(notificationsOnThisDevice: permitsNotifications,
+                deadlineNotifications: [.init(taskID: UUID(), fireAt: navigationInstant)])
+            var object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as? [String: Any])
+            object.removeValue(forKey: "deadlineNotificationsEnabled")
+            let decoded = try JSONDecoder().decode(SystemPreferences.self, from: JSONSerialization.data(withJSONObject: object))
+            #expect(decoded.deadlineNotificationsEnabled == permitsNotifications)
+            #expect(decoded.deadlineNotifications == old.deadlineNotifications)
+        }
+    }
+
+    @Test("이전 시스템 후처리가 gate를 보유하면 숨김 설정은 저장 성공으로 위장하지 않는다", .timeLimit(.minutes(1)))
+    func privacyPreferenceWriteUsesReconciliationGate() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorSurfaceGate-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try await MirrorStore(configuration: .init(directory: directory, deviceID: UUID().uuidString))
+        let services = SystemServices(store: store, directory: directory, workspaceEpoch: "local-v1")
+        let publicPreferences = SystemPreferences(hideExternalTitles: false, spotlightEnabled: true, notificationsOnThisDevice: true)
+        try await services.savePreferences(publicPreferences)
+        let descriptor = Darwin.open(directory.appendingPathComponent("SystemSurface.lock").path,
+                                     O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        #expect(descriptor >= 0)
+        guard descriptor >= 0 else { return }
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        try #require(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        let hidden = SystemPreferences(hideExternalTitles: true, spotlightEnabled: false, notificationsOnThisDevice: true)
+        await #expect(throws: StoreError.busy) { try await services.savePreferences(hidden) }
+        #expect(try await services.preferences() == publicPreferences)
+        let report = await services.reconcileExternalSurfaces(at: navigationInstant)
+        #expect(report.failures == [.busy])
+        let surfaces = await services.surfaces
+        await #expect(throws: StoreError.busy) { _ = try await surfaces.clearExternalSurfaces() }
+        try #require(flock(descriptor, LOCK_UN) == 0)
+        // gate를 얻은 뒤에만 설정을 저장한다. OS API 없는 SwiftPM host의 정리 실패도 그대로 보고한다.
+        if SystemAppleRuntimeHost.isApplicationOrExtension {
+            try await services.savePreferences(hidden)
+        } else {
+            await #expect(throws: SpotlightServiceError.configurationRequired) { try await services.savePreferences(hidden) }
+        }
+        #expect(try await services.preferences() == hidden)
+        try await store.suspend()
+    }
+
+    @Test("숨김 적용이 busy여도 재시작한 같은 공간은 미완료 선택을 복원하고 다시 적용한다", .timeLimit(.minutes(1)))
+    @MainActor
+    func pendingPrivacySurvivesBusyAndReopen() async throws {
+        let suite = "MirrorPendingPrivacy-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
+        let store = try await MirrorStore(configuration: config)
+        let services = SystemServices(store: store, directory: directory, workspaceEpoch: config.workspaceEpoch)
+        let old = SystemPreferences(hideExternalTitles: false, spotlightEnabled: true, notificationsOnThisDevice: true)
+        try await services.savePreferences(old)
+        let hidden = SystemPreferences(hideExternalTitles: true, spotlightEnabled: false, notificationsOnThisDevice: false)
+        let journal = SystemPreferenceUpdateJournal(defaults: defaults)
+        let submitted = try journal.record(hidden, for: config)
+        let descriptor = Darwin.open(directory.appendingPathComponent("SystemSurface.lock").path,
+                                     O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        try #require(descriptor >= 0)
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        try #require(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        await #expect(throws: StoreError.busy) { try await services.savePreferences(submitted.preferences) }
+        #expect(try await services.preferences() == old)
+        try await store.suspend()
+
+        let reopened = try await MirrorStore(configuration: config)
+        let restarted = SystemPreferenceUpdateJournal(defaults: try #require(UserDefaults(suiteName: suite)))
+        let pending = try #require(try restarted.pending(for: config))
+        #expect(pending.id == submitted.id && pending.preferences == hidden)
+        let recoveredServices = SystemServices(store: reopened, directory: directory, workspaceEpoch: config.workspaceEpoch)
+        #expect(try await recoveredServices.preferences() == old)
+        try #require(flock(descriptor, LOCK_UN) == 0)
+        if SystemAppleRuntimeHost.isApplicationOrExtension {
+            try await recoveredServices.savePreferences(pending.preferences)
+        } else {
+            await #expect(throws: SpotlightServiceError.configurationRequired) {
+                try await recoveredServices.savePreferences(pending.preferences)
+            }
+        }
+        #expect(try await recoveredServices.preferences() == hidden)
+        let report = await recoveredServices.reconcileExternalSurfaces(at: navigationInstant)
+        try restarted.acknowledge(pending, after: report)
+        #expect(try restarted.pending(for: config) == (report.failures.isEmpty ? nil : pending))
+        try await reopened.suspend()
+    }
+
+    @Test("미완료 설정은 다른 공간에 적용되지 않고 오래된 완료와 후처리 실패도 최신 선택을 지우지 않는다")
+    @MainActor
+    func pendingPrivacyIsScopedAndAcknowledgesOnlyItsOwnSuccess() throws {
+        let suite = "MirrorPendingScope-\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let journal = SystemPreferenceUpdateJournal(defaults: defaults)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let config = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
+        let hidden = SystemPreferences()
+        let first = try journal.record(hidden, for: config)
+        let otherConfigurations = [
+            StoreConfiguration(directory: directory.appendingPathComponent("other"), deviceID: config.deviceID),
+            StoreConfiguration(directory: directory, workspaceKey: "other", deviceID: config.deviceID),
+            StoreConfiguration(directory: directory, workspaceEpoch: "other", deviceID: config.deviceID),
+            StoreConfiguration(directory: directory, deviceID: config.deviceID,
+                cloudSync: .init(containerIdentifier: "test-container", accountScope: "test-account"))
+        ]
+        for other in otherConfigurations { #expect(try journal.pending(for: other) == nil) }
+        let foreign = try journal.record(hidden, for: otherConfigurations[0])
+        let cloud = otherConfigurations[3]
+        try journal.record(hidden, for: cloud)
+        let anotherAccount = StoreConfiguration(directory: directory, deviceID: config.deviceID,
+            cloudSync: .init(containerIdentifier: "test-container", accountScope: "another-account"))
+        let anotherContainer = StoreConfiguration(directory: directory, deviceID: config.deviceID,
+            cloudSync: .init(containerIdentifier: "another-container", accountScope: "test-account"))
+        #expect(try journal.pending(for: anotherAccount) == nil)
+        #expect(try journal.pending(for: anotherContainer) == nil)
+        let newest = try journal.record(SystemPreferences(reviewNotification: .init(enabled: true)), for: config)
+        let success = SurfaceReconciliationReport(failures: [], omittedNotificationCount: 0)
+        try journal.acknowledge(first, after: success)
+        #expect(try journal.pending(for: config)?.id == newest.id)
+        try journal.acknowledge(newest, after: .init(failures: [.spotlight], omittedNotificationCount: 0))
+        #expect(try journal.pending(for: config)?.id == newest.id)
+        try journal.acknowledge(newest, after: success)
+        #expect(try journal.pending(for: config) == nil)
+        #expect(try journal.pending(for: otherConfigurations[0])?.id == foreign.id)
+        try journal.discard(for: config)
+        #expect(try journal.pending(for: otherConfigurations[0])?.id == foreign.id)
+    }
+
     @Test("실제 SQLite 복구 marker는 모든 외부 설정을 닫고 확인 후에도 재동의를 요구한다")
     func recoveryPrivacyAndAcknowledgement() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorRecoveryPrivacy-\(UUID().uuidString)", isDirectory: true)
@@ -506,6 +755,7 @@ struct SystemNavigationTests {
         #expect(try await services.projectionRecoveryNotice() == notice)
         let safe = try await services.preferences()
         #expect(safe.hideExternalTitles && !safe.spotlightEnabled && !safe.notificationsOnThisDevice)
+        #expect(!safe.deadlineNotificationsEnabled)
         #expect(safe.selectedCalendarIDs.isEmpty && !safe.reviewNotification.enabled && safe.deadlineNotifications.isEmpty)
         #expect(safe.planningTimeZoneID == optedIn.planningTimeZoneID && safe.policyRevision == optedIn.policyRevision)
         #expect(try await SystemPreferenceRecoveryPolicy.load(store: store) == safe)
@@ -547,5 +797,220 @@ struct SystemNavigationTests {
         #expect(state.card?.taskID == taskID && state.card?.title == "할 일 1개")
         #expect(try await store.localValue(forKey: "projection-recovery-v1") != nil)
         _ = try await store.exportAndSuspend(exportedAt: navigationInstant)
+    }
+}
+
+@MainActor private final class ShareOperationGate<Value: Sendable> {
+    private var operation: CheckedContinuation<Value, any Error>?
+    private var observer: CheckedContinuation<Void, Never>?
+
+    func suspend() async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            operation = continuation
+            observer?.resume()
+            observer = nil
+        }
+    }
+
+    func waitUntilSuspended() async {
+        guard operation == nil else { return }
+        await withCheckedContinuation { observer = $0 }
+    }
+
+    func resolve(_ result: Result<Value, any Error>) {
+        operation?.resume(with: result)
+        operation = nil
+    }
+}
+
+@MainActor @Suite("공유 확장 지연 입력과 저장", .timeLimit(.minutes(1)))
+struct ShareCaptureSessionTests {
+    @Test("지연된 공유 읽기 중 편집과 저장을 막고 긴 원문과 모든 URL을 보존한다")
+    func delayedLoadLocksEditingAndPreservesOriginal() async {
+        let session = ShareCaptureSession()
+        let gate = ShareOperationGate<(text: [String], links: [String])>()
+        let loading = Task { await session.load { try await gate.suspend() } }
+        await gate.waitUntilSuspended()
+        #expect(session.isLoading && !session.canEdit && !session.canSave && session.canCancel)
+        session.title = "읽는 중 입력"
+        session.note = "읽는 중 메모"
+        session.sourceURL = "https://example.com/edited"
+        #expect(session.title.isEmpty && session.note.isEmpty && session.sourceURL.isEmpty)
+        var captures = 0, extraReads = 0
+        let saved = await session.save { _, _ in captures += 1 }
+        await session.load { extraReads += 1; return (["덮어쓰면 안 되는 입력"], []) }
+        #expect(!saved && captures == 0 && extraReads == 0)
+        let original = String(repeating: "한👩🏽‍💻", count: 251) + "\n끝"
+        let links = ["https://example.com/first", "https://example.com/second"]
+        gate.resolve(.success(([original], links)))
+        await loading.value
+        #expect(!session.isLoading && session.canEdit && session.canSave)
+        #expect(session.title.isEmpty)
+        #expect(session.note == original + "\n" + links.joined(separator: "\n"))
+        #expect(session.sourceURL == links[0])
+        #expect(session.message == "여러 링크가 있어요. 저장할 링크 하나를 확인하세요. 원문을 자동으로 가져오지 않아요.")
+        session.title = "사용자가 정한 제목"
+        #expect(session.title == "사용자가 정한 제목")
+    }
+
+    @Test("읽기 중 취소한 확장은 늦은 provider 성공과 실패를 반영하거나 저장하지 않는다", arguments: [false, true])
+    func cancelledLoadIgnoresLateOutcome(fails: Bool) async {
+        let session = ShareCaptureSession()
+        let gate = ShareOperationGate<(text: [String], links: [String])>()
+        let loading = Task { await session.load { try await gate.suspend() } }
+        await gate.waitUntilSuspended()
+        let cancelled = session.cancel()
+        let cancelledAgain = session.cancel()
+        #expect(cancelled)
+        #expect(!cancelledAgain)
+        if fails { gate.resolve(.failure(SystemServiceError.unavailable)) }
+        else { gate.resolve(.success((["늦게 읽은 원문"], ["https://example.com/source"]))) }
+        await loading.value
+        var captures = 0
+        let saved = await session.save { _, _ in captures += 1 }
+        #expect(!saved && captures == 0)
+        #expect(session.title.isEmpty && session.note.isEmpty && session.sourceURL.isEmpty && session.message == nil)
+        #expect(!session.isLoading && !session.canEdit && !session.canCancel && !session.didSave)
+    }
+
+    @Test("저장 결과를 기다리는 동안 세 필드와 취소를 잠그고 중복 완료를 허용하지 않는다")
+    func delayedSaveKeepsSubmittedDraftAndCompletesOnce() async {
+        let session = ShareCaptureSession()
+        await session.load { (["공유 원문"], ["https://example.com/source"]) }
+        session.title = "저장할 제목"
+        session.note = "공유 원문\n추가한 메모"
+        session.sourceURL = "https://example.com/selected"
+        let expected = CaptureDraftSnapshot(title: "저장할 제목", note: "공유 원문\n추가한 메모",
+                                            sourceURL: "https://example.com/selected")
+        let gate = ShareOperationGate<Void>()
+        var submitted: [CaptureDraftSnapshot] = []
+        var keys: [String] = []
+        let saving = Task {
+            await session.save { draft, key in
+                submitted.append(draft); keys.append(key)
+                try await gate.suspend()
+            }
+        }
+        await gate.waitUntilSuspended()
+        #expect(session.isSaving && !session.didSave && !session.canEdit && !session.canSave && !session.canCancel)
+        session.title = "저장 중 새 제목"
+        session.note = "저장 중 새 메모"
+        session.sourceURL = "https://example.com/new"
+        #expect(session.title == expected.title && session.note == expected.note && session.sourceURL == expected.sourceURL)
+        let cancelledWhileSaving = session.cancel()
+        #expect(!cancelledWhileSaving)
+        let duplicate = await session.save { draft, key in submitted.append(draft); keys.append(key) }
+        #expect(!duplicate && submitted == [expected] && keys.count == 1)
+        gate.resolve(.success(()))
+        let saved = await saving.value
+        #expect(saved && session.didSave && !session.isSaving && !session.canEdit && !session.canCancel)
+        let repeated = await session.save { draft, key in submitted.append(draft); keys.append(key) }
+        #expect(!repeated && submitted == [expected] && keys.count == 1)
+    }
+
+    @Test("지연된 저장 실패는 입력과 재시도 멱등 키를 보존하고 편집·취소를 다시 허용한다")
+    func failedSaveKeepsDraftAndRetryKey() async {
+        let session = ShareCaptureSession()
+        await session.load { (["원문\n둘째 줄"], ["https://example.com/source"]) }
+        session.title = "사용자가 수정한 제목"
+        let expected = CaptureDraftSnapshot(title: session.title, note: session.note, sourceURL: session.sourceURL)
+        let gate = ShareOperationGate<Void>()
+        var submitted: [CaptureDraftSnapshot] = []
+        var keys: [String] = []
+        let saving = Task {
+            await session.save { draft, key in
+                submitted.append(draft); keys.append(key)
+                try await gate.suspend()
+            }
+        }
+        await gate.waitUntilSuspended()
+        gate.resolve(.failure(SystemServiceError.unavailable))
+        let failed = await saving.value
+        #expect(!failed && !session.didSave && !session.isSaving && session.canEdit && session.canCancel)
+        #expect(session.title == expected.title && session.note == expected.note && session.sourceURL == expected.sourceURL)
+        #expect(session.message == SystemServiceError.unavailable.errorDescription)
+        let retried = await session.save { draft, key in submitted.append(draft); keys.append(key) }
+        #expect(retried && session.didSave)
+        #expect(submitted == [expected, expected])
+        #expect(keys.count == 2 && keys[0] == keys[1] && !keys[0].isEmpty)
+    }
+
+    @Test("실제 저장 후 응답 실패와 편집이 겹쳐도 이전 입력을 중복 저장하지 않고 수정본을 별도 명시 저장한다")
+    func committedSaveRetryPreservesEditedDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorShareRetry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try await MirrorStore(configuration: .init(directory: directory, deviceID: UUID().uuidString))
+        let services = SystemServices(store: store, directory: directory, workspaceEpoch: "local-v1")
+        let session = ShareCaptureSession()
+        await session.load { (["처음 공유한 원문"], ["https://example.com/first"]) }
+        let original = CaptureDraftSnapshot(title: session.title, note: session.note, sourceURL: session.sourceURL)
+        var submissions: [CaptureDraftSnapshot] = []
+        var keys: [String] = []
+        let first = await session.save { draft, key in
+            submissions.append(draft); keys.append(key)
+            _ = try await services.capture(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, source: .share, key: key)
+            // 원본 명령은 성공했지만 호출자는 결과를 받지 못한 경계다.
+            throw SystemServiceError.unavailable
+        }
+        #expect(!first && session.needsSaveConfirmation && !session.didSave)
+        let initiallySaved = try await services.tasks()
+        #expect(initiallySaved.map(\.title) == [original.title])
+        session.title = "실패 안내 뒤 편집한 제목"
+        session.note = "실패 안내 뒤 편집한 메모"
+        session.sourceURL = "https://example.com/edited"
+        let edited = CaptureDraftSnapshot(title: session.title, note: session.note, sourceURL: session.sourceURL)
+        let confirmed = await session.save { draft, key in
+            submissions.append(draft); keys.append(key)
+            _ = try await services.capture(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, source: .share, key: key)
+        }
+        #expect(!confirmed && !session.didSave && session.canEdit && session.canSave && !session.needsSaveConfirmation)
+        #expect(session.title == edited.title && session.note == edited.note && session.sourceURL == edited.sourceURL)
+        #expect(submissions == [original, original])
+        #expect(keys.count == 2 && keys[0] == keys[1])
+        let confirmedTasks = try await services.tasks()
+        #expect(confirmedTasks.count == 1 && confirmedTasks.first?.taskID == initiallySaved.first?.taskID)
+        #expect(session.message == "이전 입력을 저장했어요. 변경한 입력은 아직 저장하지 않았어요. 확인하고 저장하세요.")
+        let savedEditedDraft = await session.save { draft, key in
+            submissions.append(draft); keys.append(key)
+            _ = try await services.capture(title: draft.title, note: draft.note, sourceURL: draft.sourceURL, source: .share, key: key)
+        }
+        #expect(savedEditedDraft && session.didSave)
+        #expect(submissions == [original, original, edited])
+        #expect(keys.count == 3 && keys[0] == keys[1] && keys[1] != keys[2])
+        let savedTasks = try await services.tasks()
+        #expect(savedTasks.count == 2 && Set(savedTasks.map(\.title)) == Set([original.title, edited.title]))
+        let editedTask = try #require(savedTasks.first { $0.title == edited.title })
+        #expect(editedTask.content.note == edited.note && editedTask.content.sourceURL == edited.sourceURL)
+        _ = try await store.exportAndSuspend(exportedAt: navigationInstant)
+    }
+
+    @Test("명령 실행 전 입력 검증 실패는 잘못된 원문 대신 사용자가 수정한 입력을 저장한다")
+    func invalidInputAllowsCorrectedDraft() async {
+        let session = ShareCaptureSession()
+        await session.load { ([" "], []) }
+        var submissions: [CaptureDraftSnapshot] = []
+        let first = await session.save { draft, _ in
+            submissions.append(draft)
+            throw SystemServiceError.invalidInput
+        }
+        #expect(!first && session.canEdit && !session.needsSaveConfirmation)
+        session.title = "바로잡은 제목"
+        let corrected = await session.save { draft, _ in submissions.append(draft) }
+        #expect(corrected && session.didSave)
+        #expect(submissions.map(\.title) == [" ", "바로잡은 제목"])
+    }
+
+    @Test("공유 읽기 실패 뒤 수동 입력한 세 필드는 그대로 저장 요청에 전달한다")
+    func loadFailureAllowsManualEntry() async {
+        let session = ShareCaptureSession()
+        await session.load { throw SystemServiceError.unavailable }
+        #expect(!session.isLoading && session.canEdit && session.canSave && session.canCancel && session.message != nil)
+        session.title = "수동 제목"
+        session.note = "수동 메모"
+        session.sourceURL = "https://example.com/manual"
+        var submitted: CaptureDraftSnapshot?
+        let saved = await session.save { draft, _ in submitted = draft }
+        #expect(saved)
+        #expect(submitted == CaptureDraftSnapshot(title: "수동 제목", note: "수동 메모", sourceURL: "https://example.com/manual"))
     }
 }

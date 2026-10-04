@@ -29,6 +29,13 @@ final class MirrorBatchUITests: XCTestCase {
         let selected = Array(originals.prefix(2))
         let control = originals[2]
         try beginSelection(selected, control: control, in: app)
+        try selectDestination("오늘", identifier: "destination.today", in: app)
+        try selectDestination("보관함", identifier: "destination.library", in: app)
+        XCTAssertEqual(textValue(try unique(app.textFields.matching(identifier: "library.search"))), "UI batch two")
+        try verifyRows(selected, plan: unassigned, selection: "선택됨", in: app)
+        try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
+        XCTAssertEqual(try reachableBatchFooter(in: app).label, "선택한 2개 날짜 배치",
+                       "같은 창의 화면을 다시 구성해도 일괄 대상을 유지한다.")
         try verifyPicker(selected, in: app)
         try activate("plan.cancel", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
@@ -188,12 +195,7 @@ final class MirrorBatchUITests: XCTestCase {
     #endif
 
     private func showLibrary(search: String, in app: XCUIApplication) throws {
-        let tabs = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", "보관함"))
-        if tabs.firstMatch.exists {
-            let tab = try unique(tabs)
-            try assertReachable(tab, in: app)
-            performActivation(tab)
-        } else { try activate("destination.library", in: app) }
+        try selectDestination("보관함", identifier: "destination.library", in: app)
         let field = try reachable(app.textFields.matching(identifier: "library.search"), surface: .library,
                                   missingTowardTop: true, in: app)
         XCTAssertTrue(textValue(field).isEmpty)
@@ -209,6 +211,15 @@ final class MirrorBatchUITests: XCTestCase {
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)
         try requireCompleted(hidden)
         #endif
+    }
+
+    private func selectDestination(_ title: String, identifier: String, in app: XCUIApplication) throws {
+        let tabs = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", title))
+        if tabs.firstMatch.exists {
+            let tab = try unique(tabs)
+            try assertReachable(tab, in: app)
+            performActivation(tab)
+        } else { try activate(identifier, in: app) }
     }
 
     private func originalTasks(_ titles: [String], in app: XCUIApplication) throws -> [OriginalTask] {

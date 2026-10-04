@@ -32,7 +32,8 @@ enum SurfaceReconciliationPlan {
         }
         return try NotificationPlanner.plan(context: context, workspaceEpoch: snapshot.workspaceEpoch, now: now,
             review: preferences.reviewNotification, closedDays: closedDays,
-            tasks: snapshot.tasks, deadlines: preferences.deadlineNotifications)
+            tasks: snapshot.tasks,
+            deadlines: preferences.deadlineNotificationsEnabled ? preferences.deadlineNotifications : [])
     }
 }
 
@@ -79,6 +80,46 @@ public actor SurfaceReconciler {
                                           hideTitles: preferences.hideExternalTitles)
         } catch { failures.insert(.spotlight) }
         return .init(failures: failures, omittedNotificationCount: omitted)
+    }
+
+    /// 동의 철회와 이전 설정의 OS 후처리를 같은 프로세스 간 gate로 순서화한다.
+    /// gate 획득 실패는 설정 저장 성공으로 처리하지 않는다.
+    public func savePreferences(_ preferences: SystemPreferences) async throws {
+        let descriptor = try await acquire()
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        try await SystemStoreBoundary.validate(store)
+        let recoveryPending = try await store.localValue(forKey: SystemPreferenceRecoveryPolicy.markerKey) != nil
+        let effective = recoveryPending ? SystemPreferenceRecoveryPolicy.failClosed(preferences) : preferences
+        try await store.setLocalValue(JSONEncoder().encode(effective), forKey: "system-preferences-v1")
+        var cleanupError: (any Error)?
+        if !effective.spotlightEnabled || effective.hideExternalTitles {
+            do { try await spotlight.removeAll() } catch { cleanupError = error }
+        }
+        if !effective.notificationsOnThisDevice {
+            do { try await notifications.clearAll() } catch { if cleanupError == nil { cleanupError = error } }
+        }
+        if let cleanupError { throw cleanupError }
+    }
+
+    public func acknowledgeProjectionRecovery(_ notice: ProjectionRecoveryNotice) async throws {
+        let descriptor = try await acquire()
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        guard let current = try await SystemPreferenceRecoveryPolicy.notice(store: store), current == notice else {
+            throw SystemServiceError.invalidInput
+        }
+        let safe = SystemPreferenceRecoveryPolicy.failClosed(try await SystemPreferenceRecoveryPolicy.load(store: store))
+        try await store.setLocalValue(JSONEncoder().encode(safe), forKey: "system-preferences-v1")
+        try await store.setLocalValue(nil, forKey: SystemPreferenceRecoveryPolicy.markerKey)
+    }
+
+    /// 원본을 이미 닫은 뒤에도, 앞서 시작한 후처리가 끝난 다음 OS 표시를 지운다.
+    public func clearExternalSurfaces() async throws -> Set<LocalSurfaceCleanupFailure> {
+        let descriptor = try await acquire()
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        var failures: Set<LocalSurfaceCleanupFailure> = []
+        do { try await spotlight.removeAll() } catch { failures.insert(.spotlight) }
+        do { try await notifications.clearAll() } catch { failures.insert(.notifications) }
+        return failures
     }
 
     private func acquire() async throws -> Int32 {
