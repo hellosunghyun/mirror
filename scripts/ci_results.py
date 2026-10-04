@@ -59,6 +59,12 @@ UI_QUERY_FAILURE_PREFIXES = (
     (r'^Application is not running(?:\s|[.:]|$)', 'applicationNotRunning'),
     (r'^Unhandled XCTest exception(?:\s|[.:]|$)', 'unhandledXCTestException'),
 )
+UI_QUERY_FAILURE_DETAILS = (
+    (r'Failed to get matching snapshots: Timed out while evaluating UI query\.',
+     'uiQueryEvaluationTimeout'),
+    (r'Failed to get matching snapshots: Unable to perform work on main run loop, '
+     r'process main thread busy for [0-9]+\.[0-9]+s', 'processMainThreadBusy'),
+)
 UI_HISTORY_XCTFAIL_REASON_PREFIXES = (
     ('이력 탐색 중 앱이 전경에서 실행되지 않는다', 'historyApplicationNotForeground'),
     ('이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다', 'historyScrollOwnerNotUnique'),
@@ -646,6 +652,11 @@ def report_ui_first_failure(lines):
                                if re.match(pattern, payload)), None)
                 if reason is not None:
                     unclassified_failure['queryFailureReason'] = reason
+                    # 검증된 SDK 문장 전체만 받는다. 인용값·시간·뒤쪽 원문은 분류하거나 출력하지 않는다.
+                    detail = next((detail for pattern, detail in UI_QUERY_FAILURE_DETAILS
+                                   if re.fullmatch(pattern, payload)), None)
+                    if detail is not None:
+                        unclassified_failure['queryFailureDetail'] = detail
             continue
         if first_failure is None:
             first_failure = {'scope': 'stdoutOnly', 'method': case[1],

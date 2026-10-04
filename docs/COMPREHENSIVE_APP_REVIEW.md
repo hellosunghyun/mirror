@@ -40,7 +40,13 @@
 
 동일 소스의 [기본 실행 106](https://github.com/hellosunghyun/mirror/actions/runs/37193375591)에서는 SwiftPM 240개 실행 중 위젯 동시 결정 사례가 `busy`로 실패했다. 앞선 전부 통과 기록으로 이 재현을 덮지 않는다. 같은 프로세스의 두 요청이 전체 저장·표시 갱신 잠금 안에서 250ms 안에 끝나야 하던 경쟁을 수정하고 기존 동시 결정 회귀의 기대값·시간 제한을 유지한다.
 
-`ecebd93`의 [대량 데이터 실행](https://github.com/hellosunghyun/mirror/actions/runs/37193708282)은 10,000개 작업·100,000개 초기 기록의 archive 왕복과 재가져오기 중복 보존에 성공했다. 그러나 명령 p95는 636.98ms로 500ms 목표를 넘었고, snapshot p95는 125.87ms, export p95는 28,342.98ms였다. workflow 성공을 속도 목표 통과로 해석하지 않는다. 이전 측정의 명령 p95 392.14ms와 SDK·가상 머신 사양은 같지만 부하 계측이 없어 차이의 원인을 단정하지 않는다. 비고유 인덱스의 실제 설치·호환성·속도는 새 Actions 결과로 판단하고, CloudKit 계정 및 실제 기기 Q-086 수용은 별도로 유지한다.
+`ecebd93`의 [대량 데이터 실행](https://github.com/hellosunghyun/mirror/actions/runs/37193708282)은 10,000개 작업·100,000개 초기 기록의 archive 왕복과 재가져오기 중복 보존에 성공했지만 명령 p95 636.98ms로 500ms 목표를 넘었다. 인덱스를 적용한 `6cb236d`의 [후속 실행](https://github.com/hellosunghyun/mirror/actions/runs/37195584651)은 같은 fixture·측정 코드에서 명령 p95 207.70ms로 러너 목표를 충족했다. snapshot p95는 125.87→88.41ms, export p95는 28,342.98→15,278.94ms였다.
+
+후속 실행의 첫 명령은 1,263.04ms로 20개 모두 500ms를 충족한 것은 아니다. 20개 명령 모두 locallyCommitted, 최종 원본 100,020개와 232,052,338bytes archive의 원문·상태·정책 왕복이 일치했고 재가져오기는 inserted 0 / duplicates 100,020이다. `748672d`까지 Probe·Domain·Data·Package·측정 스크립트는 동일하다. 다른 러너 인스턴스의 단일 측정이므로 일반적인 속도 보장이나 최신 UI·위젯 수용으로 확대하지 않는다. 이전 파일의 물리 인덱스 설치·호환 회귀, CloudKit 계정과 실제 기기 Q-086은 별도 검증이다.
+
+`ecebd93` 기본 실행 106의 Mac 결과 artifact를 SHA-256으로 검증하고 실제 ui.log를 읽었다. 확인한 다섯 실패 기록 중 세 건은 설정·입력 창을 연 뒤 `Timed out while evaluating UI query.`, 두 건은 새 사례의 초기 `today.list` 조회에서 대상 프로세스 main-thread busy였다. 모달 사례는 닫기 조회 전에 idle 대기부터 길어져 버튼 ID만의 문제로 판단할 수 없다. 독립된 crash·hang·sample 스택 파일은 없으며 XCResult 내부 진단 첨부는 실제 SDK로 확인해야 한다. 상태 갱신·로컬 projection 알림·배치의 정적 검토만으로 무한 반복을 입증하지 못했으므로, 이를 원인으로 가정해 조회 방식이나 검사 시간을 바꾸지 않는다.
+
+[보존 결과 진단 workflow](../.github/workflows/mac-ui-hang-diagnostics.yml)는 이 완료된 Mac job과 artifact·실행·소스·UI bundle digest를 고정해 확인하고 Xcode 27의 공개 export 옵션을 검사한다. 새 앱 실행 없이 보존된 XCResult의 diagnostics·attachments를 내보내며 공개 결과에는 종료 상태와 확장자별 개수만 담는다. 첨부 내용·스택 해석이나 UI 수용 성공을 뜻하지 않는다. 기존 실패 요약에는 확인된 두 SDK 메시지에만 `uiQueryEvaluationTimeout` 또는 `processMainThreadBusy` 분류를 추가하며 원문·사용자 데이터·검사 기준은 그대로 보호한다. 실제 진단 workflow 결과는 아직 대기 중이다.
 
 `e1bb1f3`의 전체 추가 입력 헤더 변경 뒤에도 Mac의 계획 입력 조회 실패가 재현됐다. Adaptive 진단은 소스·테스트 소유권과 실패 종료를 확인한 경우에만 `missing` 또는 `nonUnique` 고정 값으로 존재 확인과 개수 검사 실패를 구분한다. 개수 검사 실패는 조회 시점의 `count != 1`을 뜻하며 화면 중복으로 단정하지 않는다. 원문 UI 데이터, 검사 시간 제한과 통과 기준은 바꾸지 않는다.
 

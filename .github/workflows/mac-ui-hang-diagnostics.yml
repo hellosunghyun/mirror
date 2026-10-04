@@ -1,0 +1,54 @@
+name: 보존된 Mac UI 응답 정체 진단
+
+on:
+  push:
+    paths:
+      - '.github/workflows/mac-ui-hang-diagnostics.yml'
+      - 'scripts/ci-mac-ui-hang-diagnostics.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mac-ui-hang-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    name: ECE Mac UI 결과의 진단 자료 형식 확인
+    runs-on: xcode-27
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 진단 경계 회귀
+        run: python3 -m unittest discover -s tests -p 'test_mac_ui_hang_diagnostics.py' -v
+      - name: 고정된 unsigned 결과의 API 소유 확인
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-mac-ui-hang-diagnostics.py verify
+      - name: 확인한 기존 결과만 다운로드
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: macos-37193375591-1
+          run-id: 37193375591
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/mirror-mac-ui-hang/source
+      - name: 실제 SDK로 기존 진단 첨부의 존재와 형식 확인
+        run: python3 scripts/ci-mac-ui-hang-diagnostics.py inspect
+      - name: 고정 진단 요약만 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: mac-ui-hang-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-mac-ui-hang/public/summary.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: 원문 임시 자료 삭제
+        if: always()
+        run: python3 scripts/ci-mac-ui-hang-diagnostics.py cleanup

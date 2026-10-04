@@ -2052,6 +2052,57 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
                     for raw in (prefix, '/private/', 'identifier=', 'AX frame=', '::error::'):
                         self.assertNotIn(raw, output)
 
+    def test_native_query_detail_matches_only_complete_sdk_messages_without_private_values(self):
+        prefix = 'Failed to get matching snapshots: '
+        samples = (
+            ('Timed out while evaluating UI query.', 'uiQueryEvaluationTimeout'),
+            ('Unable to perform work on main run loop, process main thread busy for 123.456s',
+             'processMainThreadBusy'),
+        )
+        for tail, detail in samples:
+            with self.subTest(detail=detail):
+                failure = ui_query_failure_line(prefix + tail).replace('MirrorIOSUITests', 'MirrorMacUITests')
+                output = self.capture(helper.report_ui_first_failure, [
+                    started_line(METHODS[0], owner='MirrorMacUITests.MirrorUITests'), failure,
+                    case_line(METHODS[0], event='failed', module='MirrorMacUITests')])
+                self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': METHODS[0],
+                    'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                    'failureKind': 'unclassified', 'queryFailureReason': 'failedToGetMatchingSnapshot',
+                    'queryFailureDetail': detail,
+                }])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                for raw in (prefix, tail, '123.456', '::error::'):
+                    self.assertNotIn(raw, output)
+
+    def test_native_query_detail_rejects_outer_prefix_mismatch_and_quoted_payloads(self):
+        prefix = 'Failed to get matching snapshots: '
+        tails = ('Timed out while evaluating UI query.',
+                 'Unable to perform work on main run loop, process main thread busy for 123.456s')
+        for tail in tails:
+            for message in (
+                'AX snapshot timed out: ' + tail, 'Failed to get matching snapshot: ' + tail,
+                prefix + 'title="' + tail + '"', prefix + '"' + tail + '"',
+                prefix + 'Other SDK error: ' + tail, prefix + tail + ' ' + PRIVATE,
+                prefix + tail + '.', prefix + tail.replace(' ', '\t', 1), tail,
+                (prefix + tail).lower(),
+            ):
+                with self.subTest(message=message):
+                    output = self.capture(helper.report_ui_first_failure, [ui_query_failure_line(message)])
+                    self.assertNotIn('queryFailureDetail', output)
+                    self.assertEqual(len(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE)), 1)
+            for arguments in ({'source': 'OtherTests.swift'}, {'method': 'test' + PRIVATE}):
+                output = self.capture(helper.report_ui_first_failure,
+                                      [ui_query_failure_line(prefix + tail, **arguments)])
+                self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [])
+            output = self.capture(helper.report_ui_first_failure,
+                                  [ui_failure_message_line(prefix + tail, kind='XCTFail')])
+            self.assertNotIn('queryFailureDetail', output)
+        for tail in (tails[0][:-1], tails[1].replace('123.456', '123')):
+            output = self.capture(helper.report_ui_first_failure, [ui_query_failure_line(prefix + tail)])
+            self.assertNotIn('queryFailureDetail', output)
+
     def test_native_query_reason_requires_prefix_boundary_and_does_not_reclassify_assertions(self):
         for prefix, reason in QUERY_FAILURE_SAMPLES:
             for suffix in ('', '.', ':', ' ', ': ' + PRIVATE):
