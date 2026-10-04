@@ -291,6 +291,167 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
                 self.assertFalse(helper.supports_ui(text))
                 self.assertNotIn(PRIVATE, json.dumps(helper.help_metadata(text)))
 
+    def test_bare_comma_period_requires_one_complete_bounded_row_and_preserves_its_group(self):
+        values = ', '.join(helper.CATEGORIES)
+        padding = 512 - len(values + '.')
+        bounded = values.replace(', ', ', ' + ' ' * padding, 1) + '.'
+        self.assertEqual(len(bounded), 512)
+        for listing in (values + '.', bounded):
+            metadata = helper.help_metadata(public_help('    ' + listing))
+            self.assertTrue(metadata['supported'])
+            self.assertTrue(metadata['categoryListComplete'])
+            self.assertEqual(metadata['categoryFormat'], 'commaList')
+            self.assertEqual(metadata['knownCategories'], list(helper.CATEGORIES))
+        for index, listing in enumerate((
+                bounded.replace(', ', ',  ', 1), values + '..', values + '.,',
+                '- ' + values + '.', '* ' + values + '.', '• ' + values + '.',
+                'Allowed sizes: ' + values + '.', PRIVATE + ': ' + values + '.',
+                values + '. ' + PRIVATE, values + ', ' + PRIVATE + '.',
+                ', '.join((*helper.CATEGORIES[:-1], helper.CATEGORIES[0])) + '.',
+                'Earlier descriptive prose.\n    ' + values + '.',
+                values + '.\n    Later descriptive prose.')):
+            with self.subTest(boundary=index):
+                metadata = helper.help_metadata(public_help('    ' + listing))
+                self.assertFalse(metadata['supported'])
+                self.assertFalse(metadata['categoryListComplete'])
+                self.assertNotIn(PRIVATE, json.dumps(metadata))
+
+    def test_period_fragments_duplicate_paragraphs_and_streams_never_form_a_contract(self):
+        first = ', '.join(helper.CATEGORIES[:6]) + '.'
+        last = ', '.join(helper.CATEGORIES[6:]) + '.'
+        complete = ', '.join(helper.CATEGORIES) + '.'
+        listings = (first + '\n    ' + last, first + '\n\n    ' + last,
+                    first + '\n        ' + last, first + '\n  appearance\n    ' + last,
+                    complete + '\n\n    ' + complete, complete + '\n    ' + complete,
+                    complete + '\n  content_size\n    ' + complete)
+        for index, listing in enumerate(listings):
+            with self.subTest(boundary=index):
+                self.assertFalse(helper.supports_ui(public_help('    ' + listing)))
+        report, digest = helper.help_contract(public_help('    ' + first), public_help('    ' + last))
+        self.assertEqual(report['contractFrom'], 'none')
+        self.assertFalse(report['publicUIContractVerified'])
+        self.assertIsNone(digest)
+
+    def test_category_row_metadata_preserves_fixed_token_order_and_enum_shapes_only(self):
+        cases = (
+            ('"large", "extra-small".', ['large', 'extra-small'], 'double', 'comma', 'period', 'none'),
+            ("'small' | 'medium'", ['small', 'medium'], 'single', 'pipe', 'other', 'none'),
+            ('`large`\t`small`', ['large', 'small'], 'backtick', 'tab', 'other', 'none'),
+            ('large  small', ['large', 'small'], 'none', 'multiSpace', 'none', 'none'),
+            ('large, small:', ['large', 'small'], 'none', 'comma', 'colon', 'none'),
+            ('large, small,', ['large', 'small'], 'none', 'comma', 'comma', 'none'),
+            ('"large", \'small\'', ['large', 'small'], 'mixed', 'comma', 'other', 'none'),
+            ('large, small | medium', ['large', 'small', 'medium'], 'none', 'mixed', 'none', 'none'),
+        )
+        keys = {'indentColumns', 'paragraphIndex', 'tokens', 'tokensTruncated', 'quoteStyle',
+                'separatorShape', 'terminal', 'declaration', 'unknownWordCount'}
+        for index, (line, tokens, quotes, separator, terminal, declaration) in enumerate(cases):
+            with self.subTest(shape=index):
+                metadata = helper.help_metadata(public_help('    ' + line))
+                self.assertFalse(metadata['supported'])
+                self.assertFalse(metadata['categoryRowsTruncated'])
+                self.assertEqual(len(metadata['categoryRows']), 1)
+                row = metadata['categoryRows'][0]
+                self.assertEqual(set(row), keys)
+                self.assertEqual(row['indentColumns'], 4)
+                self.assertEqual(row['paragraphIndex'], 1)
+                self.assertEqual(row['tokens'], tokens)
+                self.assertFalse(row['tokensTruncated'])
+                self.assertEqual(row['quoteStyle'], quotes)
+                self.assertEqual(row['separatorShape'], separator)
+                self.assertEqual(row['terminal'], terminal)
+                self.assertEqual(row['declaration'], declaration)
+                self.assertEqual(row['unknownWordCount'], 0)
+
+    def test_category_metadata_never_turns_quoted_tokens_or_private_text_into_support(self):
+        private_fragments = (PRIVATE, '/Users/' + PRIVATE + '/note.txt',
+                             '“' + PRIVATE + '”', '‘' + PRIVATE + '’', '`' + PRIVATE + '`')
+        for index, private in enumerate(private_fragments):
+            with self.subTest(shape=index):
+                listing = '    ' + private + ': ' + ', '.join('"' + token + '"' for token in helper.CATEGORIES) + '.'
+                metadata = helper.help_metadata(public_help(listing))
+                self.assertEqual(metadata['knownTokensPresent'], list(helper.CATEGORIES))
+                self.assertEqual(metadata['knownCategoryCount'], 0)
+                self.assertFalse(metadata['categoryListComplete'])
+                self.assertFalse(metadata['supported'])
+                row = metadata['categoryRows'][0]
+                self.assertEqual(row['tokens'], list(helper.CATEGORIES))
+                self.assertGreater(row['unknownWordCount'], 0)
+                self.assertIn(row['quoteStyle'], ('none', 'single', 'double', 'backtick', 'mixed'))
+                self.assertIn(row['separatorShape'], ('none', 'comma', 'pipe', 'tab', 'multiSpace', 'mixed', 'other'))
+                self.assertIn(row['terminal'], ('none', 'comma', 'period', 'colon', 'other'))
+                self.assertEqual(row['declaration'], 'other')
+                rendered = json.dumps(metadata, ensure_ascii=False)
+                self.assertNotIn(PRIVATE, rendered)
+                self.assertNotIn('/Users/', rendered)
+                self.assertNotIn('note.txt', rendered)
+                self.assertNotIn('“', rendered)
+                self.assertNotIn('‘', rendered)
+
+    def test_category_row_paragraphs_match_prose_blank_indent_and_declaration_boundaries(self):
+        complete = ', '.join(helper.CATEGORIES)
+        listing = ('    Introductory prose.\n\n    "small"\n    "large"\n        `medium`\n'
+                   '    Valid sizes: ' + complete + '.\n    "extra-large"')
+        metadata = helper.help_metadata(public_help(listing))
+        rows = metadata['categoryRows']
+        self.assertEqual([row['paragraphIndex'] for row in rows], [2, 2, 3, 4, 5])
+        self.assertEqual([row['indentColumns'] for row in rows], [4, 4, 8, 4, 4])
+        self.assertEqual([row['tokens'] for row in rows],
+                         [['small'], ['large'], ['medium'], list(helper.CATEGORIES), ['extra-large']])
+        self.assertEqual(rows[3]['declaration'], 'validSizes')
+        self.assertTrue(metadata['supported'], '기존 complete declaration은 주변 비목록 설명과 독립적으로 검증한다.')
+        values = helper.help_metadata(public_help('    Valid values: ' + complete))
+        self.assertEqual(values['categoryRows'][0]['declaration'], 'validValues')
+        self.assertTrue(values['supported'])
+
+    def test_category_row_metadata_caps_every_repeated_or_numeric_dimension(self):
+        repeated = ['large', 'small'] * 13
+        metadata = helper.help_metadata(public_help(' ' * 300 + ', '.join(repeated)))
+        row = metadata['categoryRows'][0]
+        self.assertEqual(row['indentColumns'], 255)
+        self.assertEqual(row['tokens'], repeated[:24])
+        self.assertTrue(row['tokensTruncated'])
+        self.assertFalse(metadata['categoryRowsTruncated'])
+        self.assertFalse(metadata['supported'])
+        at_limit = helper.help_metadata(public_help('    ' + ', '.join(repeated[:24])))
+        self.assertFalse(at_limit['categoryRows'][0]['tokensTruncated'])
+        many_rows = helper.help_metadata(public_help('\n'.join(['    large'] * 25)))
+        self.assertEqual(len(many_rows['categoryRows']), 24)
+        self.assertTrue(many_rows['categoryRowsTruncated'])
+        self.assertFalse(many_rows['supported'])
+        exact_rows = helper.help_metadata(public_help('\n'.join(['    large'] * 24)))
+        self.assertFalse(exact_rows['categoryRowsTruncated'])
+        prose = '    Private descriptive prose.\n\n' * 260 + '    large ' + (PRIVATE + ' ') * 300
+        final = helper.help_metadata(public_help(prose))
+        self.assertEqual(len(final['categoryRows']), 1)
+        self.assertEqual(final['categoryRows'][0]['paragraphIndex'], 255)
+        self.assertEqual(final['categoryRows'][0]['unknownWordCount'], 255)
+        self.assertNotIn(PRIVATE, json.dumps(final))
+
+    def test_row_metadata_scope_excludes_other_options_and_duplicate_sections(self):
+        text = public_help('    "large"\n  appearance\n    "small" ' + PRIVATE)
+        metadata = helper.help_metadata(text)
+        self.assertEqual([row['tokens'] for row in metadata['categoryRows']], [['large']])
+        self.assertEqual(metadata['knownTokensPresent'], ['large'])
+        self.assertEqual(metadata['wholeHelpTokensPresent'], ['small', 'large'])
+        self.assertFalse(metadata['categoryRowsTruncated'])
+        for body in ('appearance\n    large', public_help('    large\n  content_size\n    small')):
+            result = helper.help_metadata(body)
+            self.assertEqual(result['categoryRows'], [])
+            self.assertFalse(result['categoryRowsTruncated'])
+            self.assertFalse(result['supported'])
+
+    def test_truncated_metadata_does_not_hide_a_later_conflicting_list_from_the_parser(self):
+        complete = '    ' + ', '.join(helper.CATEGORIES) + '.'
+        descriptions = '\n\n'.join(['    "small"'] * 23)
+        valid = complete + '\n\n' + descriptions
+        self.assertTrue(helper.supports_ui(public_help(valid)))
+        metadata = helper.help_metadata(public_help(valid + '\n\n    small'))
+        self.assertEqual(len(metadata['categoryRows']), 24)
+        self.assertTrue(metadata['categoryRowsTruncated'])
+        self.assertFalse(metadata['categoryListComplete'])
+        self.assertFalse(metadata['supported'])
+
     def test_scoped_fixed_token_presence_does_not_accept_unknown_list_grammar(self):
         text = public_help('    ' + PRIVATE + ': ' + ', '.join(helper.CATEGORIES) + '.')
         metadata = helper.help_metadata(text)
@@ -305,6 +466,8 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         metadata = helper.help_metadata(text)
         self.assertEqual(metadata['knownTokensPresent'], ['extra-small'])
         self.assertEqual(metadata['knownTokensPresentCount'], 1)
+        self.assertEqual([row['tokens'] for row in metadata['categoryRows']], [['extra-small']])
+        self.assertGreater(metadata['categoryRows'][0]['unknownWordCount'], 0)
         self.assertFalse(metadata['supported'])
 
     def test_help_metadata_exposes_only_bounded_static_usage_and_operation_syntax(self):

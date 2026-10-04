@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actions 전용: 같은 unsigned build의 한 iPad 사례를 비교한다. 수용 gate가 아니다."""
 import importlib.util
+from itertools import islice
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ CATEGORIES = ('extra-small', 'small', 'medium', 'large', 'extra-large', 'extra-e
               'extra-extra-extra-large', 'accessibility-medium', 'accessibility-large',
               'accessibility-extra-large', 'accessibility-extra-extra-large',
               'accessibility-extra-extra-extra-large')
+CATEGORY_TOKEN = re.compile(r'(?<![\w-])(?:' + '|'.join(map(re.escape, CATEGORIES)) + r')(?![\w-])')
 PROBE = 'UI dynamic type fixture: '
 AUDIT = 'UI dynamic type audit: '
 
@@ -47,6 +49,11 @@ def category_row(line):
         tokens = [part.strip() for part in value[declaration.end():].removesuffix('.').split(',')]
         if len(tokens) == len(CATEGORIES) and set(tokens) == set(CATEGORIES):
             return tokens, 'inlineDeclaration'
+        return None
+    if ',' in value and value.endswith('.'):
+        tokens = [part.strip() for part in value.removesuffix('.').split(',')]
+        if len(value) <= 512 and len(tokens) == len(CATEGORIES) and set(tokens) == set(CATEGORIES):
+            return tokens, 'commaList'
         return None
     bullet = re.match(r'^[-*•][ \t]+', value)
     if bullet:
@@ -74,6 +81,49 @@ def indentation_columns(line):
     return len(prefix.expandtabs(8))
 
 
+def category_row_metadata(groups):
+    """지원 판정과 별개로, 원문 없는 고정 token·형태·상한 있는 수만 관측한다."""
+    rows = []
+    for paragraph, group in enumerate(groups, 1):
+        for line in group:
+            matches = list(islice(CATEGORY_TOKEN.finditer(line), 25))
+            if not matches:
+                continue
+            if len(rows) == 24:
+                return rows, True
+            value = line.strip()
+            declaration = re.match(r'^(Valid sizes:|Valid values:)(?:[ \t]+|$)', value)
+            prefix = line[:matches[0].start()]
+            declaration_kind = ('validSizes' if declaration[1] == 'Valid sizes:' else 'validValues') if declaration else (
+                'other' if re.search(r'\w', prefix) else 'none')
+            body = value[declaration.end():] if declaration else value
+            body = re.sub(r'^[-*•][ \t]+', '', body)
+            remainder = CATEGORY_TOKEN.sub(' ', body)
+            unknown = min(255, sum(1 for _ in re.finditer(r'\w+(?:-\w+)*', remainder)))
+            quote_kinds = {kind for character, kind in (("'", 'single'), ('"', 'double'), ('`', 'backtick'))
+                           if character in body}
+            separators = {kind for character, kind in ((',', 'comma'), ('|', 'pipe')) if character in body}
+            punctuation = re.sub(r'\w+(?:-\w+)*', '', remainder).strip().removesuffix('.').removesuffix(':')
+            if punctuation.strip(" \t,'\"`|"):
+                separator = 'other'
+            elif separators:
+                separator = next(iter(separators)) if len(separators) == 1 else 'mixed'
+            elif '\t' in body:
+                separator = 'tab'
+            elif re.search(r' {2,}', body):
+                separator = 'multiSpace'
+            else:
+                separator = 'none' if len(matches) == 1 else 'other'
+            rows.append({'indentColumns': min(255, indentation_columns(line)), 'paragraphIndex': min(255, paragraph),
+                         'tokens': [match[0] for match in matches[:24]], 'tokensTruncated': len(matches) > 24,
+                         'quoteStyle': next(iter(quote_kinds)) if len(quote_kinds) == 1 else 'mixed' if quote_kinds else 'none',
+                         'separatorShape': separator,
+                         'terminal': {',': 'comma', '.': 'period', ':': 'colon'}.get(value[-1],
+                             'none' if value[-1].isalnum() else 'other'),
+                         'declaration': declaration_kind, 'unknownWordCount': unknown})
+    return rows, False
+
+
 def category_listing(text):
     # 두 option, 두 문단 또는 두 채널의 부분 목록을 합쳐 지원 계약을 만들지 않는다.
     sections = list(re.finditer(r'(?m)^([ \t]*)content_size[ \t]*$', text))
@@ -82,7 +132,7 @@ def category_listing(text):
               'categoryListComplete': False, 'knownTokensPresent': [], 'knownTokensPresentCount': 0,
               'sectionCount': len(sections), 'headingIndent': None, 'firstBodyIndent': None,
               'firstFollowingIndent': None, 'wholeHelpTokensPresent': whole_help,
-              'wholeHelpTokensPresentCount': len(whole_help)}
+              'wholeHelpTokensPresentCount': len(whole_help), 'categoryRows': [], 'categoryRowsTruncated': False}
     if len(sections) != 1:
         return result
     section = sections[0]
@@ -119,6 +169,7 @@ def category_listing(text):
         elif line.strip():
             group.append(line)
             indent = current
+    result['categoryRows'], result['categoryRowsTruncated'] = category_row_metadata(groups)
     candidates, known, formats = [], set(), set()
     for group in groups:
         rows, valid = [], True
