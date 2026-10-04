@@ -821,7 +821,11 @@ final class MirrorUITests: XCTestCase {
         try activate("today.review", in: app)
         try waitForLabel(title, element: requireElement("review.card", in: app), in: app)
         try waitForLabel("이번에 정한 0개", element: requireElement("review.progress", in: app), in: app)
-        try requireNoElement("state.feedback", in: app)
+        try requireNoElement("state.feedback", in: app, onUnexpected: {
+            #if os(macOS)
+            self.recordReviewFeedbackFailure(in: app)
+            #endif
+        })
         try requireNoElement("task.undo", in: app)
         // 정리 화면의 상세를 열고 닫아도 같은 카드와 미결정 상태로 돌아온다.
         try activate("review.detail", in: app)
@@ -1918,11 +1922,13 @@ final class MirrorUITests: XCTestCase {
     #endif
 
     @MainActor
-    private func requireNoElement(_ identifier: String, in app: XCUIApplication) throws {
+    private func requireNoElement(_ identifier: String, in app: XCUIApplication,
+                                  onUnexpected: (@MainActor () -> Void)? = nil) throws {
         // 닫히는 UI의 부재는 exists만 검사한다. 사라지는 버튼의 activation point를 조회하지 않는다.
         let found = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: found)
         guard XCTWaiter.wait(for: [gone], timeout: 15) == .completed else {
+            onUnexpected?()
             printFailurePrefix("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
             XCTFail("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
             throw UIHarnessError.unexpectedElement(identifier)
@@ -2074,14 +2080,25 @@ final class MirrorUITests: XCTestCase {
             XCTFail("작업 행을 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.unhittable(identifier)
         }
+        #if os(macOS)
+        let requiresCaptureViewport = identifier == "capture.note" || identifier == "capture.url"
+        let captureSurface = requiresCaptureViewport
+            ? try macCaptureFieldScrollContainer(containing: element, identifier: identifier, in: app, file: file, line: line) : nil
+        let viewportSurface = rowSurface ?? captureSurface
+        #else
+        let requiresCaptureViewport = false
+        let viewportSurface = rowSurface
+        #endif
         // Form 아래쪽의 완료/Undo도 실제 스크롤로 도달한다. 숨겨진 요소의 좌표를 강제로 누르지 않는다.
         for _ in 0..<8 {
             // 같은 반복의 중심·방향 판정만 공유한다. 다음 반복과 마지막 조작 검사는 새 경계를 읽는다.
-            let rowGeometry = rowSurface.map { (frame: element.frame, viewport: $0.frame) }
-            let rowNeedsScroll = rowGeometry.map { !rowCenterIsVisible($0.frame, in: $0.viewport) } ?? false
+            let rowGeometry = viewportSurface.map { (frame: element.frame, viewport: $0.frame) }
+            let rowNeedsScroll = rowGeometry.map {
+                requiresCaptureViewport ? !$0.viewport.contains($0.frame) : !rowCenterIsVisible($0.frame, in: $0.viewport)
+            } ?? false
             guard !element.isHittable || rowNeedsScroll else { break }
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
-            guard let surface = rowSurface ?? scrollContainer(containing: element, in: app) else {
+            guard let surface = viewportSurface ?? scrollContainer(containing: element, in: app) else {
                 if observeValidationRecovery {
                     recordValidationRecoveryDiagnostic(for: element, identifier: identifier, in: app)
                 }
@@ -2090,7 +2107,11 @@ final class MirrorUITests: XCTestCase {
                 throw UIHarnessError.unhittable(identifier)
             }
             let isAboveViewport: Bool
-            if let rowGeometry { isAboveViewport = rowGeometry.frame.midY < rowGeometry.viewport.minY }
+            if let rowGeometry {
+                isAboveViewport = requiresCaptureViewport
+                    ? rowGeometry.frame.minY < rowGeometry.viewport.minY
+                    : rowGeometry.frame.midY < rowGeometry.viewport.minY
+            }
             else { isAboveViewport = element.frame.minY < surface.frame.minY }
             #if os(macOS)
             surface.scroll(byDeltaX: 0, deltaY: isAboveViewport ? 250 : -250)
@@ -2099,7 +2120,11 @@ final class MirrorUITests: XCTestCase {
             else { surface.swipeUp() }
             #endif
         }
-        let rowCenterIsInside = rowSurface.map { rowCenterIsVisible(element, in: $0) } ?? true
+        let rowCenterIsInside = viewportSurface.map {
+            requiresCaptureViewport
+                ? app.state == .runningForeground && $0.exists && $0.frame.contains(element.frame)
+                : rowCenterIsVisible(element, in: $0)
+        } ?? true
         guard element.isHittable && element.isEnabled && rowCenterIsInside else {
             printFailurePrefix("UI 요소에 도달할 수 없다")
             XCTFail("UI 요소에 도달할 수 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
@@ -2113,6 +2138,92 @@ final class MirrorUITests: XCTestCase {
     }
 
     #if os(macOS)
+    @MainActor
+    private func recordReviewFeedbackFailure(in app: XCUIApplication) {
+        guard app.state == .runningForeground, app.windows.count == 1 else { return }
+        let window = app.windows.element(boundBy: 0)
+        guard window.exists else { return }
+        let cards = window.descendants(matching: .any).matching(identifier: "review.card")
+        guard cards.count == 1, cards.element(boundBy: 0).exists else { return }
+        func frameValue(_ frame: CGRect) -> Any {
+            let values = [frame.minX, frame.minY, frame.width, frame.height]
+            guard values.allSatisfy({ $0.isFinite }), frame.width > 0, frame.height > 0 else { return NSNull() }
+            return values.map { Double($0) }
+        }
+        guard !(frameValue(window.frame) is NSNull), app.state == .runningForeground else { return }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "mirror-diagnostic-review-feedback"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let feedback = window.descendants(matching: .any).matching(identifier: "state.feedback")
+        let count = feedback.count
+        var fields: [String: Any] = ["count": count, "role": NSNull(), "frame": NSNull(), "hittable": NSNull()]
+        if count == 1 {
+            let element = feedback.element(boundBy: 0)
+            if element.exists {
+                let role: String
+                switch element.elementType {
+                case .staticText: role = "staticText"
+                case .textField: role = "textField"
+                case .textView: role = "textView"
+                case .button: role = "button"
+                default: role = "other"
+                }
+                fields["role"] = role; fields["frame"] = frameValue(element.frame); fields["hittable"] = element.isHittable
+            }
+        }
+        let sheets = window.sheets.containing(NSPredicate(format: "identifier == %@", "review.card"))
+        let sheetCount = sheets.count
+        let sheetFeedbackCount: Any = sheetCount == 1
+            ? sheets.element(boundBy: 0).descendants(matching: .any).matching(identifier: "state.feedback").count : NSNull()
+        let diagnostic: [String: Any] = [
+            "method": "testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday",
+            "phase": "initialZeroDecisionsFeedbackUnexpected", "feedback": fields,
+            "reviewSheetCount": sheetCount, "reviewSheetFeedbackCount": sheetFeedbackCount,
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) { print("UI review feedback failure diagnostic: \(json)") }
+    }
+
+    @MainActor
+    private func macCaptureFieldScrollContainer(containing field: XCUIElement, identifier: String,
+                                                in app: XCUIApplication, file: StaticString, line: UInt) throws -> XCUIElement {
+        func fail() throws -> Never {
+            XCTFail("macCaptureAdditionalFieldOwnerMismatch", file: file, line: line)
+            throw UIHarnessError.unhittable(identifier)
+        }
+        func hasArea(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        guard identifier == "capture.note" || identifier == "capture.url",
+              app.state == .runningForeground, field.exists, field.identifier == identifier,
+              field.elementType == .textField || field.elementType == .textView,
+              app.descendants(matching: .any).matching(identifier: identifier).count == 1,
+              app.buttons.matching(identifier: "capture.close").count == 1,
+              app.buttons.matching(identifier: "capture.save").count == 1 else { try fail() }
+        let windows = app.windows.containing(.button, identifier: "capture.close")
+            .containing(.button, identifier: "capture.save")
+        guard windows.count == 1 else { try fail() }
+        let window = windows.element(boundBy: 0)
+        let sheets = window.sheets.containing(.button, identifier: "capture.close")
+            .containing(.button, identifier: "capture.save")
+        let sheetCount = sheets.count
+        guard sheetCount <= 1 else { try fail() }
+        let owner = sheetCount == 1 ? sheets.element(boundBy: 0) : window
+        guard owner.descendants(matching: field.elementType).matching(identifier: identifier).count == 1 else { try fail() }
+        let surfaces = owner.scrollViews.containing(field.elementType, identifier: identifier)
+        guard surfaces.count == 1 else { try fail() }
+        let surface = surfaces.element(boundBy: 0)
+        guard window.exists, owner.exists, surface.exists else { try fail() }
+        let windowFrame = window.frame, ownerFrame = owner.frame, viewport = surface.frame, fieldFrame = field.frame
+        guard hasArea(windowFrame), hasArea(ownerFrame), hasArea(viewport), hasArea(fieldFrame),
+              windowFrame.contains(ownerFrame), ownerFrame.contains(viewport),
+              viewport.minX <= fieldFrame.minX, fieldFrame.maxX <= viewport.maxX else { try fail() }
+        // 25a 실패 후 메모 frame은 ScrollView 아래에 있었다. 기존 8회 루프에서 실제 표시 영역을 확인한다.
+        return surface
+    }
+
     @MainActor
     private func recordDetailCollapseFailure(in app: XCUIApplication) {
         guard app.state == .runningForeground else { return }
