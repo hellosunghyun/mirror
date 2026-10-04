@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import struct
 import subprocess
@@ -66,7 +67,8 @@ class AdaptiveResultGateTests(unittest.TestCase):
                 mock.patch.object(helper.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
             helper.checkout_matches(expected)
             self.assertEqual([call.args[0][1] for call in output.call_args_list], ['rev-parse', 'ls-files'])
-            self.assertEqual(run.call_args.args[0], ['git', 'diff', '--quiet', 'HEAD', '--'])
+            self.assertEqual(run.call_args.args[0],
+                             ['git', '--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'])
             self.assertTrue(all(call.kwargs['timeout'] == 5 for call in (*output.call_args_list, run.call_args)))
         for sha, dirty, untracked in (('b' * 40, 0, b''), ('a' * 40, 1, b''), ('a' * 40, 0, PRIVATE.encode())):
             with mock.patch.object(helper.subprocess, 'check_output', side_effect=[sha, untracked]), \
@@ -86,6 +88,86 @@ class AdaptiveResultGateTests(unittest.TestCase):
                 helper.checkout_matches({'commitSHA': 'a' * 40})
             self.assertEqual(output.call_count, 2 if stage == 2 else 1)
             self.assertEqual(run.call_count, 0 if stage == 0 else 1)
+
+    def checkout_repository_fixture(self, directory):
+        repository = Path(directory) / 'repository'
+        repository.mkdir()
+        environment = {key: value for key, value in os.environ.items() if not key.startswith('GIT_')}
+        environment.update({'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull,
+                            'GIT_TERMINAL_PROMPT': '0'})
+
+        def git(*arguments):
+            return subprocess.run(['git', *arguments], cwd=repository, env=environment,
+                                  check=True, capture_output=True, text=True, timeout=5)
+
+        git('init', '--quiet', '--template=')
+        git('config', 'user.name', 'Mirror CI Fixture')
+        git('config', 'user.email', 'mirror-ci@example.invalid')
+        git('config', 'commit.gpgsign', 'false')
+        (repository / 'App').mkdir()
+        (repository / 'App/Fixture.swift').write_text('fixture original\n')
+        (repository / 'README.md').write_text('tracked fixture documentation\n')
+        (repository / '.gitattributes').write_text('*.swift diff=mirrorfixture\n')
+        git('add', '--all')
+        git('commit', '--quiet', '-m', 'fixed checkout fixture')
+        expected = {'commitSHA': git('rev-parse', 'HEAD').stdout.strip()}
+        return repository, expected, environment, git
+
+    def test_checkout_real_repository_preserves_clean_stat_only_and_all_tracked_guards(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository, expected, environment, git = self.checkout_repository_fixture(directory)
+            with mock.patch.object(helper, 'ROOT', repository), mock.patch.dict(os.environ, environment, clear=True):
+                self.assertIsNone(helper.checkout_matches(expected))
+                tracked = repository / 'App/Fixture.swift'
+                before = tracked.stat()
+                os.utime(tracked, ns=(before.st_atime_ns, before.st_mtime_ns + 2_000_000_000))
+                self.assertIsNone(helper.checkout_matches(expected))
+                for path in ('App/Fixture.swift', 'README.md'):
+                    for staged in (False, True):
+                        with self.subTest(path=path, staged=staged):
+                            git('reset', '--hard', 'HEAD')
+                            (repository / path).write_text('changed tracked fixture\n')
+                            if staged:
+                                git('add', '--', path)
+                            with self.assertRaisesRegex(helper.AdaptiveError, '^modifiedCheckout$'):
+                                helper.checkout_matches(expected)
+                git('reset', '--hard', 'HEAD')
+                with self.assertRaisesRegex(helper.AdaptiveError, '^checkoutSHAMismatch$'):
+                    helper.checkout_matches({'commitSHA': '0' * 40})
+                (repository / 'App/Untracked.swift').write_text('untracked fixture\n')
+                with self.assertRaisesRegex(helper.AdaptiveError, '^untrackedAppSource$'):
+                    helper.checkout_matches(expected)
+
+    def test_checkout_real_repository_does_not_run_external_diff_or_textconv(self):
+        for mode in ('external', 'textconv', 'both'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                repository, expected, environment, git = self.checkout_repository_fixture(directory)
+                marker = Path(directory) / 'unexpected-conversion'
+                command = Path(directory) / 'fixed conversion.sh'
+                command.write_text('#!/bin/sh\nprintf invoked > "$MIRROR_CHECKOUT_TEST_MARKER"\nprintf "same fixture conversion\\n"\n')
+                command.chmod(0o700)
+                environment['MIRROR_CHECKOUT_TEST_MARKER'] = str(marker)
+                if mode in ('external', 'both'):
+                    git('config', 'diff.external', shlex.quote(str(command)))
+                    git('config', 'diff.trustExitCode', 'true')
+                if mode in ('textconv', 'both'):
+                    git('config', 'diff.mirrorfixture.textconv', shlex.quote(str(command)))
+                with mock.patch.object(helper, 'ROOT', repository), mock.patch.dict(os.environ, environment, clear=True):
+                    self.assertIsNone(helper.checkout_matches(expected))
+                    self.assertFalse(marker.exists())
+                    (repository / 'App/Fixture.swift').write_text('changed despite configured conversion\n')
+                    for staged in (False, True):
+                        if staged:
+                            git('add', '--', 'App/Fixture.swift')
+                        with self.assertRaisesRegex(helper.AdaptiveError, '^modifiedCheckout$'):
+                            helper.checkout_matches(expected)
+                        self.assertFalse(marker.exists())
+                # 명시적으로 허용한 대조 호출은 같은 고정 도구를 실제로 실행한다.
+                if mode == 'external':
+                    git('diff', '--ext-diff', '--no-textconv', 'HEAD', '--')
+                else:
+                    git('diff', '--no-ext-diff', '--textconv', 'HEAD', '--')
+                self.assertTrue(marker.exists())
 
     def processing_failure(self, action):
         with mock.patch.object(helper, 'main', side_effect=action), \
@@ -160,6 +242,10 @@ class AdaptiveResultGateTests(unittest.TestCase):
         commands = (PRIVATE, 'git rev-parse HEAD', ['/usr/bin/git', 'rev-parse', 'HEAD'],
                     ['git', 'rev-parse', 'HEAD', PRIVATE], ['git', 'rev-parse', PRIVATE],
                     [b'git', 'rev-parse', 'HEAD'], ['git', ['rev-parse'], 'HEAD'],
+                    ['git', 'diff', '--quiet', 'HEAD', '--'],
+                    ['git', '--no-optional-locks', 'diff', '--no-ext-diff', '--quiet', 'HEAD', '--'],
+                    ['git', '--no-optional-locks', 'diff', '--no-textconv', '--no-ext-diff', '--quiet', 'HEAD', '--'],
+                    ['git', '--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', PRIVATE],
                     OpaqueCommand(), None)
         for command in commands:
             error = subprocess.TimeoutExpired(command, 5, output=PRIVATE, stderr=PRIVATE)

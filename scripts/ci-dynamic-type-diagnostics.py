@@ -32,6 +32,20 @@ GROUPED_CATEGORY_DECLARATIONS = (
 CATEGORY_TOKEN = re.compile(r'(?<![\w-])(?:' + '|'.join(map(re.escape, CATEGORIES)) + r')(?![\w-])')
 PROBE = 'UI dynamic type fixture: '
 AUDIT = 'UI dynamic type audit: '
+AUDIT_ISSUE = 'UI adaptive audit issue: '
+AUDIT_GEOMETRY = 'UI adaptive audit geometry: '
+# MirrorAdaptiveUITests.recordAuditIssue의 고정 enum. 알 수 없는 SDK 설명·식별자는 읽지 않는다.
+AUDIT_IDENTIFIERS = frozenset(('none', 'other', 'appliedDynamicType',
+    'captureDynamicType', 'reviewDynamicType', 'planDynamicType', 'detailDynamicType',
+    'captureOpen', 'captureClose', 'captureTitle', 'captureNote', 'captureURL', 'captureMore', 'captureSave', 'captureFeedback',
+    'capturePlanChoices', 'capturePlanSummary', 'capturePlanToday', 'capturePlanTomorrow', 'capturePlanOther',
+    'todayList', 'todayReview', 'destinationToday', 'destinationCalendar', 'destinationLibrary', 'settingsButton',
+    'librarySearch', 'libraryList', 'libraryBatchFooter', 'libraryBatchPlan', 'reviewCard', 'reviewDetail', 'reviewToday',
+    'reviewTomorrow', 'reviewThisWeek', 'reviewNextWeek', 'reviewOther', 'reviewFinish', 'planToday', 'planTomorrow',
+    'planCancel', 'detailClose', 'detailContentTitle', 'detailTitle', 'detailPlan', 'detailHistory', 'detailPostponeTomorrow',
+    'taskComplete', 'taskUndo', 'stateError', 'stateFeedback'))
+AUDIT_ELEMENT_TYPES = frozenset(('none', 'other', 'application', 'window', 'sheet', 'button', 'textField', 'textView',
+                                'staticText', 'scrollView', 'table', 'collectionView', 'image', 'disclosureTriangle'))
 CHECKPOINT = '::notice::Dynamic Type checkpoint: '
 CHECKPOINTS = frozenset(('checkoutStarted', 'checkoutVerified', 'contextStarted', 'contextVerified',
     'bootStatusStarted', 'bootStatusReturned', 'restoreJournalReadStarted', 'restoreJournalVerified',
@@ -410,6 +424,7 @@ def failed_stdout_observations(log, mode):
     """미완료 stdout의 고정 관측만 읽는다. typed 완료·통과나 누락된 boundary를 추론하지 않는다."""
     require(mode in MODES and len(log.encode('utf-8')) <= A.MAX_LOG, 'invalidFailureObservation')
     started, terminal, probes, issues, boundary = False, None, {}, [], None
+    pending_issue, issue_details = None, []
     event = re.compile(r"Test Case '-\[" + re.escape(OWNER) + ' ' + CASE
                        + r"\]' (started|passed|failed)(?: \([0-9]+(?:\.[0-9]+)? seconds\))?\.")
     swift_sizes = ('xSmall', 'small', 'medium', 'large', 'xLarge', 'xxLarge', 'xxxLarge',
@@ -428,25 +443,53 @@ def failed_stdout_observations(log, mode):
                 require(started and terminal is None, 'invalidFailureObservation')
                 terminal = found[1]
         is_boundary = A.AUDIT_BOUNDARY_MARKER in line
-        if not is_boundary and 'UI dynamic type ' not in line:
+        issue_signal = re.search(r'\bUI\s+adaptive\s+audit\s+(?:issue|geometry)\b', line)
+        if not is_boundary and not issue_signal and 'UI dynamic type ' not in line:
             continue
         require(started and terminal is None and len(line.encode('utf-8')) <= 1024
-                and line.startswith((PROBE, AUDIT, A.AUDIT_BOUNDARY_MARKER)), 'invalidFailureObservation')
-        marker = A.AUDIT_BOUNDARY_MARKER if is_boundary else PROBE if line.startswith(PROBE) else AUDIT
+                and line.startswith((PROBE, AUDIT, AUDIT_ISSUE, AUDIT_GEOMETRY, A.AUDIT_BOUNDARY_MARKER)), 'invalidFailureObservation')
+        marker = next(value for value in (PROBE, AUDIT, AUDIT_ISSUE, AUDIT_GEOMETRY, A.AUDIT_BOUNDARY_MARKER)
+                      if line.startswith(value))
         value = A.strict_json(line[len(marker):])
         require(isinstance(value, dict) and type(value.get('schemaVersion')) is int
                 and value['schemaVersion'] == 1, 'invalidFailureObservation')
-        if is_boundary:
+        if marker in (AUDIT_ISSUE, AUDIT_GEOMETRY):
+            shared = {'schemaVersion', 'case', 'auditSequence', 'issueSequence', 'elementIdentifier', 'elementType'}
+            require(set(value) == shared | ({'issueKind', 'elementPresent', 'ignored'} if marker == AUDIT_ISSUE else {'frame'})
+                    and value['case'] == 'captureValidation' and type(value['auditSequence']) is int
+                    and value['auditSequence'] == 1 and type(value['issueSequence']) is int
+                    and value['elementIdentifier'] in AUDIT_IDENTIFIERS and value['elementType'] in AUDIT_ELEMENT_TYPES
+                    and 'capture' in probes and boundary is None, 'invalidFailureObservation')
+            if marker == AUDIT_ISSUE:
+                require(pending_issue is None and len(issues) < 64 and value['issueSequence'] == len(issues) + 1
+                        and value['issueKind'] in ('parentChildMismatch', 'missingDescription', 'other')
+                        and type(value['elementPresent']) is bool and value['ignored'] is False
+                        and (value['elementIdentifier'] != 'none' and value['elementType'] != 'none'
+                             if value['elementPresent'] else value['elementIdentifier'] == value['elementType'] == 'none'),
+                        'invalidFailureObservation')
+                pending_issue = {key: value[key] for key in
+                                 ('issueSequence', 'issueKind', 'elementPresent', 'elementIdentifier', 'elementType')}
+            else:
+                require(pending_issue is None and issue_details and value['issueSequence'] == len(issues)
+                        and issue_details[-1]['status'] == 'observed', 'invalidFailureObservation')
+                detail = issue_details[-1]
+                require(detail['geometry']['status'] == 'unobserved'
+                        and all(value[key] == detail[key] for key in ('elementIdentifier', 'elementType'))
+                        and (value['frame'] is None or detail['elementPresent']
+                             and A.measurement_frame(value['frame'], positive=False)
+                             and all(abs(number) <= 100_000 for number in value['frame'])), 'invalidFailureObservation')
+                detail['geometry'] = {'status': 'observed', 'frame': value['frame']}
+        elif is_boundary:
             require(value in ({'schemaVersion': 1, 'case': 'captureValidation', 'auditSequence': 1, 'outcome': outcome}
                              for outcome in ('returned', 'threw')) and type(value['auditSequence']) is int
-                    and 'capture' in probes and boundary is None, 'invalidFailureObservation')
+                    and 'capture' in probes and boundary is None and pending_issue is None, 'invalidFailureObservation')
             boundary = value['outcome']
         elif marker == PROBE:
             require(set(value) == {'schemaVersion', 'requestedMode', 'actualMode', 'scope', 'swiftUI', 'uiKit', 'uiKitSource'}
                     and value['requestedMode'] in MODES and value['actualMode'] in MODES
                     and value['scope'] in ('root', 'capture') and value['uiKitSource'] == 'appSystem'
                     and value['swiftUI'] in swift_sizes and value['uiKit'] in ui_sizes
-                    and value['scope'] not in probes and boundary is None and not issues
+                    and value['scope'] not in probes and boundary is None and not issues and pending_issue is None
                     and (value['scope'] == 'root' or 'root' in probes), 'invalidFailureObservation')
             probes[value['scope']] = {
                 'requestedMode': value['requestedMode'], 'actualMode': value['actualMode'],
@@ -464,10 +507,13 @@ def failed_stdout_observations(log, mode):
                     and len(set(value['types'])) == len(value['types']) and len(issues) < 64
                     and 'capture' in probes and boundary is None, 'invalidFailureObservation')
             issues.append(value['types'])
+            issue_details.append({'status': 'observed', **pending_issue, 'geometry': {'status': 'unobserved'}}
+                                 if pending_issue is not None else {'status': 'unobserved'})
+            pending_issue = None
     return {'caseStarted': started, 'caseTerminal': terminal,
             'probes': {scope: {'status': 'observed', **probes[scope]} if scope in probes
                        else {'status': 'unobserved'} for scope in ('root', 'capture')},
-            'auditIssueTypes': issues, 'auditBoundary': boundary}
+            'auditIssueTypes': issues, 'auditIssueDetails': issue_details, 'auditBoundary': boundary}
 
 
 def failed_native_observations(mode, expected, receipt):

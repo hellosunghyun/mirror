@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/dynamic-type-diagnostics.yml'
       - 'scripts/ci-dynamic-type-diagnostics.py'
+      - 'scripts/ci-adaptive-ui-results.py'
       - 'tests/test_dynamic_type_diagnostics.py'
   workflow_dispatch:
 

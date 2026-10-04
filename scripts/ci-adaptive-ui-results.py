@@ -188,7 +188,8 @@ def configuration(expected, case):
 def checkout_matches(expected):
     require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, stderr=subprocess.DEVNULL,
                                     text=True, timeout=5).strip() == expected['commitSHA'], 'checkoutSHAMismatch')
-    require(subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], cwd=ROOT,
+    # index 갱신 부수작업과 외부 변환 없이 실제 tracked 내용을 비교한다.
+    require(subprocess.run(['git', '--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'], cwd=ROOT,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0,
             'modifiedCheckout')
     require(not subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--',
@@ -1589,11 +1590,11 @@ def processing_failure_notice(error):
     if isinstance(error, subprocess.TimeoutExpired):
         command = error.cmd
         # checkout의 완전한 세 명령과 일치할 때만 고정 단계를 표시한다.
-        if type(command) in (list, tuple) and len(command) in (3, 5, 9) \
+        if type(command) in (list, tuple) and len(command) in (3, 8, 9) \
                 and all(type(argument) is str for argument in command):
             operation = {
                 ('git', 'rev-parse', 'HEAD'): 'head',
-                ('git', 'diff', '--quiet', 'HEAD', '--'): 'diff',
+                ('git', '--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'): 'diff',
                 ('git', 'ls-files', '--others', '--exclude-standard', '--',
                  'App', 'Sources', 'Extensions', 'Tests'): 'untracked',
             }.get(tuple(command), 'unknown')

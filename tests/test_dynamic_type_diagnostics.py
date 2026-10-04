@@ -44,6 +44,16 @@ def observed_log(mode='system', failed=False):
     return '\n'.join(lines)
 
 
+def audit_detail_lines(*, present=True, frame=None):
+    # 같은 callback의 실제 출력 순서는 generic issue → Dynamic audit → geometry다.
+    common = {'schemaVersion': 1, 'case': 'captureValidation', 'auditSequence': 1, 'issueSequence': 1,
+              'elementIdentifier': 'captureClose' if present else 'none', 'elementType': 'button' if present else 'none'}
+    issue = helper.AUDIT_ISSUE + json.dumps({**common, 'issueKind': 'missingDescription',
+                                            'elementPresent': present, 'ignored': False})
+    geometry = helper.AUDIT_GEOMETRY + json.dumps({**common, 'frame': frame})
+    return issue, geometry
+
+
 def typed(failed=False):
     state = 'Failed' if failed else 'Passed'
     summary = {'totalTestCount': 1, 'passedTests': 0 if failed else 1,
@@ -660,6 +670,69 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         self.assertEqual(value['caseTerminal'], 'passed')
         self.assertNotIn('caseResult', value)
 
+    def test_failed_stdout_pairs_existing_issue_details_and_geometry_without_reclassifying_types(self):
+        lines = observed_log(failed=True).splitlines()
+        for present, frame in ((True, [588, 95.5, 92, 63.5]), (True, [0, -100000, 0, 100000]),
+                               (True, None), (False, None)):
+            issue, geometry = audit_detail_lines(present=present, frame=frame)
+            log = '\n'.join([*lines[:3], issue, lines[3], geometry, *lines[4:]])
+            with self.subTest(present=present, frame=frame):
+                value = helper.failed_stdout_observations(log, 'system')
+                self.assertEqual(value['auditIssueTypes'], [['dynamicType']])
+                self.assertEqual(value['auditIssueDetails'], [{
+                    'status': 'observed', 'issueSequence': 1, 'issueKind': 'missingDescription',
+                    'elementPresent': present, 'elementIdentifier': 'captureClose' if present else 'none',
+                    'elementType': 'button' if present else 'none', 'geometry': {'status': 'observed', 'frame': frame}}])
+                # 완료하지 못한 stdout에서도 같은 issue의 고정 정보는 보존하되 typed 결과는 만들지 않는다.
+                partial = helper.failed_stdout_observations('\n'.join([*lines[:3], issue, lines[3]]), 'system')
+                self.assertEqual(partial['auditIssueDetails'][0]['geometry'], {'status': 'unobserved'})
+                self.assertIsNone(partial['caseTerminal'])
+        old = helper.failed_stdout_observations('\n'.join(lines), 'system')
+        self.assertEqual(old['auditIssueDetails'], [{'status': 'unobserved'}])
+        unpaired = helper.failed_stdout_observations('\n'.join([*lines[:3], issue]), 'system')
+        self.assertEqual(unpaired['auditIssueDetails'], [])  # mode가 있는 dynamic AUDIT 전에는 귀속을 추정하지 않는다.
+
+    def test_failed_stdout_rejects_wrong_detail_owner_order_types_geometry_and_private_values(self):
+        lines = observed_log(failed=True).splitlines()
+        issue, geometry = audit_detail_lines(frame=[1, 2, 3, 4])
+        issue_value = json.loads(issue[len(helper.AUDIT_ISSUE):])
+        geometry_value = json.loads(geometry[len(helper.AUDIT_GEOMETRY):])
+        invalid = [
+            [issue, *lines], [*lines[:3], geometry, issue, lines[3]],
+            [*lines[:3], issue, issue, lines[3]], [*lines[:3], lines[3], issue, geometry],
+            [*lines[:3], issue, lines[3], geometry, geometry],
+            [*lines[:3], issue, lines[3], lines[4], geometry], [*lines, issue],
+            [*lines[:3], 'SDK said ' + issue], [*lines[:3], issue.replace('audit issue:', 'audit  issue:')],
+            [*lines[:3], issue, lines[3].replace('"system"', '"pinned"'), geometry],
+        ]
+        for changes in ({'case': 'reviewWeek'}, {'auditSequence': 2}, {'auditSequence': True},
+                        {'issueSequence': 0}, {'issueSequence': 2}, {'issueSequence': True}, {'schemaVersion': True},
+                        {'issueKind': PRIVATE}, {'elementIdentifier': PRIVATE}, {'elementType': PRIVATE},
+                        {'elementPresent': 1}, {'elementPresent': False}, {'elementIdentifier': 'none'},
+                        {'ignored': True}, {'label': PRIVATE}, {PRIVATE: PRIVATE}):
+            invalid.append([*lines[:3], helper.AUDIT_ISSUE + json.dumps({**issue_value, **changes}), lines[3], geometry])
+        for changes in ({'case': 'reviewWeek'}, {'auditSequence': 2}, {'auditSequence': True}, {'issueSequence': 2},
+                        {'issueSequence': True}, {'elementIdentifier': 'captureSave'}, {'elementType': 'staticText'},
+                        {'frame': PRIVATE}, {'frame': [0, 0, True, 1]}, {'frame': [0, 0, -1, 1]},
+                        {'frame': [0, 0, 1, -1]}, {'frame': [100001, 0, 1, 1]}, {'frame': [0, 0, 1]},
+                        {'frame': [0, 0, float('nan'), 1]}, {'frame': [0, float('inf'), 1, 1]}, {'label': PRIVATE}):
+            invalid.append([*lines[:3], issue, lines[3], helper.AUDIT_GEOMETRY + json.dumps({**geometry_value, **changes})])
+        absent_issue, absent_geometry = audit_detail_lines(present=False, frame=[0, 0, 1, 1])
+        invalid.append([*lines[:3], absent_issue, lines[3], absent_geometry])
+        for marker in (helper.AUDIT_ISSUE, helper.AUDIT_GEOMETRY):
+            for malformed in ('{', '[]', '{"schemaVersion":1,"schemaVersion":1}', 'NaN', ' ' * 1025):
+                invalid.append([*lines[:3], issue, lines[3], marker + malformed])
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                mock.patch.object(helper.A, 'verify_receipt', return_value='same'):
+            (Path(temp) / 'system.stderr').write_text('')
+            for log_lines in invalid:
+                (Path(temp) / 'system.stdout').write_text('\n'.join(log_lines))
+                with self.subTest(log_lines=log_lines):
+                    value = helper.failed_native_observations('system', EXPECTED, 'same')
+                    self.assertEqual((value['status'], value['failureStage']), ('rejected', 'stdoutParse'))
+                    self.assertNotIn('auditIssueDetails', value)
+                    self.assertNotIn(PRIVATE, json.dumps(value))
+
     def test_failed_stdout_reports_fixed_probe_mismatches_and_never_exposes_sdk_lines(self):
         lines = [event('started'), helper.PROBE + json.dumps(probe(
             'root', actualMode='pinned', swiftUI='large', uiKit='large')), PRIVATE]
@@ -1088,7 +1161,8 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         self.assertIn('  workflow_dispatch:', workflow)
         paths = re.findall(r"^      - '([^']+)'$", workflow, re.MULTILINE)
         self.assertEqual(paths, ['.github/workflows/dynamic-type-diagnostics.yml',
-                                'scripts/ci-dynamic-type-diagnostics.py', 'tests/test_dynamic_type_diagnostics.py'])
+                                'scripts/ci-dynamic-type-diagnostics.py', 'scripts/ci-adaptive-ui-results.py',
+                                'tests/test_dynamic_type_diagnostics.py'])
         self.assertEqual(workflow.count('timeout-minutes: 8'), 2)
         for mode in helper.MODES:
             self.assertEqual(workflow.count('ci-dynamic-type-diagnostics.py run ' + mode), 1)
