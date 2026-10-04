@@ -300,3 +300,7 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 ### 펼친 배치 작업 제목의 실패 경계
 
 64e Batch Pad의 Two 사례는 실제 세 번 저장·선택 검증 후 날짜 선택창의 펼쳐짐 값까지 확인했지만, planTask의 실제 제목에 도달하는15초/12회 경계에서 실패했다. 기존 c018의 대체 anchor는 library/taskRow에만 적용되며 이 planner/planTask 경로에는 적용되지 않는다. 원인을 구분하도록 iPad·Two·pickerStarted의 planTask 최종 고정실패 직전에만 마지막 반복에서 이미 읽은 exists·역할·대상/소유영역 frame·고유창 수·hittable/enabled·소유영역 포함 여부와 마지막 deadline guard 결과를 고정 schema로 기록한다. 단축평가로 읽지 않은 속성은 null, 실제 읽은 유한0크기 frame은 배열, 비유한·범위밖 frame은 고정 invalid로 구분한다. 이 값은 같은 반복의 순차 평가이며 atomic snapshot이나 마지막 swipe 후 상태가 아니다. deadlineExceededAtLastGuard 역시 최종 실패 시각이 아닌 원래 guard의 관측값이고, swipePerformed가 그 뒤 실제 swipe 수행 여부를 나타낸다. 추가 AX 조회·시계 조회·스크롤·기존15초/12회·원래 assertion·두 실제 사례와 typed gate는 바꾸지 않는다. parser는 현재 source의 정확한 호출과 같은 사례·진행 순서·고정실패·실패 terminal에만 관측을 연결하며, stale·다른 사례·누락·원문 필드·단축평가 모순을 거절한다. 실제 원인과 수정 여부는 후속 Actions의 이 실패 관측으로 판단한다.
+
+### iPad 날짜 선택 안내와 오류색의 실제 표시
+
+8b91 Pad 기본 UI 6개 성공 뒤 수집한 원본 PNG에서 오류 문구의 core 색은 새 errorText인 #A8241B와 일치했고, #F3F2EE 배경의 표시 대비는 6.391:1이었다. 같은 실행의 날짜 선택창은 빠른 선택 제목과 마감 설명 모두 #85858B / #F2F2F7, 표시 대비 상한 3.287:1이었다. 두 PNG는 sRGB를 명시하며 별도 ICC는 없다. 해당 header Text와 footer Text 두 곳에만 기존 supportingText를 적용한다. Section 전체나 날짜 버튼 색·동작·글꼴·접근성 식별자는 바꾸지 않는다. 같은 배경에서 색상 산술 대비는 5.881:1이지만 실제 새 렌더링과 최대 글자·다크 수용은 후속 Actions로 확인한다. 이 표시 픽셀 계산을 안티앨리어싱 이전 WCAG 원색 판정이나 SDK 감사 통과로 확대하지 않는다.

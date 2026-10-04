@@ -1417,7 +1417,7 @@ struct MirrorPlanPicker: View {
         NavigationStack {
             Form {
                 if request.week == nil, usesQuickChoices {
-                    Section("빠르게 정하기") {
+                    Section {
                         MirrorActionGroup {
                             Button { choose(.day(request.displayedContext.planningDay)) } label: {
                                 Text("오늘").frame(maxWidth: .infinity, minHeight: 44)
@@ -1431,6 +1431,8 @@ struct MirrorPlanPicker: View {
                             }
                         }
                         .buttonStyle(.bordered)
+                    } header: {
+                        Text("빠르게 정하기").foregroundStyle(MirrorPalette.supportingText)
                     }
                     .disabled(planChoicesDisabled)
                 }
@@ -1446,6 +1448,7 @@ struct MirrorPlanPicker: View {
                     }
                 } footer: {
                     Text("계획 날짜를 바꿔도 실제 마감은 바뀌지 않아요.")
+                        .foregroundStyle(MirrorPalette.supportingText)
                 }
                 if let week = request.week {
                     Section(weekLabel(week)) {
