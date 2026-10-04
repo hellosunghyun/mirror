@@ -98,6 +98,117 @@ class PreservedMacDiagnosticsTests(unittest.TestCase):
             self.assertEqual(caught.exception.exit_code, 73)
             self.assertEqual(output.getvalue(), '')
 
+    def test_observation_matches_only_verified_same_command_usage_and_public_read_error_prefix(self):
+        usage = 'USAGE: xcresulttool export attachments --path <path> --output-path <output-path>'
+        verified = helper.public_usage_lines(usage, 'attachments')
+        self.assertEqual(verified, {usage})
+        self.assertEqual(helper.public_usage_lines(usage, 'diagnostics'), set())
+        with tempfile.TemporaryDirectory() as temp:
+            private = Path(temp)
+            stdout = ('π ' + PRIVATE).encode()
+            stderr = (usage + '\nError Domain=NSCocoaErrorDomain Code=259 "' + PRIVATE + '"\n'
+                      'Error: Error Domain=NSCocoaErrorDomain Code=260 "' + PRIVATE + '"').encode()
+            (private / 'probe.out').write_bytes(stdout)
+            (private / 'probe.err').write_bytes(stderr)
+            result = helper.native_observation(private, 'probe', verified)
+            self.assertEqual(result['stdout']['bytes'], len(stdout))
+            self.assertEqual(result['stderr']['bytes'], len(stderr))
+            self.assertFalse(result['stdout']['verifiedUsageEcho'])
+            self.assertTrue(result['stderr']['verifiedUsageEcho'])
+            self.assertEqual(result['stderr']['fileReadErrorEnums'], ['fileReadCorruptFile', 'fileReadNoSuchFile'])
+            self.assertNotIn(PRIVATE, json.dumps(result))
+            self.assertNotIn(temp, json.dumps(result))
+            self.assertNotIn(usage, json.dumps(result))
+
+    def test_unknown_messages_paths_and_similar_codes_do_not_become_failure_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            private = Path(temp)
+            (private / 'probe.out').write_bytes(b'')
+            text = '\n'.join((
+                '/private/' + PRIVATE + '/Error Domain=NSCocoaErrorDomain Code=259',
+                'Description: Error Domain=NSCocoaErrorDomain Code=259',
+                ' Error Domain=NSCocoaErrorDomain Code=259',
+                'Error Domain=OtherDomain Code=259', 'Error Domain=NSCocoaErrorDomain Code=2590',
+                'Error Domain=NSCocoaErrorDomain Code=261', PRIVATE))
+            (private / 'probe.err').write_text(text)
+            result = helper.native_observation(private, 'probe')
+            self.assertEqual(result['stdout']['bytes'], 0)
+            self.assertEqual(result['stderr']['fileReadErrorEnums'], [])
+            self.assertFalse(result['stderr']['verifiedUsageEcho'])
+            self.assertNotIn(PRIVATE, json.dumps(result))
+
+    def test_unavailable_unreadable_and_oversized_observations_remain_nonfatal_and_private(self):
+        with tempfile.TemporaryDirectory() as temp:
+            private = Path(temp)
+            self.assertFalse(helper.native_observation(private, 'missing')['stderr']['available'])
+            (private / 'probe.out').write_bytes(b'\xff')
+            (private / 'probe.err').symlink_to(private / 'probe.out')
+            result = helper.native_observation(private, 'probe')
+            self.assertEqual(result['stdout']['bytes'], 1)
+            self.assertFalse(result['stdout']['textDecoded'])
+            self.assertFalse(result['stderr']['available'])
+            (private / 'large.out').touch()
+            with (private / 'large.out').open('wb') as handle:
+                handle.truncate(2 * 1024 * 1024 + 1)
+            result = helper.native_observation(private, 'large')
+            self.assertEqual(result['stdout']['bytes'], 2 * 1024 * 1024 + 1)
+            self.assertFalse(result['stdout']['textDecoded'])
+
+    def test_inspect_keeps_both_exports_original_exit_codes_and_first_failure(self):
+        for codes in ((0, 0), (1, 64)):
+            with self.subTest(codes=codes), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / 'private').mkdir()
+                (root / 'source').mkdir()
+                (root / 'private/ownership.json').write_text(json.dumps(dict(zip(('run', 'artifact', 'job'), self.ownership()))))
+                (root / 'source/unit-context.json').write_text('{}')
+                calls = []
+                def run(arguments, stdout, stderr, check):
+                    calls.append(arguments)
+                    if arguments == ['xcodebuild', '-version']:
+                        stdout.write(b'Xcode 27\n')
+                    elif arguments == ['xcrun', '--sdk', 'macosx', '--show-sdk-version']:
+                        stdout.write(b'27.0\n')
+                    else:
+                        kind = arguments[3]
+                        usage = 'USAGE: xcresulttool export ' + kind + ' --path <path> --output-path <output-path>'
+                        if arguments[-1] == '--help':
+                            stdout.write((usage + '\nOPTIONS:\n  --path <path>\n  --output-path <output-path>').encode())
+                        else:
+                            expected = ['xcrun', 'xcresulttool', 'export', kind, '--path', str(root / 'source/UI.xcresult'),
+                                        '--output-path', str(root / 'private' / kind)]
+                            self.assertEqual(arguments, expected)
+                            code = codes[0 if kind == 'diagnostics' else 1]
+                            if code:
+                                text = ('Error Domain=NSCocoaErrorDomain Code=259 "' + PRIVATE + '"'
+                                        if kind == 'diagnostics' else usage + '\n' + PRIVATE)
+                                stderr.write(text.encode())
+                                return subprocess.CompletedProcess(arguments, code)
+                            (root / 'private' / kind).mkdir()
+                    return subprocess.CompletedProcess(arguments, 0)
+                summary = {'exports': {}}
+                with mock.patch.object(helper, 'verify_context') as context, mock.patch.object(helper, 'verify_tree') as tree, \
+                        mock.patch.object(helper.subprocess, 'run', side_effect=run):
+                    if codes[0]:
+                        with self.assertRaises(helper.DiagnosticFailure) as caught:
+                            helper.inspect(root, summary)
+                        self.assertEqual(caught.exception.exit_code, 1)
+                    else:
+                        helper.inspect(root, summary)
+                        self.assertEqual(summary['phase'], 'complete')
+                context.assert_called_once_with({})
+                tree.assert_called_once_with(root / 'source/UI.xcresult')
+                self.assertEqual(len(calls), 6)
+                for index, kind in enumerate(('diagnostics', 'attachments')):
+                    exported = summary['exports'][kind]
+                    self.assertEqual(exported['status'], 'nativeCommandFailed' if codes[index] else 'exported')
+                    if codes[index]:
+                        self.assertEqual(exported['exitCode'], codes[index])
+                    else:
+                        self.assertEqual(exported['fileCategoryCounts'], dict.fromkeys(helper.CATEGORIES, 0))
+                self.assertNotIn(PRIVATE, json.dumps(summary))
+                self.assertNotIn(temp, json.dumps(summary))
+
     def test_names_and_contents_never_enter_category_output(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp)

@@ -72,6 +72,41 @@ def supports_export(help_text):
                for option in ('--path', '--output-path'))
 
 
+def public_usage_lines(help_text, kind):
+    # 성공한 같은 command의 공개 help만 비교 기준으로 쓴다. 이 원문은 요약에 복사하지 않는다.
+    if kind not in ('diagnostics', 'attachments'):
+        return set()
+    pattern = r'(?:USAGE|Usage): xcresulttool export ' + kind + r'(?: [ -~]*)?'
+    return {line.strip() for line in help_text.splitlines()
+            if len(line.strip()) <= 1024 and re.fullmatch(pattern, line.strip())}
+
+
+def native_observation(private, name, verified_usage=()):
+    # 공개 Foundation file-read code의 등장과 usage echo만 기록한다. bundle 손상 원인으로 단정하지 않는다.
+    read_codes = {'256': 'fileReadUnknown', '257': 'fileReadNoPermission',
+                  '259': 'fileReadCorruptFile', '260': 'fileReadNoSuchFile'}
+    result = {'verifiedPublicUsageLineCount': len(verified_usage)}
+    for stream, extension in (('stdout', 'out'), ('stderr', 'err')):
+        value = {'available': False, 'bytes': None, 'textDecoded': False,
+                 'verifiedUsageEcho': False, 'fileReadErrorEnums': []}
+        result[stream] = value
+        path = private / (name + '.' + extension)
+        try:
+            if not path.is_file() or path.is_symlink():
+                continue
+            value.update(available=True, bytes=path.stat().st_size)
+            if value['bytes'] > 2 * 1024 * 1024:
+                continue
+            text = path.read_bytes().decode('utf-8')
+            value['textDecoded'] = True
+            value['verifiedUsageEcho'] = any(line.strip() in verified_usage for line in text.splitlines())
+            codes = re.findall(r'(?m)^(?:Error: )?Error Domain=NSCocoaErrorDomain Code=(256|257|259|260)(?=$|[ \t])', text)
+            value['fileReadErrorEnums'] = sorted({read_codes[code] for code in codes})
+        except (OSError, UnicodeError):
+            pass  # 관측 실패는 기존 native 종료 코드와 성공/실패를 바꾸지 않는다.
+    return result
+
+
 def file_counts(directory):
     counts = dict.fromkeys(CATEGORIES, 0)
     require(directory.is_dir() and not directory.is_symlink(), 'exportDirectoryMissing')
@@ -128,9 +163,15 @@ def inspect(root, summary):
     require(re.search(r'(?m)^Xcode 27(?:\.\d+)*$', version) and re.fullmatch(r'27(?:\.\d+)*', sdk), 'sdkMismatch')
     # 현재 SDK의 공개 help에서 확인한 두 옵션만 사용한다. 알 수 없는 지원은 실패다.
     summary['phase'] = 'sdkHelp'
+    usages = {}
     for kind in ('diagnostics', 'attachments'):
-        help_text = native(['xcrun', 'xcresulttool', 'export', kind, '--help'], private, kind + '-help')
-        require(supports_export(help_text), 'unsupportedSDKOptions')
+        name = kind + '-help'
+        try:
+            help_text = native(['xcrun', 'xcresulttool', 'export', kind, '--help'], private, name)
+            require(supports_export(help_text), 'unsupportedSDKOptions')
+            usages[kind] = public_usage_lines(help_text, kind)
+        finally:
+            summary.setdefault('nativeOutput', {})[name] = native_observation(private, name, usages.get(kind, ()))
     summary['publicExportOptionsVerified'] = True
     first_failure = None
     for kind in ('diagnostics', 'attachments'):
@@ -143,6 +184,9 @@ def inspect(root, summary):
         except DiagnosticFailure as error:
             summary['exports'][kind] = {'status': error.code, 'exitCode': error.exit_code}
             first_failure = first_failure or error
+        finally:
+            summary.setdefault('nativeOutput', {})[kind + '-export'] = native_observation(
+                private, kind + '-export', usages[kind])
     if first_failure:
         raise first_failure
     summary['phase'] = 'complete'
