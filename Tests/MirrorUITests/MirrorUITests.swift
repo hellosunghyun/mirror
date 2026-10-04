@@ -716,6 +716,13 @@ final class MirrorUITests: XCTestCase {
         try waitForLabel("이번에 정한 0개", element: requireElement("review.progress", in: app), in: app)
         try requireNoElement("state.feedback", in: app)
         try requireNoElement("task.undo", in: app)
+        // 정리 화면의 상세를 열고 닫아도 같은 카드와 미결정 상태로 돌아온다.
+        try activate("review.detail", in: app)
+        try waitForLabel(title, element: requireElement("detail.contentTitle", in: app), in: app)
+        try activate("detail.close", in: app)
+        try requireNoElement("detail.close", in: app)
+        try waitForLabel(title, element: requireElement("review.card", in: app), in: app)
+        try waitForLabel("이번에 정한 0개", element: requireElement("review.progress", in: app), in: app)
         try activate("review.tomorrow", in: app)
         try requireNoElement("review.card", in: app)
         try waitForLabel("이번에 정한 1개", element: requireElement("review.progress", in: app), in: app)
