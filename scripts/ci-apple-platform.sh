@@ -300,12 +300,6 @@ import plistlib
 import subprocess
 import sys
 
-action, directory, platform, scheme, sdk, destination, build, ui_scheme, verification_bounds = sys.argv[1:]
-receipt_git_timeout = 5 if verification_bounds == 'bounded' else None
-directory = Path(directory).resolve()
-products = (directory / 'DerivedData/Build/Products').resolve()
-receipt_path = directory / 'ui-build-receipt.json'
-
 def fail(message):
     raise SystemExit('::error::' + message)
 
@@ -383,6 +377,16 @@ def current_state():
             'ui_bundles': [bundle_record(path) for path in ui_bundles]}
 
 try:
+    arguments = sys.argv[1:]
+    if len(arguments) == 8:
+        arguments.append('normal')
+    action, directory, platform, scheme, sdk, destination, build, ui_scheme, verification_bounds = arguments
+    if verification_bounds not in ('normal', 'bounded'):
+        fail('지원하지 않는 UI 빌드 receipt 검증 한도입니다.')
+    receipt_git_timeout = 5 if verification_bounds == 'bounded' else None
+    directory = Path(directory).resolve()
+    products = (directory / 'DerivedData/Build/Products').resolve()
+    receipt_path = directory / 'ui-build-receipt.json'
     if action == 'record':
         if receipt_path.exists() or receipt_path.is_symlink():
             fail('이전 UI 빌드 receipt가 있으므로 현재 실행의 새 결과 디렉터리가 필요합니다.')

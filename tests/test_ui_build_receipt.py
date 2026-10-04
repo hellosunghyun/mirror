@@ -96,12 +96,14 @@ class UIBuildReceiptTests(unittest.TestCase):
     def _write_context(self):
         self.unit_context.write_text(json.dumps(self.context) + '\n')
 
-    def _invoke(self, action):
+    def _invoke(self, action, *, verification_bounds=None, body_prefix=''):
         environment = dict(self.environment, GITHUB_RUN_ID=self.context['run_id'],
                            GITHUB_RUN_ATTEMPT=self.context['run_attempt'], GITHUB_SHA=self.context['commit'])
         arguments = [action, str(self.directory), *(self.context[key] for key in
                      ('platform', 'scheme', 'sdk', 'destination', 'build_number')), self.ui_scheme]
-        return subprocess.run([sys.executable, '-c', BODY, *arguments], cwd=self.checkout,
+        if verification_bounds is not None:
+            arguments.append(verification_bounds)
+        return subprocess.run([sys.executable, '-c', body_prefix + BODY, *arguments], cwd=self.checkout,
                               env=environment, capture_output=True, text=True, timeout=20)
 
     def _accept(self, action):
@@ -131,6 +133,44 @@ class UIBuildReceiptTests(unittest.TestCase):
                 self.assertTrue({bundle['executable']['path'] for bundle in receipt['ui_bundles']} == expected)
                 self.assertTrue(all(bundle['executable']['sha256'] == hashlib.sha256(self.ui_binary.read_bytes()).hexdigest()
                                     for bundle in receipt['ui_bundles']))
+
+    def test_legacy_and_explicit_normal_receipts_are_verified_by_bounded_mode(self):
+        self._accept('record')  # 기존 8인자 API와 모든 기존 회귀를 그대로 유지한다.
+        original = self.receipt.read_bytes()
+        for bounds in ('normal', 'bounded'):
+            with self.subTest(bounds=bounds):
+                result = self._invoke('verify', verification_bounds=bounds)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout + result.stderr, '')
+                self.assertEqual(self.receipt.read_bytes(), original)
+        self.app_binary.write_bytes(self.app_binary.read_bytes() + b'CHANGED')
+        result = self._invoke('verify', verification_bounds='bounded')
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, '')
+        self.assertIn(result.stderr.strip(), FIXED_ERRORS)
+        self.assertEqual(self.receipt.read_bytes(), original)
+
+    def test_bounded_git_timeout_and_unknown_mode_keep_fixed_errors_and_existing_receipt(self):
+        self._accept('record')
+        original = self.receipt.read_bytes()
+        private = 'SYNTHETIC_PRIVATE_TIMEOUT_CONTENT'
+        prefix = (
+            'import subprocess\n'
+            'def receipt_timeout(*args, **kwargs):\n'
+            '    if kwargs.get("timeout") != 5:\n'
+            '        raise RuntimeError("bounded timeout was not supplied")\n'
+            '    raise subprocess.TimeoutExpired(["git", "' + private + '"], 5, '
+            'output="' + private + '", stderr="' + private + '")\n'
+            'subprocess.check_output = receipt_timeout\n'
+        )
+        for bounds, body_prefix in [('bounded', prefix), (private, '')]:
+            with self.subTest(bounds='bounded' if body_prefix else 'unknown'):
+                result = self._invoke('verify', verification_bounds=bounds, body_prefix=body_prefix)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, '')
+                self.assertIn(result.stderr.strip(), FIXED_ERRORS)
+                self.assertNotIn(private, result.stdout + result.stderr)
+                self.assertEqual(self.receipt.read_bytes(), original)
 
     def test_other_run_attempt_sha_build_or_destination_is_rejected(self):
         self._accept('record')
