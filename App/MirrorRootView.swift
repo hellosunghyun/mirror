@@ -33,6 +33,9 @@ struct MirrorRootView: View {
     @State private var detailCloseRequestedID: UUID?
     @State private var detailDraftTaskID: UUID?
     @State private var detailSelectionRequested: MirrorTaskSelectionRequest?
+    @State private var basePickerPresentationState = PlanPickerPresentationState()
+    @State private var displayedBasePicker: PlanPickerRequest?
+    @State private var basePickerDidAppear = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -99,9 +102,15 @@ struct MirrorRootView: View {
         .sheet(isPresented: $model.showReview) {
             MirrorReviewView().modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "review"))
         }
-        .sheet(item: basePicker, onDismiss: { model.finishWidgetPickerDismissal() }) {
-            MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
+        .sheet(item: basePicker, onDismiss: basePickerDismissal) { request in
+            MirrorPlanPicker(request: request).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
+                .onAppear {
+                    if displayedBasePicker?.id == request.id { basePickerDidAppear = true }
+                }
         }
+        .onChange(of: model.picker?.id, initial: true) { _, _ in retainBasePickerIfNeeded() }
+        .onChange(of: model.showReview) { _, _ in retainBasePickerIfNeeded() }
+        .onChange(of: model.selectedTaskID) { _, _ in retainBasePickerIfNeeded() }
         .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
         .task { await model.start() }
         .onChange(of: model.sceneNavigationGeneration) { _, _ in
@@ -488,7 +497,39 @@ struct MirrorRootView: View {
         } else { model.selectedTaskID = id }
     }
     private var basePicker: Binding<PlanPickerRequest?> {
-        Binding(get: { !model.showReview && model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })
+        let displayedRequest = displayedBasePicker
+        return Binding(get: {
+            guard let displayedRequest, eligibleBasePicker?.id == displayedRequest.id else { return nil }
+            return displayedRequest
+        }, set: { presented in
+            guard presented == nil, let displayedRequest else { return }
+            model.closePlanPicker(requestID: displayedRequest.id)
+        })
+    }
+    private var eligibleBasePicker: PlanPickerRequest? {
+        !model.showReview && model.selectedTaskID == nil ? model.picker : nil
+    }
+    private func retainBasePickerIfNeeded() {
+        let next = eligibleBasePicker
+        // 아직 표시되지 않은 요청은 dismissal이 오지 않을 수 있으므로 최신 요청으로 교체한다.
+        if !basePickerDidAppear, let displayedBasePicker, displayedBasePicker.id != next?.id {
+            basePickerPresentationState.close(requestID: displayedBasePicker.id)
+            self.displayedBasePicker = nil
+        }
+        guard let next, basePickerPresentationState.presentIfIdle(requestID: next.id) else { return }
+        displayedBasePicker = next
+        basePickerDidAppear = false
+    }
+    private var basePickerDismissal: () -> Void {
+        // source가 이미 nil 또는 Q여도 실제 표시했던 P의 ID는 완료 콜백까지 보유한다.
+        let dismissedRequestID = displayedBasePicker?.id
+        return {
+            guard let dismissedRequestID, basePickerPresentationState.close(requestID: dismissedRequestID) else { return }
+            displayedBasePicker = nil
+            basePickerDidAppear = false
+            model.finishWidgetPickerDismissal(requestID: dismissedRequestID)
+            retainBasePickerIfNeeded()
+        }
     }
 }
 

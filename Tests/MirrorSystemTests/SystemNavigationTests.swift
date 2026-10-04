@@ -180,6 +180,103 @@ struct SystemNavigationTests {
         #expect(forward == TextEditingOwnershipState())
     }
 
+    @Test("날짜 선택기의 이전 닫기는 교체된 요청을 보존하고 현재 요청만 닫는다")
+    func planPickerStaleDismissalPreservesReplacement() {
+        let previous = UUID(), current = UUID()
+        var state = PlanPickerPresentationState()
+        state.replace(with: previous)
+        state.replace(with: current)
+        let beforeStaleClose = state
+        let staleClosed = state.close(requestID: previous)
+        #expect(!staleClosed)
+        #expect(state == beforeStaleClose)
+        #expect(state.requestID == current)
+        let currentClosed = state.close(requestID: current)
+        #expect(currentClosed)
+        #expect(state.requestID == nil)
+        let duplicateClosed = state.close(requestID: current)
+        #expect(!duplicateClosed)
+        #expect(state == PlanPickerPresentationState())
+    }
+
+    @Test("날짜 선택기를 다시 표시한 뒤 도착한 이전 nil 콜백은 새 요청을 닫지 않는다")
+    func planPickerReopenedRequestRejectsPreviousDismissal() {
+        let previous = UUID(), reopened = UUID()
+        var state = PlanPickerPresentationState()
+        state.replace(with: previous)
+        state.replace(with: nil)
+        #expect(state.requestID == nil)
+        let clearedClosed = state.close(requestID: previous)
+        #expect(!clearedClosed)
+        state.replace(with: reopened)
+        let staleClosed = state.close(requestID: previous)
+        #expect(!staleClosed)
+        #expect(state.requestID == reopened)
+        state.replace(with: reopened)
+        #expect(state.requestID == reopened)
+        let reopenedClosed = state.close(requestID: reopened)
+        #expect(reopenedClosed)
+        #expect(state.requestID == nil)
+    }
+
+    @Test("표시 중인 날짜 선택기의 닫기가 끝나야 다음 요청을 보유하며 늦은 이전 콜백은 무시한다")
+    func planPickerPresentationWaitsForOwnedDismissalBeforeHandoff() {
+        let previous = UUID(), current = UUID()
+        var state = PlanPickerPresentationState()
+        let emptyPresented = state.presentIfIdle(requestID: nil)
+        #expect(!emptyPresented)
+        #expect(state.requestID == nil)
+        let firstPresented = state.presentIfIdle(requestID: previous)
+        #expect(firstPresented)
+        let duplicatePresented = state.presentIfIdle(requestID: previous)
+        let replacementPresented = state.presentIfIdle(requestID: current)
+        let emptyWhilePresented = state.presentIfIdle(requestID: nil)
+        #expect(!duplicatePresented && !replacementPresented && !emptyWhilePresented)
+        #expect(state.requestID == previous)
+        let previousClosed = state.close(requestID: previous)
+        #expect(previousClosed)
+        let currentPresented = state.presentIfIdle(requestID: current)
+        #expect(currentPresented)
+        let beforeLateDismissal = state
+        let latePreviousClosed = state.close(requestID: previous)
+        let duplicatePreviousClosed = state.close(requestID: previous)
+        #expect(!latePreviousClosed && !duplicatePreviousClosed)
+        #expect(state == beforeLateDismissal)
+        #expect(state.requestID == current)
+    }
+
+    @Test("선택기 닫기 결정은 자기 완료와 이동만 소비하며 늦은 콜백과 새 선택기의 탐색을 분리한다")
+    func planPickerDismissalConsumesOnlyMatchingCompletionAndNavigation() {
+        let previous = UUID(), current = UUID(), observation = UUID()
+        let stale = PlanPickerDismissalDecision(requestID: previous, completedRequestID: current,
+            nextRequestID: current, activeRequestID: current, nextObservationID: observation,
+            currentObservationID: observation)
+        #expect(!stale.clearsCompletion && !stale.consumesNextDestination && !stale.continuesNavigation)
+        let matching = PlanPickerDismissalDecision(requestID: current, completedRequestID: current,
+            nextRequestID: current, activeRequestID: nil, nextObservationID: observation,
+            currentObservationID: observation)
+        #expect(matching.clearsCompletion && matching.consumesNextDestination && matching.continuesNavigation)
+        let repeated = PlanPickerDismissalDecision(requestID: current, completedRequestID: nil,
+            nextRequestID: nil, activeRequestID: nil, nextObservationID: nil,
+            currentObservationID: observation)
+        #expect(!repeated.clearsCompletion && !repeated.consumesNextDestination && !repeated.continuesNavigation)
+        let nextPickerActive = PlanPickerDismissalDecision(requestID: previous, completedRequestID: previous,
+            nextRequestID: previous, activeRequestID: current, nextObservationID: observation,
+            currentObservationID: observation)
+        #expect(nextPickerActive.clearsCompletion && nextPickerActive.consumesNextDestination)
+        #expect(!nextPickerActive.continuesNavigation)
+        let foreignObservation = PlanPickerDismissalDecision(requestID: current, completedRequestID: current,
+            nextRequestID: current, activeRequestID: nil, nextObservationID: UUID(),
+            currentObservationID: observation)
+        #expect(foreignObservation.clearsCompletion && foreignObservation.consumesNextDestination)
+        #expect(!foreignObservation.continuesNavigation)
+        let missingObservation = PlanPickerDismissalDecision(requestID: current, completedRequestID: current,
+            nextRequestID: current, activeRequestID: nil, nextObservationID: nil,
+            currentObservationID: observation)
+        #expect(missingObservation.clearsCompletion && missingObservation.consumesNextDestination)
+        #expect(!missingObservation.continuesNavigation)
+    }
+
     @Test("메뉴 막대 제출은 자기 토큰의 앱 제목 입력 봉투만 그대로 돌려준다")
     func menuBarCaptureOwnershipRejectsForeignCommands() throws {
         let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")

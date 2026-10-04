@@ -214,6 +214,46 @@ public final class SettingsPresentationCoordinator {
     }
 }
 
+/// 표시했던 요청의 닫기만 수용하여 이전 sheet의 늦은 해제가 새 선택기를 지우지 못한다.
+public struct PlanPickerPresentationState: Equatable, Sendable {
+    public private(set) var requestID: UUID?
+
+    public init() {}
+
+    public mutating func replace(with requestID: UUID?) {
+        self.requestID = requestID
+    }
+
+    @discardableResult
+    public mutating func presentIfIdle(requestID: UUID?) -> Bool {
+        guard self.requestID == nil, let requestID else { return false }
+        self.requestID = requestID
+        return true
+    }
+
+    @discardableResult
+    public mutating func close(requestID: UUID) -> Bool {
+        guard self.requestID == requestID else { return false }
+        self.requestID = nil
+        return true
+    }
+}
+
+/// 닫힌 요청과 같은 완료·후속 이동만 정리하고, 새 선택기나 다른 관측의 탐색은 유지한다.
+public struct PlanPickerDismissalDecision: Equatable, Sendable {
+    public let clearsCompletion: Bool
+    public let consumesNextDestination: Bool
+    public let continuesNavigation: Bool
+
+    public init(requestID: UUID, completedRequestID: UUID?, nextRequestID: UUID?, activeRequestID: UUID?,
+                nextObservationID: UUID?, currentObservationID: UUID) {
+        let consumesNext = nextRequestID == requestID
+        clearsCompletion = completedRequestID == requestID
+        consumesNextDestination = consumesNext
+        continuesNavigation = consumesNext && activeRequestID == nil && nextObservationID == currentObservationID
+    }
+}
+
 /// URL은 화면 탐색만 표현한다. 이를 받는 것만으로 명령을 실행하지 않는다.
 public enum MirrorRoute: Equatable, Sendable {
     case capture

@@ -113,11 +113,14 @@ final class AppModel {
     private let settingsPresentationCoordinator = SettingsPresentationCoordinator()
     var showSettings: Bool { settingsPresentationCoordinator.request != nil }
     var showReview = false
-    var picker: PlanPickerRequest?
+    private var pickerPresentationState = PlanPickerPresentationState()
+    var picker: PlanPickerRequest? {
+        didSet { pickerPresentationState.replace(with: picker?.id) }
+    }
     var completedWidgetPickerID: UUID?
     var completedBatchPickerID: UUID?
     @ObservationIgnored private var batchPickerOwner: (id: UUID, token: String, observationID: UUID)?
-    @ObservationIgnored private var widgetNextDestination: (resume: Bool, observationID: UUID)?
+    @ObservationIgnored private var widgetNextDestination: (requestID: UUID, resume: Bool, observationID: UUID)?
     var isLoading = true
     var isSaving = false
     var feedback: String? {
@@ -831,6 +834,12 @@ final class AppModel {
                                    displayedContext: reviewCard == nil ? context : (reviewSession?.context ?? context),
                                    token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week)
     }
+    @discardableResult
+    func closePlanPicker(requestID: UUID) -> Bool {
+        guard !isSaving, pickerPresentationState.close(requestID: requestID) else { return false }
+        picker = nil
+        return true
+    }
     func registerLibraryBatchPicker(_ request: PlanPickerRequest) {
         guard picker?.id == request.id, request.review == nil, request.widgetState == nil else { return }
         batchPickerOwner = (request.id, request.token, storeObservationID)
@@ -840,7 +849,8 @@ final class AppModel {
               !isSaving, !projectionPending, envelope.source == .app, envelope.idempotencyKey == owner.token,
               let request = picker, request.id == owner.id, request.token == owner.token,
               request.review == nil, request.widgetState == nil else { return false }
-        completedBatchPickerID = owner.id; batchPickerOwner = nil; picker = nil
+        completedBatchPickerID = owner.id; batchPickerOwner = nil
+        closePlanPicker(requestID: owner.id)
         return true
     }
     /// 전송에는 작업 ID를 싣지 않는다. 표시한 원본 버전·날짜는 프로세스 안에 고정한다.
@@ -909,8 +919,9 @@ final class AppModel {
         let envelope = makeEnvelope(payload, context: request.displayedContext, token: request.token)
         guard let envelope else { return }
         if await execute(envelope, success: "\(planLabel(target))로 보냈어요.") {
-            if !completeLibraryBatchPicker(envelope), batchPickerOwner?.id != request.id,
-               picker?.id == request.id { picker = nil }
+            if !completeLibraryBatchPicker(envelope), batchPickerOwner?.id != request.id {
+                closePlanPicker(requestID: request.id)
+            }
         }
     }
 
@@ -1024,7 +1035,7 @@ final class AppModel {
         let pickerID = picker?.id
         if await execute(confirmed, success: "마감은 유지하고 선택한 날짜로 보냈어요.") {
             if !completeLibraryBatchPicker(confirmed), let pickerID, batchPickerOwner?.id != pickerID,
-               picker?.id == pickerID, picker?.token == confirmed.idempotencyKey { picker = nil }
+               picker?.id == pickerID, picker?.token == confirmed.idempotencyKey { closePlanPicker(requestID: pickerID) }
         }
     }
 
@@ -1705,14 +1716,19 @@ final class AppModel {
     }
     func finishWidgetPlan(_ request: PlanPickerRequest, resume: Bool) {
         guard completedWidgetPickerID == request.id, picker?.id == request.id, !isSaving, !projectionPending else { return }
-        widgetNextDestination = (resume, storeObservationID)
+        widgetNextDestination = (request.id, resume, storeObservationID)
         completedWidgetPickerID = nil
-        picker = nil
+        closePlanPicker(requestID: request.id)
     }
-    func finishWidgetPickerDismissal() {
-        guard let next = widgetNextDestination else { completedWidgetPickerID = nil; return }
+    func finishWidgetPickerDismissal(requestID: UUID) {
+        let decision = PlanPickerDismissalDecision(requestID: requestID,
+            completedRequestID: completedWidgetPickerID, nextRequestID: widgetNextDestination?.requestID,
+            activeRequestID: picker?.id, nextObservationID: widgetNextDestination?.observationID,
+            currentObservationID: storeObservationID)
+        if decision.clearsCompletion { completedWidgetPickerID = nil }
+        guard decision.consumesNextDestination, let next = widgetNextDestination else { return }
         widgetNextDestination = nil
-        guard next.observationID == storeObservationID else { return }
+        guard decision.continuesNavigation else { return }
         selectedTaskID = nil
         if next.resume { beginReview(mode: .manualResume) }
         else { destination = .today }
