@@ -42,6 +42,8 @@
 
 테스트는 GitHub Actions의 `xcode-27` arm64 public preview 러너에서 실행한다. `DEVELOPER_DIR`는 `/Applications/Xcode_27.app/Contents/Developer`로 고정한다. 테스트 수행 자체는 클라우드 Linux에서 실행하지 않는다.
 
+같은 브랜치의 독립 Swift push·PR 검사는 진행 중인 실행을 새 push로 취소하지 않는다. `cancel-in-progress: false`를 유지해 새 검사는 같은 group에서 기다리며, GitHub의 group당 pending 한 개 제한으로 이전 대기는 최신 대기로 대체될 수 있다. 모든 독립 실행의 순서나 실행 보존을 보장하는 설정은 아니다. 각 push의 Ad Hoc·macOS 배포 검사와 별도 다크 검사는 계속 `preserve_run: true`와 run ID별 group을 사용하므로 서로 독립적으로 보존된다. 이 설정은 테스트 사례·assertion·시간 제한·결과 및 배포 게이트를 바꾸지 않는다. 옛 취소 정책을 가진 과거 ref를 수동 실행하면 현재 group에 영향을 줄 수 있으므로 진행 중인 검사를 보존해야 할 때는 해당 ref를 실행하지 않는다.
+
 | CI 경로 | 실제 명령 | 결과 |
 |---|---|---|
 | SwiftPM | bash scripts/ci-swift-package.sh | Swift Testing 완료 결과와 실행 수 |
