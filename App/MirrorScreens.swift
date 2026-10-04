@@ -1163,6 +1163,7 @@ struct MirrorReviewView: View {
             }
             .navigationTitle("정리")
             #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(MirrorPalette.canvas, for: .navigationBar)
             .toolbarBackgroundVisibility(.visible, for: .navigationBar)
             #endif
