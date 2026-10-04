@@ -355,27 +355,133 @@ public actor WidgetReviewService {
         }
     }
     private func locked<T: Sendable>(_ scope: String, operation: @Sendable () async throws -> T) async throws -> T {
-        let gate = WidgetPresentationGate(url: directory.appendingPathComponent("WidgetPresentation.lock"))
-        let descriptor = try await gate.acquire()
-        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
-        return try await operation()
+        try await WidgetPresentationGate(directory: directory).withLock(operation)
     }
 }
 
-/// actor 한 개가 아니라 프로세스 간 잠금으로 presentation의 read/modify/write를 묶는다.
-private struct WidgetPresentationGate: Sendable {
-    let url: URL
-    func acquire() async throws -> Int32 {
-        try await Task.detached {
-            let descriptor = Darwin.open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
-            guard descriptor >= 0 else { throw SystemServiceError.unavailable }
-            let start = ContinuousClock.now
-            while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
-                if Task.isCancelled { Darwin.close(descriptor); throw CancellationError() }
-                if start.duration(to: .now) > .milliseconds(250) { Darwin.close(descriptor); throw StoreError.busy }
-                usleep(10_000)
-            }
-            return descriptor
-        }.value
+/// 같은 프로세스의 actor 재진입은 suspension 큐로, 다른 프로세스는 기존 flock으로 조율한다.
+struct WidgetPresentationGate: Sendable {
+    let directory: URL
+    /// 내부 회귀는 실제 대기 등록을 관측한다. 호출은 registry 잠금 밖에서만 실행한다.
+    var onQueued: (@Sendable () -> Void)? = nil
+
+    func withLock<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
+        let directory = directory.standardizedFileURL
+        let turn = try await WidgetPresentationQueue.shared.acquire(key: directory.path, onQueued: onQueued)
+        defer { WidgetPresentationQueue.shared.release(turn) }
+        // 선택 직전/직후 취소도 받은 차례를 먼저 반환한다.
+        try Task.checkCancellation()
+        let descriptor = try await acquireFileLock(at: directory.appendingPathComponent("WidgetPresentation.lock"))
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        try Task.checkCancellation()
+        return try await operation()
     }
+
+    private func acquireFileLock(at url: URL) async throws -> Int32 {
+        let acquisition = WidgetPresentationAcquisition()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, any Error>) in
+                // flock 대기는 Swift cooperative executor의 스레드를 점유하지 않는다.
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let descriptor = Darwin.open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+                        guard descriptor >= 0 else { throw SystemServiceError.unavailable }
+                        var handedOff = false
+                        defer { if !handedOff { Darwin.close(descriptor) } }
+                        let start = ContinuousClock.now
+                        while true {
+                            guard !acquisition.cancelled else { throw CancellationError() }
+                            if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
+                                guard !acquisition.cancelled else {
+                                    flock(descriptor, LOCK_UN)
+                                    throw CancellationError()
+                                }
+                                handedOff = true
+                                continuation.resume(returning: descriptor)
+                                return
+                            }
+                            guard errno == EWOULDBLOCK || errno == EAGAIN || errno == EINTR else {
+                                throw SystemServiceError.unavailable
+                            }
+                            if start.duration(to: .now) > .milliseconds(250) { throw StoreError.busy }
+                            usleep(10_000)
+                        }
+                    } catch { continuation.resume(throwing: error) }
+                }
+            }
+        } onCancel: {
+            acquisition.cancel()
+        }
+    }
+}
+
+/// 모든 가변 상태는 lock 안에서만 접근한다. continuation 실행·파일 잠금·await는 밖에 둔다.
+private final class WidgetPresentationQueue: @unchecked Sendable {
+    static let shared = WidgetPresentationQueue()
+    private let lock = NSLock()
+    private struct State {
+        var owner: Turn
+        var waiting: [Turn] = []
+    }
+    final class Turn: @unchecked Sendable {
+        let key: String
+        var cancelled = false
+        var continuation: CheckedContinuation<Void, any Error>?
+        init(key: String) { self.key = key }
+    }
+    private var states: [String: State] = [:]
+
+    func acquire(key: String, onQueued: (@Sendable () -> Void)?) async throws -> Turn {
+        let turn = Turn(key: key)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                var immediate: Result<Void, any Error>?
+                let queued = lock.withLock {
+                    if turn.cancelled { immediate = .failure(CancellationError()); return false }
+                    if states[key] != nil {
+                        turn.continuation = continuation
+                        states[key]?.waiting.append(turn)
+                        return true
+                    }
+                    states[key] = State(owner: turn)
+                    immediate = .success(())
+                    return false
+                }
+                if let immediate { continuation.resume(with: immediate) }
+                if queued { onQueued?() }
+            }
+        } onCancel: {
+            let continuation = self.lock.withLock {
+                turn.cancelled = true
+                let continuation = turn.continuation
+                turn.continuation = nil
+                if continuation != nil { self.states[key]?.waiting.removeAll { $0 === turn } }
+                return continuation
+            }
+            continuation?.resume(throwing: CancellationError())
+        }
+        // 이미 선택된 turn의 취소는 withLock이 defer를 설치한 뒤 검사한다.
+        return turn
+    }
+
+    func release(_ turn: Turn) {
+        let continuation: CheckedContinuation<Void, any Error>? = lock.withLock {
+            guard var state = states[turn.key], state.owner === turn else { return nil }
+            guard !state.waiting.isEmpty else { states.removeValue(forKey: turn.key); return nil }
+            let next = state.waiting.removeFirst()
+            state.owner = next
+            let continuation = next.continuation
+            next.continuation = nil
+            states[turn.key] = state
+            return continuation
+        }
+        continuation?.resume()
+    }
+}
+
+private final class WidgetPresentationAcquisition: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isCancelled = false
+    var cancelled: Bool { lock.withLock { isCancelled } }
+    func cancel() { lock.withLock { isCancelled = true } }
 }

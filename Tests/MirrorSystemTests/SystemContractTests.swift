@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 import MirrorDomain
 import MirrorData
@@ -48,6 +49,56 @@ private func harness(twoTasks: Bool = true) async throws -> WidgetHarness {
     return WidgetHarness(directory: directory, store: store,
                          widget: WidgetReviewService(store: store, directory: directory, workspaceEpoch: configuration.workspaceEpoch),
                          context: context, first: first, second: second)
+}
+
+/// sleep으로 순서를 추측하지 않고 실제 gate 등록·진입·해제를 연결한다.
+private final class WidgetGateSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var signalled = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    var isSignalled: Bool { lock.withLock { signalled } }
+    func signal() {
+        let continuations = lock.withLock {
+            signalled = true
+            let continuations = waiting
+            waiting.removeAll()
+            return continuations
+        }
+        for continuation in continuations { continuation.resume() }
+    }
+    func wait() async {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let ready = lock.withLock {
+                    if signalled { return true }
+                    waiting.append(continuation)
+                    return false
+                }
+                if ready { continuation.resume() }
+            }
+        } onCancel: {
+            // 테스트 취소가 barrier 자체에 갇히지 않고 defer cleanup까지 도달한다.
+            self.signal()
+        }
+    }
+}
+
+private actor WidgetGateProbe {
+    let gate: WidgetPresentationGate
+    init(gate: WidgetPresentationGate) { self.gate = gate }
+    func enter(_ entered: WidgetGateSignal, until release: WidgetGateSignal? = nil) async throws {
+        try await gate.withLock {
+            entered.signal()
+            if let release { await release.wait() }
+            try Task.checkCancellation()
+        }
+    }
+}
+
+private func widgetGateDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorWidgetGate-\(UUID())", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
 }
 
 @Suite("시스템 경계와 실제 SQLite 위젯 명령")
@@ -136,6 +187,109 @@ struct SystemContractTests {
         #expect(snapshot.tasks.filter { $0.plan.target != .unassigned }.count == 1)
         #expect(snapshot.tasks.filter { $0.plan.target == .unassigned }.count == 1)
         #expect(snapshot.records.filter { $0.idempotencyKey == card.decisionToken }.count == 1)
+    }
+
+    @Test("presentation 대기는 같은 actor 재진입과 경로 별칭을 직렬화하고 다른 저장소는 막지 않는다", .timeLimit(.minutes(1)))
+    func presentationQueueSeparatesDirectories() async throws {
+        let directory = try widgetGateDirectory(), otherDirectory = try widgetGateDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: otherDirectory)
+        }
+        let queued = WidgetGateSignal(), entered = WidgetGateSignal(), release = WidgetGateSignal()
+        let nextEntered = WidgetGateSignal(), aliasQueued = WidgetGateSignal(), aliasEntered = WidgetGateSignal()
+        let probe = WidgetGateProbe(gate: .init(directory: directory, onQueued: { queued.signal() }))
+        let first = Task { try await probe.enter(entered, until: release) }
+        defer { release.signal(); first.cancel() }
+        await entered.wait()
+        let second = Task { try await probe.enter(nextEntered) }
+        defer { second.cancel() }
+        await queued.wait()
+        let alias = WidgetPresentationGate(directory: URL(fileURLWithPath: directory.path + "/./"),
+            onQueued: { aliasQueued.signal() })
+        let third = Task {
+            try await alias.withLock {
+                #expect(nextEntered.isSignalled)
+                aliasEntered.signal()
+            }
+        }
+        defer { third.cancel() }
+        await aliasQueued.wait()
+        let independent = try await WidgetPresentationGate(directory: otherDirectory).withLock { true }
+        #expect(independent)
+        #expect(!nextEntered.isSignalled)
+        #expect(!aliasEntered.isSignalled)
+        release.signal()
+        try await first.value
+        try await second.value
+        try await third.value
+        #expect(nextEntered.isSignalled)
+        #expect(aliasEntered.isSignalled)
+    }
+
+    @Test("presentation 등록 전·대기 중·선택 뒤 취소와 작업 오류는 다음 요청을 막지 않는다", .timeLimit(.minutes(1)))
+    func presentationCancellationReleasesTurn() async throws {
+        let directory = try widgetGateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gate = WidgetPresentationGate(directory: directory)
+        let start = WidgetGateSignal(), cancelledEntry = WidgetGateSignal()
+        let cancelledBeforeRegistration = Task {
+            await start.wait()
+            try await gate.withLock { cancelledEntry.signal() }
+        }
+        cancelledBeforeRegistration.cancel()
+        start.signal()
+        await #expect(throws: CancellationError.self) { try await cancelledBeforeRegistration.value }
+        #expect(!cancelledEntry.isSignalled)
+
+        let entered = WidgetGateSignal(), release = WidgetGateSignal(), queued = WidgetGateSignal()
+        let first = Task { try await gate.withLock { entered.signal(); await release.wait() } }
+        defer { release.signal(); first.cancel() }
+        await entered.wait()
+        let waitingGate = WidgetPresentationGate(directory: directory, onQueued: { queued.signal() })
+        let waiting = Task { try await waitingGate.withLock { cancelledEntry.signal() } }
+        defer { waiting.cancel() }
+        await queued.wait()
+        waiting.cancel()
+        await #expect(throws: CancellationError.self) { try await waiting.value }
+        #expect(!cancelledEntry.isSignalled)
+        release.signal()
+        try await first.value
+
+        let selected = WidgetGateSignal(), finish = WidgetGateSignal()
+        let active = Task {
+            try await gate.withLock {
+                selected.signal()
+                await finish.wait()
+                try Task.checkCancellation()
+            }
+        }
+        defer { finish.signal(); active.cancel() }
+        await selected.wait()
+        active.cancel()
+        finish.signal()
+        await #expect(throws: CancellationError.self) { try await active.value }
+        await #expect(throws: SystemServiceError.invalidInput) {
+            try await gate.withLock { () async throws -> Void in throw SystemServiceError.invalidInput }
+        }
+        #expect(try await gate.withLock { true })
+    }
+
+    @Test("외부 presentation flock은 기존 busy 제한을 유지하고 해제 뒤 다시 진입한다", .timeLimit(.minutes(1)))
+    func presentationFileLockRemainsBounded() async throws {
+        let directory = try widgetGateDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let descriptor = Darwin.open(directory.appendingPathComponent("WidgetPresentation.lock").path,
+            O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        try #require(descriptor >= 0)
+        defer { flock(descriptor, LOCK_UN); Darwin.close(descriptor) }
+        try #require(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        let gate = WidgetPresentationGate(directory: directory)
+        let start = ContinuousClock.now
+        await #expect(throws: StoreError.busy) { try await gate.withLock { } }
+        #expect(start.duration(to: .now) >= .milliseconds(250))
+        try #require(flock(descriptor, LOCK_UN) == 0)
+        #expect(try await gate.withLock { true })
     }
 
     @Test("과거 토큰을 다음 작업에 붙인 재시도도 원본 영수증의 대상만 처리한다", .timeLimit(.minutes(1)))
