@@ -415,7 +415,11 @@ final class MirrorUITests: XCTestCase {
                        "펼친 제목도 저장한 전체 원문을 보존한다.")
         recordTomorrowPhase(.detailTitleExpanded)
         try activate("expandableText.collapse", in: app)
-        let expandTitle = try requireElement("expandableText.expand", in: app, preferButtons: true)
+        let expandTitle = try requireElement("expandableText.expand", in: app, preferButtons: true, onMissing: {
+            #if os(macOS)
+            self.recordDetailCollapseFailure(in: app)
+            #endif
+        })
         XCTAssertEqual(expandTitle.elementType, .button, "접힌 제목은 별도의 실제 Button으로 다시 펼칠 수 있다.")
         XCTAssertFalse(element("expandableText.collapse", in: app).exists)
         XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
@@ -1821,6 +1825,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func requireElement(_ identifier: String, in app: XCUIApplication, timeout: TimeInterval = 15,
                                 preferButtons: Bool = false,
+                                onMissing: (@MainActor () -> Void)? = nil,
                                 file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
         #if os(macOS)
         if identifier == "capture.title" {
@@ -1834,6 +1839,7 @@ final class MirrorUITests: XCTestCase {
         }
         let found = element(identifier, in: app, preferButtons: preferButtons)
         guard found.exists || found.waitForExistence(timeout: timeout) else {
+            onMissing?()
             printFailurePrefix("필수 UI 요소가 없다: \(identifier)")
             XCTFail("필수 UI 요소가 없다: \(identifier). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.missingElement(identifier)
@@ -2105,6 +2111,60 @@ final class MirrorUITests: XCTestCase {
         element.tap()
         #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    private func recordDetailCollapseFailure(in app: XCUIApplication) {
+        guard app.state == .runningForeground else { return }
+        let windows = app.windows
+        guard windows.count == 1 else { return }
+        let window = windows.element(boundBy: 0)
+        guard window.exists else { return }
+        func frameValue(_ frame: CGRect) -> Any {
+            let values = [frame.minX, frame.minY, frame.width, frame.height]
+            guard values.allSatisfy({ $0.isFinite }), frame.width > 0, frame.height > 0 else { return NSNull() }
+            return values.map { Double($0) }
+        }
+        guard !(frameValue(window.frame) is NSNull), app.state == .runningForeground else { return }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "mirror-diagnostic-detail-collapse"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        var controls: [String: Any] = [:]
+        for (name, identifier) in [("title", "detail.contentTitle"), ("expand", "expandableText.expand"),
+                                   ("collapse", "expandableText.collapse")] {
+            let query = window.descendants(matching: .any).matching(identifier: identifier)
+            let count = query.count
+            var observation: [String: Any] = ["count": count, "frame": NSNull(), "exists": NSNull(),
+                                               "hittable": NSNull(), "enabled": NSNull()]
+            if count == 1 {
+                let element = query.element(boundBy: 0)
+                let exists = element.exists
+                observation["exists"] = exists
+                if exists {
+                    observation["frame"] = frameValue(element.frame)
+                    observation["hittable"] = element.isHittable
+                    observation["enabled"] = element.isEnabled
+                }
+            }
+            controls[name] = observation
+        }
+        let owners = window.scrollViews.containing(NSPredicate(format: "identifier == %@", "detail.plan"))
+        let ownerCount = owners.count
+        var ownerFrame: Any = NSNull()
+        if ownerCount == 1 {
+            let owner = owners.element(boundBy: 0)
+            if owner.exists { ownerFrame = frameValue(owner.frame) }
+        }
+        let diagnostic: [String: Any] = ["method": "testTomorrowStaysOutOfTodayAndIsSearchableInLibrary",
+            "phase": "collapseActivatedExpandLookupFailed", "controls": controls,
+            "scrollOwnerCount": ownerCount, "scrollOwnerFrame": ownerFrame]
+        if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            print("UI detail collapse failure diagnostic: \(json)")
+        }
+    }
+    #endif
 
     @MainActor
     private func recordValidationRecoveryDiagnostic(for element: XCUIElement, identifier: String,
