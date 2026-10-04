@@ -1282,6 +1282,67 @@ esac
             self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row] + suffix), EXPECTED, entries))
         self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix[:-1] + [row, event(state='failed')]), EXPECTED, entries))
 
+    def test_reveal_owner_schema_two_keeps_nonhittable_parent_with_owned_typed_target(self):
+        source, _ = self.progress_fixture()
+        for platform in ('iphone', 'ipad', 'macos'):
+            owner = ('MirrorMacAdaptiveUITests' if platform == 'macos' else BUNDLE) + '.MirrorAdaptiveUITests'
+            expected = {**EXPECTED, 'platform': platform}
+            entries = helper.source_method_entries(source, platform)
+            fields = {'candidateCount': 1, 'areaCount': 1, 'hittableCount': 0,
+                      'typedTargetCount': 1, 'columnCount': 1, 'intersectCount': 1,
+                      'keyboardCount': None if platform == 'macos' else 0, 'keyboardFrame': None}
+            prefix = [event(owner=owner), self.case_diagnostic_row(), self.progress_row(),
+                      self.case_diagnostic_row(sequence=1, element='captureSave')]
+            for version in (1, 2):
+                row = self.reveal_owner_row(schemaVersion=version, **fields)
+                result = helper.xctest_case_diagnostics('\n'.join(
+                    prefix + [row, event(owner=owner, state='failed')]), expected, entries)
+                if version == 1:
+                    self.assertIsNone(result, '이전 schema의 필터 감소 계약은 그대로 유지한다.')
+                else:
+                    self.assertEqual(result[0]['revealOwnerFailure'], json.loads(row[len(helper.REVEAL_OWNER_MARKER):]))
+
+    def test_reveal_owner_schema_two_rejects_invalid_independent_counts_and_case_ownership(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row(),
+                  self.case_diagnostic_row(sequence=1, element='captureSave')]
+        fields = {'schemaVersion': 2, 'candidateCount': 1, 'areaCount': 1, 'hittableCount': 0,
+                  'typedTargetCount': 1, 'columnCount': 1, 'intersectCount': 1,
+                  'keyboardCount': 0, 'keyboardFrame': None}
+        bad = ({'schemaVersion': True}, {'schemaVersion': 0}, {'schemaVersion': 3},
+               {'candidateCount': True}, {'candidateCount': 10_001}, {'areaCount': 2},
+               {'hittableCount': -1}, {'hittableCount': 2}, {'typedTargetCount': 2},
+               {'columnCount': 2}, {'intersectCount': 2}, {'case': 'searchDetailUndo'},
+               {'requestedElement': 'captureTitle'}, {'requestSequence': 2}, {'label': PRIVATE})
+        for change in bad:
+            with self.subTest(change=change):
+                row = self.reveal_owner_row(**{**fields, **change})
+                self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(
+                    prefix + [row, event(state='failed')]), EXPECTED, entries))
+        row = self.reveal_owner_row(**fields)
+        for suffix in ([], [event(state='passed')], [event(state='skipped')],
+                       [row, event(state='failed')],
+                       [self.case_diagnostic_row(sequence=2, element='captureTitle'), event(state='failed')]):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row] + suffix), EXPECTED, entries))
+
+    def test_reveal_owner_schema_two_does_not_change_other_marker_versions(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row(),
+                  self.case_diagnostic_row(sequence=1, element='captureSave')]
+        good = prefix + [self.capture_save_failure_row(), event(state='failed')]
+        self.assertIsNotNone(helper.xctest_case_diagnostics('\n'.join(good), EXPECTED, entries))
+        for index in (1, 4):
+            changed = list(good)
+            changed[index] = changed[index].replace('"schemaVersion": 1', '"schemaVersion": 2')
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(changed), EXPECTED, entries))
+        good_audit = self.case_protocol_rows()
+        self.assertIsNotNone(helper.xctest_case_diagnostics('\n'.join(good_audit), EXPECTED, entries))
+        changed_audit = [row.replace('"schemaVersion": 1', '"schemaVersion": 2')
+                         if row.startswith(helper.AUDIT_BOUNDARY_MARKER) else row for row in good_audit]
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(changed_audit), EXPECTED, entries))
+
     def failure_image_fixture(self, directory):
         root = Path(directory).resolve()
         source, _ = self.progress_fixture()

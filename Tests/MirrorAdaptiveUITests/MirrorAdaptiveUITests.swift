@@ -653,8 +653,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
                 let bounds = surface.frame
                 guard hasArea(bounds) else { return nil }
                 areaCount += 1
-                guard surface.isHittable else { return nil }
-                hittableCount += 1
+                // 부모의 탭 지점은 소유 조건이 아니다. 실제 자식을 소유한 viewport에서 스크롤한다.
+                if surface.isHittable { hittableCount += 1 }
                 guard surface.descendants(matching: elementType).matching(ownerPredicate).firstMatch.exists else { return nil }
                 typedTargetCount += 1
                 guard bounds.minX <= frame.midX && frame.midX <= bounds.maxX else { return nil }
@@ -723,7 +723,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         }
         #endif
         emitMeasurement("UI adaptive reveal owner diagnostic:", fields: [
-            "schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "schemaVersion": 2, "case": diagnosticCase.rawValue,
             "requestSequence": diagnosticRequestSequence, "requestedElement": diagnosticRequestedElement.rawValue,
             "candidateCount": counts[0], "areaCount": counts[1], "hittableCount": counts[2],
             "typedTargetCount": counts[3], "columnCount": counts[4], "intersectCount": counts[5],

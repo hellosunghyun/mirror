@@ -522,8 +522,13 @@ def reveal_owner_fields(value, platform):
     counts = ('candidateCount', 'areaCount', 'hittableCount', 'typedTargetCount', 'columnCount', 'intersectCount')
     keys = {'schemaVersion', 'case', 'requestSequence', 'requestedElement', 'keyboardCount', 'keyboardFrame'} | set(counts)
     if not (isinstance(value, dict) and set(value) == keys
-            and all(type(value[key]) is int and 0 <= value[key] <= 10_000 for key in counts)
-            and all(value[first] >= value[second] for first, second in zip(counts, counts[1:]))):
+            and type(value['schemaVersion']) is int and value['schemaVersion'] in (1, 2)
+            and all(type(value[key]) is int and 0 <= value[key] <= 10_000 for key in counts)):
+        return False
+    # v1은 기존 소유 필터 순서를 보존한다. v2의 부모 hittable은 area 후보 중 별도 관측값이다.
+    filters = counts if value['schemaVersion'] == 1 else tuple(key for key in counts if key != 'hittableCount')
+    if (value['hittableCount'] > value['areaCount']
+            or not all(value[first] >= value[second] for first, second in zip(filters, filters[1:]))):
         return False
     count, frame = value['keyboardCount'], value['keyboardFrame']
     if platform == 'macos':
@@ -625,8 +630,9 @@ def xctest_case_diagnostics(log, expected, entries):
             value = strict_json(text[len(marker):])
         except (AdaptiveError, ValueError, TypeError, RecursionError):
             return None
+        versions = (1, 2) if marker == REVEAL_OWNER_MARKER else (1,)
         if not (isinstance(value, dict) and type(value.get('schemaVersion')) is int
-                and value['schemaVersion'] == 1 and value.get('case') == CASE_DIAGNOSTIC_NAMES[active]):
+                and value['schemaVersion'] in versions and value.get('case') == CASE_DIAGNOSTIC_NAMES[active]):
             return None
         if marker == CASE_DIAGNOSTIC_MARKER:
             if (set(value) != {'schemaVersion', 'case', 'requestSequence', 'requestedElement'}
