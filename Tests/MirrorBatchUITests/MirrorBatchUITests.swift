@@ -175,7 +175,7 @@ final class MirrorBatchUITests: XCTestCase {
             try activate("capture.save", in: app)
             try waitValue("", element: field)
             let feedback = try unique(app.staticTexts.matching(identifier: "capture.feedback"))
-            XCTAssertEqual(feedback.label, "보관함에 넣었어요.")
+            XCTAssertEqual(displayedText(of: feedback), "보관함에 넣었어요.")
             XCTAssertTrue(feedback.isHittable)
             progress(.captureSaved, ordinal: index + 1)
         }
@@ -616,6 +616,12 @@ final class MirrorBatchUITests: XCTestCase {
     private func textValue(_ element: XCUIElement) -> String {
         let value = element.value as? String ?? ""
         return value == element.placeholderValue ? "" : value
+    }
+
+    private func displayedText(of element: XCUIElement) -> String {
+        // Native와 같은 Mac StaticText 계약: 비어 있지 않은 label을 우선한다.
+        let label = element.label
+        return label.isEmpty ? (element.value as? String ?? "") : label
     }
 
     private func waitValue(_ value: String, element: XCUIElement,
