@@ -15,12 +15,14 @@ import hashlib
 import html
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
 import stat
 import struct
+import subprocess
 import sys
 import tempfile
 from urllib.error import HTTPError
@@ -59,6 +61,16 @@ MAX_PIXELS = 40_000_000
 MAX_FILES = 10_000
 MAX_SCREENSHOTS = 240
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
+PRIVATE_NATIVE_FAILURES = {
+    'mirror-diagnostic-review-feedback': (
+        'testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday',
+        'UI review feedback failure diagnostic: ', 'initialZeroDecisionsFeedbackUnexpected',
+        {'method', 'phase', 'feedback', 'reviewSheetCount', 'reviewSheetFeedbackCount'}),
+    'mirror-diagnostic-detail-collapse': (
+        'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary',
+        'UI detail collapse failure diagnostic: ', 'collapseActivatedExpandLookupFailed',
+        {'method', 'phase', 'controls', 'scrollOwnerCount', 'scrollOwnerFrame'}),
+}
 KNOWN_EXPORT_KEYS = (
     'tests', 'attachments', 'testName', 'testIdentifier', 'testIdentifierURL',
     'exportedFileName', 'suggestedHumanReadableName', 'name', 'uniformTypeIdentifier',
@@ -658,6 +670,236 @@ def prepare(source, output, platform, expected):
     return manifest
 
 
+def private_native_failure_context(directory, expected, native_exit_code):
+    """현재 Mac 실행의 receipt와 실제 실패 사례에 연결된 완료 callback만 고른다."""
+    require(type(native_exit_code) is int and 0 < native_exit_code < 256, 'nativeFailureRequired')
+    require(directory.is_dir() and not directory.is_symlink(), 'invalidNativeDirectory')
+    require(all(os.environ.get(key) == expected[value] for key, value in (
+        ('GITHUB_SHA', 'commitSHA'), ('GITHUB_RUN_NUMBER', 'buildNumber'),
+        ('GITHUB_RUN_ID', 'runID'), ('GITHUB_RUN_ATTEMPT', 'runAttempt'))), 'nativeContextMismatch')
+    root = Path(__file__).resolve().parents[1]
+    require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root,
+                                    stderr=subprocess.DEVNULL, timeout=5).decode().strip() == expected['commitSHA'],
+            'nativeCheckoutMismatch')
+    require(subprocess.run(['git', '--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', '--quiet', 'HEAD', '--'], cwd=root,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0,
+            'nativeCheckoutMismatch')
+    require(not subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--',
+                                         'App', 'Sources', 'Extensions', 'Tests'], cwd=root,
+                                        stderr=subprocess.DEVNULL, timeout=5), 'nativeCheckoutMismatch')
+    context_bytes = read_regular(directory / 'unit-context.json', MAX_JSON_BYTES)
+    context = strict_json(context_bytes)
+    require(context == {'platform': 'macos', 'scheme': 'MirrorMac', 'sdk': 'macosx',
+                        'destination': 'platform=macOS,arch=arm64', 'run_id': expected['runID'],
+                        'run_attempt': expected['runAttempt'], 'commit': expected['commitSHA'],
+                        'build_number': expected['buildNumber']}, 'nativeContextMismatch')
+    receipt_bytes = read_regular(directory / 'ui-build-receipt.json', MAX_JSON_BYTES)
+    receipt = strict_json(receipt_bytes)
+    require(set(receipt) == {'format_version', 'context', 'ui_scheme', 'configuration', 'code_coverage',
+                            'code_signing_allowed', 'unit_context_sha256', 'xctestruns', 'app', 'ui_bundles'}
+            and type(receipt['format_version']) is int and receipt['format_version'] == 1
+            and receipt['context'] == context and receipt['unit_context_sha256'] == digest(context_bytes)
+            and receipt['ui_scheme'] == 'MirrorMacUI' and receipt['configuration'] == 'Debug'
+            and receipt['code_coverage'] is False and receipt['code_signing_allowed'] is False,
+            'nativeReceiptMismatch')
+    # shell은 바로 앞에서 기존 ui_build_receipt verify로 실제 Products 전체를 다시 검증한다.
+    # 여기서도 receipt의 모든 file record를 현재 Products 바이트와 독립 대조한다.
+    products = directory / 'DerivedData/Build/Products'
+    require(products.is_dir() and not products.is_symlink(), 'nativeReceiptMismatch')
+    def file_record(record):
+        require(isinstance(record, dict) and set(record) == {'path', 'resolved_path', 'sha256'},
+                'nativeReceiptMismatch')
+        for key in ('path', 'resolved_path'):
+            value = record[key]
+            require(isinstance(value, str) and value and not Path(value).is_absolute()
+                    and '..' not in Path(value).parts and '\\' not in value, 'nativeReceiptMismatch')
+        path = products / record['path']
+        resolved = path.resolve(strict=True)
+        require(resolved.is_relative_to(products.resolve())
+                and resolved.relative_to(products.resolve()).as_posix() == record['resolved_path']
+                and isinstance(record['sha256'], str) and re.fullmatch(r'[0-9a-f]{64}', record['sha256'])
+                and digest(read_regular(path, MAX_TOTAL_BYTES)) == record['sha256'], 'nativeReceiptMismatch')
+    def bundle(record):
+        require(isinstance(record, dict) and set(record) == {'path', 'resolved_path', 'info', 'executable', 'build_number'}
+                and record['build_number'] == expected['buildNumber'], 'nativeReceiptMismatch')
+        for key in ('path', 'resolved_path'):
+            value = record[key]
+            require(isinstance(value, str) and value and not Path(value).is_absolute()
+                    and '..' not in Path(value).parts and '\\' not in value, 'nativeReceiptMismatch')
+        resolved = (products / record['path']).resolve(strict=True)
+        require(resolved.is_dir() and resolved.is_relative_to(products.resolve())
+                and resolved.relative_to(products.resolve()).as_posix() == record['resolved_path'],
+                'nativeReceiptMismatch')
+        for key in ('info', 'executable'):
+            file_record(record[key])
+            require((products / record[key]['path']).resolve().is_relative_to(resolved), 'nativeReceiptMismatch')
+    bundle(receipt['app'])
+    for key in ('ui_bundles', 'xctestruns'):
+        require(isinstance(receipt[key], list) and 0 < len(receipt[key]) <= 16, 'nativeReceiptMismatch')
+        for record in receipt[key]:
+            (bundle if key == 'ui_bundles' else file_record)(record)
+    result = directory / 'UI.xcresult'
+    require(result.is_dir() and not result.is_symlink(), 'nativeResultMissing')
+    tree = strict_json(read_regular(directory / 'ui-tests.json', MAX_JSON_BYTES))
+    bundles, cases = [], {}
+    def visit(node, owned=False, depth=0):
+        require(depth <= 64, 'nativeResultMismatch')
+        if isinstance(node, dict):
+            if node.get('nodeType') == 'UI test bundle':
+                owned = node.get('name') == 'MirrorMacUITests'
+                if owned:
+                    bundles.append(node.get('result'))
+            if owned and node.get('nodeType') == 'Test Case':
+                identifier = node.get('nodeIdentifier')
+                require(isinstance(identifier, str) and identifier not in cases, 'nativeResultMismatch')
+                cases[identifier] = node
+            for value in node.values():
+                visit(value, owned, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value, owned, depth + 1)
+    visit(tree)
+    require(bundles == ['Failed'], 'nativeFailureRequired')
+    lines = read_regular(directory / 'ui.log', MAX_TOTAL_BYTES).decode('utf-8', errors='replace').splitlines()
+    selected = {}
+    for name, (method, marker, phase, fields) in PRIVATE_NATIVE_FAILURES.items():
+        event = re.compile(r"Test Case '-\[MirrorMacUITests\.MirrorUITests " + re.escape(method)
+                           + r"\]' (?:(started)\.|(passed|failed|skipped) \([0-9.]+ seconds\)\.)")
+        events = [(index, match[1] or match[2]) for index, line in enumerate(lines) if (match := event.fullmatch(line))]
+        callbacks = [(index, strict_json(line[len(marker):]))
+                     for index, line in enumerate(lines) if line.startswith(marker)]
+        completed = [(index, value) for index, value in callbacks
+                     if isinstance(value, dict) and set(value) == fields
+                     and value.get('method') == method and value.get('phase') == phase]
+        if not completed:
+            continue
+        require(len(callbacks) == len(completed) == 1 and len(events) == 2
+                and [state for _, state in events] == ['started', 'failed']
+                and events[0][0] < completed[0][0] < events[1][0], 'nativeFailureAttributionMismatch')
+        value = completed[0][1]
+        def count(number):
+            return type(number) is int and 0 <= number <= MAX_FILES
+        def frame(rectangle):
+            return rectangle is None or (isinstance(rectangle, list) and len(rectangle) == 4
+                and all(type(number) in (int, float) and math.isfinite(number) for number in rectangle)
+                and rectangle[2] > 0 and rectangle[3] > 0)
+        if name == 'mirror-diagnostic-review-feedback':
+            feedback = value['feedback']
+            require(isinstance(feedback, dict) and set(feedback) == {'count', 'role', 'frame', 'hittable'}
+                    and count(feedback['count']) and feedback['role'] in (None, 'staticText', 'textField', 'textView', 'button', 'other')
+                    and frame(feedback['frame']) and (feedback['hittable'] is None or type(feedback['hittable']) is bool)
+                    and count(value['reviewSheetCount'])
+                    and (value['reviewSheetFeedbackCount'] is None or count(value['reviewSheetFeedbackCount'])),
+                    'nativeFailureAttributionMismatch')
+        else:
+            controls = value['controls']
+            require(isinstance(controls, dict) and set(controls) == {'title', 'expand', 'collapse'}
+                    and count(value['scrollOwnerCount']) and frame(value['scrollOwnerFrame']),
+                    'nativeFailureAttributionMismatch')
+            for control in controls.values():
+                require(isinstance(control, dict) and set(control) == {'count', 'frame', 'exists', 'hittable', 'enabled'}
+                        and count(control['count']) and frame(control['frame'])
+                        and all(control[key] is None or type(control[key]) is bool for key in ('exists', 'hittable', 'enabled')),
+                        'nativeFailureAttributionMismatch')
+        identifier = 'MirrorUITests/' + method + '()'
+        case = cases.get(identifier, {})
+        require(case.get('name') == method + '()' and case.get('result') == 'Failed',
+                'nativeFailureAttributionMismatch')
+        selected[name] = identifier
+    require(selected, 'nativeFailureScreenshotNotRecorded')
+    return digest(receipt_bytes), selected
+
+
+def private_native_failure_entries(exported, selected):
+    if isinstance(exported, list):
+        records = exported
+    elif isinstance(exported, dict) and set(exported) == {'tests'} and isinstance(exported['tests'], list):
+        records = exported['tests']
+    elif isinstance(exported, dict) and isinstance(exported.get('attachments'), list):
+        records = [exported]
+    else:
+        raise EvidenceError('unsupportedPrivateExport')
+    require(0 < len(records) <= MAX_FILES, 'unsupportedPrivateExport')
+    entries = {}
+    for record in records:
+        require(isinstance(record, dict) and isinstance(record.get('attachments'), list)
+                and len(record['attachments']) <= MAX_FILES, 'unsupportedPrivateExport')
+        for attachment in record['attachments']:
+            require(isinstance(attachment, dict), 'unsupportedPrivateExport')
+            human = attachment.get('suggestedHumanReadableName', attachment.get('name'))
+            if not isinstance(human, str) or not human.startswith('mirror-diagnostic-'):
+                continue
+            name = next((candidate for candidate in PRIVATE_NATIVE_FAILURES
+                         if human in (candidate, candidate + '.png')
+                         or re.fullmatch(re.escape(candidate) + r'_[0-9]{1,6}_' + SDK_UUID_PATTERN + r'\.png', human)), None)
+            require(name is not None, 'privateAttachmentNameMismatch')
+            if name not in selected:
+                continue
+            require(name not in entries and record.get('testIdentifier') == selected[name],
+                    'privateAttachmentMethodMismatch')
+            if 'name' in attachment and 'suggestedHumanReadableName' in attachment:
+                require(attachment['name'] in (name, name + '.png', human), 'privateAttachmentAliasMismatch')
+            filename = attachment.get('exportedFileName')
+            require(isinstance(filename, str) and SAFE_BASENAME.fullmatch(filename)
+                    and attachment.get('uniformTypeIdentifier') in (None, 'public.png'), 'privateAttachmentPathMismatch')
+            entries[name] = filename
+    require(set(entries) == set(selected) and len(set(entries.values())) == len(entries), 'privateAttachmentSetMismatch')
+    return entries
+
+
+def private_native_failure(directory, output, expected, native_exit_code):
+    require(output == directory / 'ui-private-diagnostics' and not output.exists() and not output.is_symlink(),
+            'privateOutputMustBeFresh')
+    receipt_hash, selected = private_native_failure_context(directory, expected, native_exit_code)
+    # SDK가 내보낸 전체 첨부·stdout·stderr는 0700 임시 폴더를 벗어나지 않는다.
+    with tempfile.TemporaryDirectory(prefix='mirror-native-failure-') as scratch:
+        temporary = Path(scratch)
+        with (temporary / 'sdk.stdout').open('wb') as stdout, (temporary / 'sdk.stderr').open('wb') as stderr:
+            subprocess.run(['xcrun', 'xcresulttool', 'export', 'attachments', '--help'],
+                           stdout=stdout, stderr=stderr, check=True, timeout=5)
+        help_bytes = b''.join(read_regular(path, MAX_JSON_BYTES) for path in
+                              (temporary / 'sdk.stdout', temporary / 'sdk.stderr') if path.stat().st_size)
+        help_text = help_bytes.decode('utf-8', errors='replace')
+        require(all(re.search(r'(?<![A-Za-z-])' + option + r'(?=[\s=]|$)', help_text)
+                    for option in ('--path', '--output-path')), 'privateExportUnsupported')
+        source = temporary / 'attachments'
+        with (temporary / 'sdk.stdout').open('wb') as stdout, (temporary / 'sdk.stderr').open('wb') as stderr:
+            subprocess.run(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', str(directory / 'UI.xcresult'),
+                            '--output-path', str(source)], stdout=stdout, stderr=stderr, check=True, timeout=30)
+        files = directory_files(source)
+        manifests = [path for path in files if path.name == 'manifest.json']
+        require(len(manifests) == 1, 'missingPrivateExportManifest')
+        entries = private_native_failure_entries(strict_json(read_regular(manifests[0], MAX_JSON_BYTES)), selected)
+        images, shots = {}, []
+        for name, filename in sorted(entries.items()):
+            candidates = [path for path in files if path.name == filename]
+            require(len(candidates) == 1, 'privateAttachmentPathMismatch')
+            data, width, height = clean_png(read_regular(candidates[0], MAX_PNG_BYTES))
+            public_name = name + '.png'
+            images[public_name] = data
+            shots.append({'name': name, 'method': PRIVATE_NATIVE_FAILURES[name][0], 'file': public_name,
+                          'sha256': digest(data), 'bytes': len(data), 'width': width, 'height': height})
+        manifest = {**expected, 'formatVersion': 1, 'kind': 'mirror-native-failure-diagnostic',
+                    'platform': 'mac', 'diagnosticOnly': True, 'nativeExitCode': native_exit_code,
+                    'uiBuildReceiptSHA256': receipt_hash, 'screenshots': shots}
+        images['manifest.json'] = (json.dumps(manifest, sort_keys=True) + '\n').encode()
+        images['SHA256SUMS'] = ''.join(digest(data) + '  ' + name + '\n'
+                                       for name, data in sorted(images.items())).encode()
+        stage = Path(tempfile.mkdtemp(prefix='.mirror-native-private-', dir=directory))
+        try:
+            for name, data in images.items():
+                path = stage / name
+                with path.open('xb') as stream:
+                    os.chmod(path, 0o600)
+                    stream.write(data)
+            require(not output.exists() and not output.is_symlink(), 'privateOutputMustBeFresh')
+            os.replace(stage, output)
+        finally:
+            if stage.exists():
+                shutil.rmtree(stage)
+    return manifest
+
+
 def aggregate(source, output, expected):
     separate_paths(source, output)
     manifests = [path for path in directory_files(source) if path.name == 'manifest.json']
@@ -806,15 +1048,18 @@ def main(argv=None):
     try:
         parser = SafeArgumentParser(description=__doc__)
         commands = parser.add_subparsers(dest='command', required=True, parser_class=SafeArgumentParser)
-        for name in ('prepare', 'aggregate', 'publish'):
+        for name in ('prepare', 'aggregate', 'publish', 'private-native-failure'):
             subparser = commands.add_parser(name)
             subparser.add_argument('--sha', required=True)
             subparser.add_argument('--build-number', required=True)
             subparser.add_argument('--run-id', required=True)
             subparser.add_argument('--attempt', required=True)
-            if name == 'prepare':
+            if name in ('prepare', 'private-native-failure'):
                 subparser.add_argument('--input', type=Path, required=True)
-                subparser.add_argument('--platform', choices=PLATFORMS, required=True)
+                if name == 'prepare':
+                    subparser.add_argument('--platform', choices=PLATFORMS, required=True)
+                else:
+                    subparser.add_argument('--native-exit-code', type=int, required=True)
             elif name == 'aggregate':
                 subparser.add_argument('--input-root', type=Path, required=True)
             else:
@@ -826,6 +1071,8 @@ def main(argv=None):
         expected = identity(args.sha, args.build_number, args.run_id, args.attempt)
         if command == 'prepare':
             manifest = prepare(args.input, args.output, args.platform, expected)
+        elif command == 'private-native-failure':
+            manifest = private_native_failure(args.input, args.output, expected, args.native_exit_code)
         elif command == 'aggregate':
             manifest = aggregate(args.input_root, args.output, expected)
         else:
@@ -847,7 +1094,7 @@ def main(argv=None):
             publication_phase('reportResult')
             print(json.dumps({'command': command, 'status': 'published', 'url': url}, sort_keys=True))
             return 0
-        print(json.dumps({'command': command, 'status': 'prepared' if command == 'prepare' else 'aggregated',
+        print(json.dumps({'command': command, 'status': 'prepared' if command in ('prepare', 'private-native-failure') else 'aggregated',
                           'screenshotCount': len(manifest['screenshots'])}, sort_keys=True))
         return 0
     except EvidenceError as error:

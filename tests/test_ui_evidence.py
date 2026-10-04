@@ -6,8 +6,10 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import struct
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -87,6 +89,225 @@ def raw_export(directory, *, stages=helper.STAGES, shape='list', image=None):
 
 def rewrite_export(directory, value):
     (directory / 'manifest.json').write_text(json.dumps(value))
+
+
+class PrivateNativeFailureEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / 'ci-macos'
+        self.directory.mkdir()
+        self.output = self.directory / 'ui-private-diagnostics'
+        self.products = self.directory / 'DerivedData/Build/Products'
+        self.context = {'platform': 'macos', 'scheme': 'MirrorMac', 'sdk': 'macosx',
+                        'destination': 'platform=macOS,arch=arm64', 'run_id': IDENTITY['runID'],
+                        'run_attempt': IDENTITY['runAttempt'], 'commit': IDENTITY['commitSHA'],
+                        'build_number': IDENTITY['buildNumber']}
+        context_bytes = json.dumps(self.context).encode()
+        (self.directory / 'unit-context.json').write_bytes(context_bytes)
+        def file_record(name):
+            path = self.products / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((PRIVATE + name).encode())
+            return {'path': name, 'resolved_path': name, 'sha256': helper.digest(path.read_bytes())}
+        def bundle(name):
+            return {'path': name, 'resolved_path': name, 'build_number': IDENTITY['buildNumber'],
+                    'info': file_record(name + '/Contents/Info.plist'),
+                    'executable': file_record(name + '/Contents/MacOS/test-binary')}
+        self.receipt = {'format_version': 1, 'context': self.context, 'ui_scheme': 'MirrorMacUI',
+                        'configuration': 'Debug', 'code_coverage': False, 'code_signing_allowed': False,
+                        'unit_context_sha256': helper.digest(context_bytes),
+                        'app': bundle('Debug/Mirror.app'),
+                        'ui_bundles': [bundle('Debug/MirrorMacUITests.xctest')],
+                        'xctestruns': [file_record('MirrorMacUI.xctestrun')]}
+        (self.directory / 'ui-build-receipt.json').write_text(json.dumps(self.receipt))
+        (self.directory / 'UI.xcresult').mkdir()
+        self.records, self.log_lines, cases = [], [], []
+        for index, (name, (method, marker, phase, fields)) in enumerate(helper.PRIVATE_NATIVE_FAILURES.items()):
+            identifier = 'MirrorUITests/' + method + '()'
+            cases.append({'nodeType': 'Test Case', 'nodeIdentifier': identifier, 'name': method + '()', 'result': 'Failed'})
+            self.records.append({'testIdentifier': identifier, 'testName': PRIVATE, 'attachments': [
+                {'suggestedHumanReadableName': name + SDK_SUFFIX, 'name': name,
+                 'exportedFileName': f'fixture-{index}.png', 'uniformTypeIdentifier': 'public.png'}]})
+            if name == 'mirror-diagnostic-review-feedback':
+                payload = {'feedback': {'count': 1, 'role': 'staticText', 'frame': [1, 2, 40, 20], 'hittable': True},
+                           'reviewSheetCount': 0, 'reviewSheetFeedbackCount': None}
+            else:
+                payload = {'controls': {key: {'count': 0, 'frame': None, 'exists': None, 'hittable': None, 'enabled': None}
+                                        for key in ('title', 'expand', 'collapse')},
+                           'scrollOwnerCount': 1, 'scrollOwnerFrame': [0, 0, 600, 500]}
+            payload.update(method=method, phase=phase)
+            self.log_lines.extend([
+                f"Test Case '-[MirrorMacUITests.MirrorUITests {method}]' started.",
+                marker + json.dumps(payload),
+                f"Test Case '-[MirrorMacUITests.MirrorUITests {method}]' failed (1.0 seconds).",
+            ])
+        self.tree = {'testNodes': [{'nodeType': 'UI test bundle', 'name': 'MirrorMacUITests',
+                                    'result': 'Failed', 'children': cases}]}
+        self.write_results()
+        self.environment = {'GITHUB_SHA': IDENTITY['commitSHA'], 'GITHUB_RUN_NUMBER': IDENTITY['buildNumber'],
+                            'GITHUB_RUN_ID': IDENTITY['runID'], 'GITHUB_RUN_ATTEMPT': IDENTITY['runAttempt']}
+        self.commands, self.scratch = [], []
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.dict(os.environ, self.environment).start()
+        mock.patch.object(helper.subprocess, 'check_output', side_effect=self.git_output).start()
+        mock.patch.object(helper.subprocess, 'run', side_effect=self.run_command).start()
+
+    def write_results(self):
+        (self.directory / 'ui-tests.json').write_text(json.dumps(self.tree))
+        (self.directory / 'ui.log').write_text('\n'.join(self.log_lines) + '\n')
+
+    def git_output(self, command, **kwargs):
+        self.assertEqual(command[0], 'git')
+        return (IDENTITY['commitSHA'] + '\n').encode() if command[1] == 'rev-parse' else b''
+
+    def run_command(self, command, **kwargs):
+        self.commands.append((command, kwargs))
+        if command[0] == 'git':
+            return subprocess.CompletedProcess(command, 0)
+        self.assertEqual(command[:4], ['xcrun', 'xcresulttool', 'export', 'attachments'])
+        scratch = Path(kwargs['stdout'].name).parent
+        self.scratch.append(scratch)
+        self.assertEqual(scratch.stat().st_mode & 0o777, 0o700)
+        if command[-1] == '--help':
+            kwargs['stdout'].write(b'usage: --path RESULT --output-path OUTPUT\n')
+        else:
+            source = Path(command[command.index('--output-path') + 1])
+            source.mkdir()
+            (source / 'manifest.json').write_text(json.dumps(self.records))
+            for index in range(2):
+                (source / f'fixture-{index}.png').write_bytes(png(((b'tEXt', b'Comment\0' + PRIVATE.encode()),)))
+            (source / 'unrelated.png').write_bytes(png())
+            (source / 'recording.mp4').write_text(PRIVATE)
+            kwargs['stdout'].write(PRIVATE.encode())
+            kwargs['stderr'].write(PRIVATE.encode())
+        return subprocess.CompletedProcess(command, 0)
+
+    def prepare(self, exit_code=65):
+        return helper.private_native_failure(self.directory, self.output, IDENTITY, exit_code)
+
+    def test_exact_failed_methods_export_once_and_keep_only_clean_private_png(self):
+        manifest = self.prepare()
+        self.assertEqual(manifest['kind'], 'mirror-native-failure-diagnostic')
+        self.assertTrue(manifest['diagnosticOnly'])
+        self.assertEqual({shot['name'] for shot in manifest['screenshots']}, set(helper.PRIVATE_NATIVE_FAILURES))
+        self.assertEqual({path.name for path in self.output.iterdir()},
+                         {name + '.png' for name in helper.PRIVATE_NATIVE_FAILURES} | {'manifest.json', 'SHA256SUMS'})
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o700)
+        for path in self.output.iterdir():
+            self.assertNotIn(PRIVATE.encode(), path.read_bytes())
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        sdk = [(command, options) for command, options in self.commands if command[0] == 'xcrun']
+        self.assertEqual(len(sdk), 2)
+        self.assertEqual([options['timeout'] for _, options in sdk], [5, 30])
+        self.assertTrue(all(not path.exists() for path in self.scratch))
+        with self.assertRaises(helper.EvidenceError):
+            helper.validate_manifest(manifest, IDENTITY)
+
+    def test_nonfailed_incomplete_duplicate_and_foreign_bundle_never_export(self):
+        original_lines, original_tree = self.log_lines[:], copy.deepcopy(self.tree)
+        for mode in ('passed', 'skipped', 'incomplete', 'duplicate', 'outsideCase', 'foreignBundle', 'treePassed',
+                     'malformedCallback', 'embeddedEvent', 'suffixedEvent'):
+            with self.subTest(mode=mode):
+                self.log_lines, self.tree = original_lines[:], copy.deepcopy(original_tree)
+                if mode in ('passed', 'skipped'):
+                    self.log_lines[2] = self.log_lines[2].replace('failed', mode)
+                elif mode == 'incomplete':
+                    self.log_lines.pop(2)
+                elif mode == 'duplicate':
+                    self.log_lines.insert(1, self.log_lines[1])
+                elif mode == 'outsideCase':
+                    self.log_lines[0], self.log_lines[1] = self.log_lines[1], self.log_lines[0]
+                elif mode == 'foreignBundle':
+                    self.tree['testNodes'][0]['name'] = 'ForeignUITests'
+                elif mode == 'treePassed':
+                    self.tree['testNodes'][0]['children'][0]['result'] = 'Passed'
+                elif mode == 'malformedCallback':
+                    self.log_lines[1] = self.log_lines[1].replace('"count": 1', '"count": true')
+                elif mode == 'embeddedEvent':
+                    self.log_lines[0] = PRIVATE + self.log_lines[0]
+                else:
+                    self.log_lines[0] += PRIVATE
+                self.write_results()
+                with self.assertRaises(helper.EvidenceError):
+                    self.prepare()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(any(command[0] == 'xcrun' for command, _ in self.commands))
+
+    def test_marker_inside_other_log_content_is_not_a_completed_capture(self):
+        self.log_lines[1] = PRIVATE + self.log_lines[1]
+        self.log_lines[4] = PRIVATE + self.log_lines[4]
+        self.write_results()
+        with self.assertRaises(helper.EvidenceError):
+            self.prepare()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(any(command[0] == 'xcrun' for command, _ in self.commands))
+
+    def test_stale_context_receipt_and_changed_product_cannot_be_reused(self):
+        for key in self.environment:
+            with self.subTest(key=key), mock.patch.dict(os.environ, {key: 'stale'}):
+                with self.assertRaises(helper.EvidenceError):
+                    self.prepare()
+        receipt_path = self.directory / 'ui-build-receipt.json'
+        for change in ({'unit_context_sha256': '0' * 64}, {'format_version': True}, {'ui_scheme': 'MirrorMacUIDark'}):
+            with self.subTest(change=change):
+                receipt_path.write_text(json.dumps({**self.receipt, **change}))
+                with self.assertRaises(helper.EvidenceError):
+                    self.prepare()
+        receipt_path.write_text(json.dumps(self.receipt))
+        (self.products / self.receipt['app']['executable']['path']).write_text('changed')
+        with self.assertRaises(helper.EvidenceError):
+            self.prepare()
+        self.assertFalse(any(command[0] == 'xcrun' for command, _ in self.commands))
+
+    def test_export_rejects_wrong_method_alias_path_duplicate_and_missing_selected_png(self):
+        selected = {name: 'MirrorUITests/' + data[0] + '()' for name, data in helper.PRIVATE_NATIVE_FAILURES.items()}
+        for mode in ('method', 'alias', 'path', 'duplicate', 'missing', 'sameFile', 'notPNG', 'unknownName'):
+            records = copy.deepcopy(self.records)
+            first = records[0]['attachments'][0]
+            if mode == 'method': records[0]['testIdentifier'] = 'ForeignTests/' + PRIVATE
+            elif mode == 'alias': first['name'] = PRIVATE
+            elif mode == 'path': first['exportedFileName'] = '../fixture-0.png'
+            elif mode == 'duplicate': records[0]['attachments'].append(copy.deepcopy(first))
+            elif mode == 'missing': records.pop()
+            elif mode == 'sameFile': records[1]['attachments'][0]['exportedFileName'] = first['exportedFileName']
+            elif mode == 'notPNG': first['uniformTypeIdentifier'] = 'public.movie'
+            else: first['suggestedHumanReadableName'] = 'mirror-diagnostic-' + PRIVATE
+            with self.subTest(mode=mode), self.assertRaises(helper.EvidenceError):
+                helper.private_native_failure_entries(records, selected)
+
+    def test_sdk_timeout_has_no_output_or_raw_error_and_cleans_temporary_directory(self):
+        original = self.run_command
+        def timeout(command, **kwargs):
+            if command[0] == 'xcrun' and command[-1] != '--help':
+                self.scratch.append(Path(kwargs['stdout'].name).parent)
+                raise subprocess.TimeoutExpired(command + [PRIVATE], 30, output=PRIVATE, stderr=PRIVATE)
+            return original(command, **kwargs)
+        arguments = ['private-native-failure', '--input', str(self.directory), '--output', str(self.output),
+                     '--native-exit-code', '65', '--sha', IDENTITY['commitSHA'], '--build-number', IDENTITY['buildNumber'],
+                     '--run-id', IDENTITY['runID'], '--attempt', IDENTITY['runAttempt']]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(helper.subprocess, 'run', side_effect=timeout), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = helper.main(arguments)
+        self.assertEqual(code, 1)
+        self.assertNotIn(PRIVATE, stdout.getvalue() + stderr.getvalue())
+        self.assertEqual(stderr.getvalue(), '')
+        self.assertFalse(self.output.exists())
+        self.assertTrue(self.scratch and all(not path.exists() for path in self.scratch))
+
+    def test_only_completed_failed_callback_is_selected_and_success_exit_is_rejected(self):
+        for invalid_exit in (0, True, -1, 256):
+            with self.subTest(exit=invalid_exit), self.assertRaises(helper.EvidenceError):
+                self.prepare(invalid_exit)
+        self.log_lines = self.log_lines[:3]
+        self.tree['testNodes'][0]['children'][1]['result'] = 'Passed'
+        self.records = self.records[:1]
+        self.write_results()
+        manifest = self.prepare()
+        self.assertEqual(len(manifest['screenshots']), 1)
+        self.assertEqual(manifest['screenshots'][0]['name'], 'mirror-diagnostic-review-feedback')
 
 
 class FakeGitHub:

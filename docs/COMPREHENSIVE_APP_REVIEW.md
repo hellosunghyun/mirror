@@ -264,3 +264,9 @@ Batch 소유 검토에서 실제 행은 AX에 있지만 아직 유효한 frame�
 후속 실제 결과에서 `2f284dc` 원본·문서·Python523개가 통과했다. 직전64e Phone·Pad도 각각 단위279개/16 suites·UI6개·strict guard·skip0·정상 native 종료를 확인했다. 명명 PNG31개와 별도 native context/receipt를 검증한 뒤 두 기기의 정리 화면을 직접 검토했다. inline 제목이 표시되고 상단 빈 영역이 줄었으며 카드·다섯 날짜·종료가 온전히 보인다. 이는 기본 글자·밝은 모드의 개선 확인이며 최신2f 전체 UI나 실기기 접근성 수용으로 바꾸지 않는다.
 
 64e Adaptive Phone은 밝은/다크 모두 실제4개 실패·exit65였다. 마지막 검색 사례는 검색 입력 전에 보관함 미루기 버튼에8회 스크롤로 도달하지 못했다. 실패 뒤9번째 기하는 target(16,797,152.6667,61), owner(0,145,402,729), window/owner 내부·hittable=false·owner1·keyboard0이었다. 안내·탭 교차 marker는 없었고, 해당 관측 함수의 전역 window1 guard에서 멈췄는지는 미확정이다. 원래 요청 객체·정확 ID·Button 역할과 앱/소유 창 안의 고유성을 모두 검사해 실제 소유 창을 선택하도록 보완한다. 모호한 창은 계속 거절하고 기존 schema1/2 기하는 유지한다. 관측이 거절되면 같은 marker의 schema3에 고정 reason과 이미 읽은 bounded count만 남긴다. 같은 사례·요청·진행·선행 owner 관측·실패 terminal을 요구하며 실제 가림이나 통과를 추론하지 않는다. 성공 AX조회0·8회·15초·원래 실패 기준을 유지하고 독립 정적 검토·새 회귀3개·AST/diff를 준비했다. SDK와 새 회귀 실행은 Actions에서 확인한다.
+
+### Mac 실패 화면의 사례별 귀속 보존
+
+64e 실제 Native 실패 결과에서는 전체 xcresult 안의 PNG를 정리 안내·제목 접기 시점에 정확히 연결할 export manifest가 없었다. 실패 경로에도 기존 build receipt와 현재 실행을 검증한 뒤, 두 실패 callback·실제 Failed 사례·SDK attachment name/testIdentifier가 모두 일치하는 화면만 별도 진단 artifact로 보존한다. 원본 export와 SDK 출력은 임시 폴더에서 정리하고 정제된 PNG·고정 manifest·해시만 남긴다. 원래 native 종료 코드와 공개 UI 통과 gate는 유지한다.
+
+실패 보조 receipt Git 조회만 각5초, SDK help/export는5/30초로 제한한다. 잘못된 사례·부분 callback·낡은 제품·중복 이름·경로·시간 초과와 원문 누출을 검사하는 회귀7개를 추가했다. 독립 소스 검토와 로컬 AST/diff 검사를 마쳤으며, 회귀 실행과 실제 SDK manifest 수용은 다음 Actions에서 확인한다. 이 변경은 실패 원인을 확정하거나 앱 UI 수용을 통과시킨 것이 아니다.

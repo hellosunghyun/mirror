@@ -159,6 +159,15 @@ jobs:
           overwrite: true
           retention-days: 7
 
+      - name: Mac 실패 지점의 명명된 창 진단 보존
+        if: ${{ always() && steps.test.outputs.ui_private_diagnostics_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-failure-diagnostics-mac-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-macos/ui-private-diagnostics
+          if-no-files-found: error
+          retention-days: 7
+
   iphone:
     name: iPhone 앱 빌드와 테스트
     runs-on: xcode-27

@@ -291,7 +291,7 @@ else
 fi
 
 ui_build_receipt() {
-  python3 - "$1" "$result_dir" "$platform" "$scheme" "$sdk" "$destination" "$build_number" "$ui_scheme" <<'PY'
+  python3 - "$1" "$result_dir" "$platform" "$scheme" "$sdk" "$destination" "$build_number" "$ui_scheme" "${2:-normal}" <<'PY'
 import hashlib
 import json
 import os
@@ -300,7 +300,8 @@ import plistlib
 import subprocess
 import sys
 
-action, directory, platform, scheme, sdk, destination, build, ui_scheme = sys.argv[1:]
+action, directory, platform, scheme, sdk, destination, build, ui_scheme, verification_bounds = sys.argv[1:]
+receipt_git_timeout = 5 if verification_bounds == 'bounded' else None
 directory = Path(directory).resolve()
 products = (directory / 'DerivedData/Build/Products').resolve()
 receipt_path = directory / 'ui-build-receipt.json'
@@ -354,14 +355,15 @@ def current_state():
                         'commit': os.environ.get('GITHUB_SHA', ''), 'build_number': build}
     if context != expected_context:
         fail('UI 빌드 receipt의 단위 결과와 현재 실행 context가 다릅니다.')
-    checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL).strip()
+    checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True, stderr=subprocess.DEVNULL,
+                                       timeout=receipt_git_timeout).strip()
     if checkout != context['commit']:
         fail('UI 빌드 receipt의 checkout SHA가 현재 실행과 다릅니다.')
     if subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], stdout=subprocess.DEVNULL,
-                      stderr=subprocess.DEVNULL).returncode != 0:
+                      stderr=subprocess.DEVNULL, timeout=receipt_git_timeout).returncode != 0:
         fail('UI 빌드 receipt 확인 중 현재 checkout의 추적 파일 변경을 발견했습니다.')
     if subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--',
-                                'App', 'Sources', 'Extensions', 'Tests']):
+                                'App', 'Sources', 'Extensions', 'Tests'], timeout=receipt_git_timeout):
         fail('UI 빌드 receipt 확인 중 현재 checkout에 없는 앱·테스트 원본을 발견했습니다.')
     xctestruns = sorted(path for path in products.rglob('*.xctestrun') if path.is_file())
     if not xctestruns:
@@ -567,6 +569,18 @@ else
     ui_extraction_status=$?
     printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"tests","state":"failed"}' || true
     printf '::notice::UI xcresult command status: {"origin":"uiCommandReturn","kind":"tests","state":"nonzero","exitCode":%s}\n' "$ui_extraction_status" || true
+  fi
+  # 현재 실패의 두 명명된 창 캡처만 별도로 보존한다. SDK 전체 export는 임시 폴더에서 삭제한다.
+  # 이 보조 경로의 실패는 원래 xcodebuild 종료 코드와 기존 수용 gate를 바꾸지 않는다.
+  if test "$platform" = macos && ui_build_receipt verify bounded > /dev/null 2>&1; then
+    if python3 scripts/ci-ui-evidence.py private-native-failure --input "$result_dir" \
+      --output "$result_dir/ui-private-diagnostics" --native-exit-code "$test_status" \
+      --sha "${GITHUB_SHA:?}" --build-number "$build_number" \
+      --run-id "${GITHUB_RUN_ID:?}" --attempt "${GITHUB_RUN_ATTEMPT:?}"; then
+      if test -n "${GITHUB_OUTPUT:-}"; then
+        printf 'ui_private_diagnostics_ready=true\n' >> "$GITHUB_OUTPUT" || true
+      fi
+    fi
   fi
   exit "$test_status"
 fi
