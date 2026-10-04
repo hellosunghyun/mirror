@@ -862,20 +862,28 @@ class BatchResultGateTests(unittest.TestCase):
             '        let initialState = plannerDisclosureState(disclosure)',
             '        recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)',
             '        XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")',
+            '        try waitPlannerDisclosureState("펼쳐짐", element: disclosure)',
+            '        try waitPlannerDisclosureState("접힘", element: folded)',
             '    }',
         )))
         return 5
 
-    def disclosure_log_fixture(self, source_root, case=None, **changes):
+    def disclosure_log_fixture(self, source_root, case=None, stage=None, **changes):
         case = helper.CASES[0] if case is None else case
         sequence = 19 if case == helper.CASES[0] else 70
         value = {'schemaVersion': 1, 'method': case, 'phase': 'pickerStarted',
                  'progressSequence': sequence, 'callerLine': 5, 'target': 'planDisclosure',
                  'observationTiming': 'afterMismatch', 'role': 'disclosureTriangle',
-                 'valueKind': 'string', 'valueState': 'other', **changes}
+                 'valueKind': 'string', 'valueState': 'other'}
+        if stage is not None:
+            value.update({'schemaVersion': 2, 'callerLine': 6 if stage == 'expanded' else 7,
+                          'expectedState': stage, 'observationTiming': 'afterWaitFailure'})
+        value.update(changes)
+        payload = ('XCTAssertEqual failed: SYNTHETIC_PRIVATE_VALUE /private/synthetic/title' if stage is None
+                   else 'failed - batchExpectedUIStateDidNotCompleteWithin15Seconds')
         assertion = self.query_failure_fixture(
-            'XCTAssertEqual failed: SYNTHETIC_PRIVATE_VALUE /private/synthetic/title',
-            bundle='MirrorMacBatchUITests', case=case, line=5, column=1, source_root=source_root)
+            payload, bundle='MirrorMacBatchUITests', case=case,
+            line=5 if stage is None else value['callerLine'], column=1, source_root=source_root)
         return ([event(case, 'started', 'MirrorMacBatchUITests')] + progress_lines(case, sequence)
                 + [helper.DISCLOSURE_MARKER + json.dumps(value), assertion,
                    event(case, 'failed', 'MirrorMacBatchUITests')])
@@ -1036,6 +1044,119 @@ class BatchResultGateTests(unittest.TestCase):
                 self.assertFalse((directory / 'safe-outcome.json').exists())
                 for private in ('SYNTHETIC_PRIVATE_VALUE', '/private/synthetic/title', str(ROOT)):
                     self.assertNotIn(private, '\n'.join(messages))
+
+    def test_disclosure_wait_diagnostics_bind_each_expected_state_to_owned_failed_picker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            for case in helper.CASES:
+                for stage, line in (('expanded', 6), ('folded', 7)):
+                    for kind, state in (('string', 'expanded'), ('string', 'folded'), ('number', 'binaryOne'),
+                                        ('number', 'binaryZero'), ('nil', 'other')):
+                        lines = self.disclosure_log_fixture(source_root, case, stage, valueKind=kind, valueState=state)
+                        with self.subTest(case=case, stage=stage, kind=kind, state=state):
+                            reports = helper.disclosure_failure_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', source_root)
+                            observation = json.loads(lines[-3][len(helper.DISCLOSURE_MARKER):])
+                            self.assertEqual(reports, [{'scope': 'partialFailureOnly', **observation,
+                                'sourceFile': helper.SOURCE, 'line': line, 'column': 1, 'terminal': 'failed'}])
+                            with self.assertRaises(helper.BatchError):
+                                helper.validate_outcome({**EXPECTED, **reports[0]}, EXPECTED)
+                            with self.assertRaises(helper.BatchError):
+                                helper.validate_log('\n'.join(lines), 'MirrorMacBatchUITests')
+                            self.assertNotIn(str(source_root), json.dumps(reports))
+
+    def test_disclosure_wait_diagnostics_reject_schema_source_and_exact_failure_mismatches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            lines = self.disclosure_log_fixture(source_root, stage='expanded')
+            marker = lines[-3]
+            fields = json.loads(marker[len(helper.DISCLOSURE_MARKER):])
+            changes = ({'schemaVersion': True}, {'schemaVersion': 1}, {'schemaVersion': 3},
+                       {'expectedState': 'folded'}, {'expectedState': []}, {'expectedState': 'SYNTHETIC_PRIVATE_VALUE'},
+                       {'observationTiming': 'afterMismatch'}, {'callerLine': 5}, {'callerLine': True},
+                       {'phase': 'pickerVerified'}, {'progressSequence': 18}, {'progressSequence': True},
+                       {'method': helper.CASES[1]}, {'role': []}, {'valueKind': []},
+                       {'valueKind': 'number', 'valueState': 'expanded'},
+                       {'valueState': 'SYNTHETIC_PRIVATE_VALUE'}, {'extra': '/private/synthetic/title'})
+            for change in changes:
+                with self.subTest(change=change):
+                    wrong = lines[:-3] + [helper.DISCLOSURE_MARKER + json.dumps({**fields, **change})] + lines[-2:]
+                    self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(wrong), 'MirrorMacBatchUITests', source_root), [])
+            for wrong_marker in (marker.replace('"expectedState": "expanded"', '"expectedState": "expanded", "expectedState": "expanded"'),
+                                 helper.DISCLOSURE_MARKER + json.dumps({key: value for key, value in fields.items() if key != 'expectedState'}),
+                                 marker.ljust(768), marker + '한' * 256, 'title="' + marker + '"'):
+                self.assertEqual(helper.disclosure_failure_diagnostics(
+                    '\n'.join(lines[:-3] + [wrong_marker] + lines[-2:]), 'MirrorMacBatchUITests', source_root), [])
+            self.assertEqual(len(helper.disclosure_failure_diagnostics(
+                '\n'.join(lines[:-3] + [marker.ljust(767)] + lines[-2:]), 'MirrorMacBatchUITests', source_root)), 1)
+            assertion = lines[-2]
+            for wrong in (assertion.replace('failed - ', 'XCTAssertEqual failed - '),
+                          assertion.replace('15Seconds', '5Seconds'), assertion + ' SYNTHETIC_PRIVATE_VALUE',
+                          assertion.replace(helper.SOURCE, 'Tests/Other.swift'), assertion.replace(':6:1:', ':7:1:'),
+                          assertion.replace(helper.CASES[0], helper.CASES[1]),
+                          assertion.replace('MirrorMacBatchUITests', BUNDLE)):
+                self.assertEqual(helper.disclosure_failure_diagnostics(
+                    '\n'.join(lines[:-2] + [wrong, lines[-1]]), 'MirrorMacBatchUITests', source_root), [])
+            source_path = source_root / helper.SOURCE
+            original = source_path.read_text()
+            expanded = 'try waitPlannerDisclosureState("펼쳐짐", element: disclosure)'
+            folded = 'try waitPlannerDisclosureState("접힘", element: folded)'
+            for wrong in (original.replace(expanded, expanded.replace('disclosure)', 'folded)')),
+                          original.replace(folded, folded.replace('folded)', 'disclosure)')),
+                          original.replace(expanded, folded), original.replace(folded, ''),
+                          original.replace(expanded, expanded + '\n        ' + expanded),
+                          original.replace(expanded, '}' + '\n    private func anotherPicker() {\n        ' + expanded)):
+                source_path.write_text(wrong)
+                self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', source_root), [])
+
+    def test_disclosure_wait_diagnostics_require_marker_assertion_order_and_failed_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            lines = self.disclosure_log_fixture(source_root, stage='folded')
+            before, marker, assertion, terminal = lines[:-3], *lines[-3:]
+            invalid = (before + [assertion, marker, terminal], before + [marker, marker, assertion, terminal],
+                       before + [marker, assertion, assertion, terminal], before + [marker, terminal],
+                       before + [assertion, marker, assertion, terminal],
+                       before + [marker, assertion, terminal, assertion],
+                       before + [marker, assertion], before + [marker, assertion, terminal.replace('failed.', 'passed.')],
+                       before + [marker, assertion, terminal.replace('failed.', 'skipped.')],
+                       before + [marker, progress_lines(helper.CASES[0], 20)[-1], assertion, terminal],
+                       before + [marker, assertion, terminal.replace(helper.CASES[0], helper.CASES[1])],
+                       [marker] + before + [assertion, terminal], before + [assertion, terminal, marker])
+            for wrong in invalid:
+                self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(wrong), 'MirrorMacBatchUITests', source_root), [])
+
+    def test_disclosure_wait_notice_remains_optional_mac_failure_evidence(self):
+        source = (ROOT / helper.SOURCE).read_text().splitlines()
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            for stage, expected_text in (('expanded', 'try waitPlannerDisclosureState("펼쳐짐", element: disclosure)'),
+                                         ('folded', 'try waitPlannerDisclosureState("접힘", element: folded)')):
+                line = next(index for index, text in enumerate(source, 1) if text.strip() == expected_text)
+                value = '\n'.join(self.disclosure_log_fixture(ROOT, stage=stage, callerLine=line,
+                                                              valueKind='number', valueState='binaryOne'))
+                (directory / 'test.log').write_text(value)
+                reports = helper.disclosure_failure_diagnostics(value, 'MirrorMacBatchUITests')
+                self.assertEqual(len(reports), 1)
+                for platform, enabled in (('macos', True), ('macos', False), ('ipad', True)):
+                    expected = {**EXPECTED, 'platform': platform}
+                    with mock.patch.object(helper, 'context_for', return_value={'bundle': 'MirrorMacBatchUITests'}), \
+                            mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                        helper.diagnostics(directory, expected, 'test', partial_failure=enabled)
+                    messages = [call.args[0] for call in printed.call_args_list]
+                    prefix = '::notice::Batch UI disclosure failure diagnostics: '
+                    notices = [message for message in messages if message.startswith(prefix)]
+                    self.assertEqual(len(notices), int(platform == 'macos' and enabled))
+                    if notices:
+                        self.assertEqual(json.loads(notices[0][len(prefix):]),
+                                         {**expected, 'scope': 'partialFailureOnly', 'locations': reports, 'locationCount': 1})
+                    self.assertTrue(messages[0].startswith('::notice::Batch UI source diagnostics: '))
+                    self.assertTrue(messages[1].startswith('::notice::Batch UI query failure diagnostics: '))
+                    write.assert_not_called()
+                    self.assertFalse((directory / 'safe-outcome.json').exists())
+                    self.assertNotIn(str(ROOT), '\n'.join(messages))
 
     def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
         with tempfile.TemporaryDirectory() as temporary:

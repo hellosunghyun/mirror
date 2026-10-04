@@ -460,14 +460,31 @@ final class MirrorBatchUITests: XCTestCase {
             guard let element = object as? XCUIElement else { return false }
             return self.plannerDisclosureState(element) == expected
         }, object: element)
-        try requireCompleted(expectation, file: file, line: line)
+        try requireCompleted(expectation, file: file, line: line, onFailure: {
+            #if os(macOS)
+            let state: String
+            switch expected {
+            case "펼쳐짐": state = "expanded"
+            case "접힘": state = "folded"
+            default: return
+            }
+            self.recordPlannerDisclosureFailure(element, expectedState: state, callerLine: Int(line))
+            #endif
+        })
     }
 
     private func recordPlannerDisclosureFailureIfNeeded(_ element: XCUIElement, initialState: String,
                                                         callerLine: Int) {
         #if os(macOS)
-        guard initialState != "접힘", let progressCase, progressPhase == .pickerStarted else { return }
-        // 비교가 실패할 값임을 확인한 뒤 같은 요소를 다시 읽는다. 사후값은 원래 실패값을 대신하지 않는다.
+        guard initialState != "접힘" else { return }
+        recordPlannerDisclosureFailure(element, expectedState: nil, callerLine: callerLine)
+        #endif
+    }
+
+    private func recordPlannerDisclosureFailure(_ element: XCUIElement, expectedState: String?, callerLine: Int) {
+        #if os(macOS)
+        guard let progressCase, progressPhase == .pickerStarted else { return }
+        // 원래 비교나 대기의 실패 뒤 같은 요소를 다시 읽는다. 사후값은 원래 실패값을 대신하지 않는다.
         let role: String
         switch element.elementType {
         case .disclosureTriangle: role = "disclosureTriangle"
@@ -491,11 +508,13 @@ final class MirrorBatchUITests: XCTestCase {
             kind = value == nil ? "nil" : "other"
             state = "other"
         }
-        let fields: [String: Any] = [
-            "schemaVersion": 1, "method": progressCase.rawValue, "phase": "pickerStarted",
+        var fields: [String: Any] = [
+            "schemaVersion": expectedState == nil ? 1 : 2, "method": progressCase.rawValue, "phase": "pickerStarted",
             "progressSequence": progressSequence, "callerLine": callerLine, "target": "planDisclosure",
-            "observationTiming": "afterMismatch", "role": role, "valueKind": kind, "valueState": state,
+            "observationTiming": expectedState == nil ? "afterMismatch" : "afterWaitFailure",
+            "role": role, "valueKind": kind, "valueState": state,
         ]
+        if let expectedState { fields["expectedState"] = expectedState }
         guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
         let line = Data(("Batch UI disclosure failure diagnostic: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
         guard line.count <= 768 else { return }
@@ -784,8 +803,10 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func requireCompleted(_ expectation: XCTestExpectation,
-                                  file: StaticString = #filePath, line: UInt = #line) throws {
+                                  file: StaticString = #filePath, line: UInt = #line,
+                                  onFailure: (@MainActor () -> Void)? = nil) throws {
         guard XCTWaiter.wait(for: [expectation], timeout: 15) == .completed else {
+            onFailure?()
             XCTFail("batchExpectedUIStateDidNotCompleteWithin15Seconds", file: file, line: line)
             throw HarnessFailure.wrongValue
         }

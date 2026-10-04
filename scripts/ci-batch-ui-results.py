@@ -524,7 +524,7 @@ def partial_progress(log, bundle):
 
 
 def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
-    """실패 후 고정 관측을 같은 Mac 사례·진행·실제 접힘 assertion에만 연결한다."""
+    """사후 관측을 같은 Mac 사례·진행·정확한 접힘 비교나 펼침/접힘 대기 실패에만 연결한다."""
     if (bundle != 'MirrorMacBatchUITests' or not isinstance(log, str)
             or len(log.encode('utf-8')) > MAX_LOG or DISCLOSURE_MARKER.rstrip() not in log):
         return []
@@ -552,12 +552,32 @@ def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
     caller_line = calls[0]
     if SUPPORT.source_location(SOURCE, caller_line, 1, source_root) is None:
         return []
+    wait_callers = {}
+    for expected, call in (
+            ('expanded', 'try waitPlannerDisclosureState("펼쳐짐", element: disclosure)'),
+            ('folded', 'try waitPlannerDisclosureState("접힘", element: folded)')):
+        matching = [index + 1 for index in range(start + 1, end) if source[index].strip() == call]
+        if len(matching) == 1 and matching[0] > caller_line:
+            wait_callers[expected] = matching[0]
+    if set(wait_callers) != {'expanded', 'folded'} or wait_callers['folded'] <= wait_callers['expanded']:
+        wait_callers = {}
     fields = {'schemaVersion', 'method', 'phase', 'progressSequence', 'callerLine', 'target',
               'observationTiming', 'role', 'valueKind', 'valueState'}
     states = {'nil': ('other',), 'string': ('folded', 'expanded', 'empty', 'placeholder', 'other'),
               'number': ('binaryZero', 'binaryOne', 'other'), 'other': ('other',)}
     reports, active, progress, observation, location = [], None, None, None, None
+    wait_failures = {}
     for line in log.splitlines():
+        if failure := SUPPORT.UI_FAILURE_SOURCE.fullmatch(line):
+            case = SUPPORT.UI_FAILURE_CASE.fullmatch(failure[4])
+            if (case is not None and case[1] == bundle + '.' + CLASS and case[2] in CASES
+                    and case[3] == 'failed - batchExpectedUIStateDidNotCompleteWithin15Seconds'
+                    and int(failure[2]) in wait_callers.values()):
+                found = SUPPORT.source_location(failure[1], int(failure[2]),
+                                                int(failure[3]) if failure[3] else 1, source_root)
+                if found is not None and found['file'] == SOURCE:
+                    key = (case[2], found['line'])
+                    wait_failures[key] = wait_failures.get(key, 0) + 1
         if DISCLOSURE_MARKER.rstrip() in line:
             if (active is None or observation is not None or progress is None
                     or progress['phase'] != 'pickerStarted' or not line.startswith(DISCLOSURE_MARKER)
@@ -567,14 +587,23 @@ def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
                 value = SUPPORT.strict_json(line[len(DISCLOSURE_MARKER):])
             except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
                 return []
-            if (not isinstance(value, dict) or set(value) != fields
-                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
+            if not isinstance(value, dict) or type(value.get('schemaVersion')) is not int:
+                return []
+            version = value['schemaVersion']
+            if version == 1:
+                expected_fields, expected_line, timing = fields, caller_line, 'afterMismatch'
+            elif version == 2 and isinstance(value.get('expectedState'), str):
+                expected_fields = fields | {'expectedState'}
+                expected_line, timing = wait_callers.get(value['expectedState']), 'afterWaitFailure'
+            else:
+                return []
+            if (set(value) != expected_fields or expected_line is None
                     or value['method'] != active or value['phase'] != 'pickerStarted'
                     or type(value['progressSequence']) is not int or not 1 <= value['progressSequence'] <= 96
                     or value['progressSequence'] != progress['sequence']
                     or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= 100_000
-                    or value['callerLine'] != caller_line or value['target'] != 'planDisclosure'
-                    or value['observationTiming'] != 'afterMismatch'
+                    or value['callerLine'] != expected_line or value['target'] != 'planDisclosure'
+                    or value['observationTiming'] != timing
                     or value['role'] not in ('disclosureTriangle', 'button', 'other')
                     or not isinstance(value['valueKind'], str) or value['valueKind'] not in states
                     or value['valueState'] not in states[value['valueKind']]):
@@ -599,12 +628,18 @@ def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
             found = SUPPORT.source_location(failure[1], int(failure[2]),
                                             int(failure[3]) if failure[3] else 1, source_root)
             if (case is None or case[1] != bundle + '.' + CLASS or case[2] != active
-                    or found is None or found['file'] != SOURCE or found['line'] != caller_line
-                    or re.match(r'^XCTAssertEqual\s+failed(?=[:\s-]|$)', case[3]) is None
+                    or found is None or found['file'] != SOURCE or found['line'] != observation['callerLine']
+                    or (observation['schemaVersion'] == 1
+                        and re.match(r'^XCTAssertEqual\s+failed(?=[:\s-]|$)', case[3]) is None)
+                    or (observation['schemaVersion'] == 2
+                        and case[3] != 'failed - batchExpectedUIStateDidNotCompleteWithin15Seconds')
                     or location is not None):
                 return []
             location = {'line': found['line'], **({'column': found['column']} if failure[3] else {})}
-    return [] if observation is not None else reports
+    if observation is not None or any(report['schemaVersion'] == 2
+            and wait_failures.get((report['method'], report['callerLine'])) != 1 for report in reports):
+        return []
+    return reports
 
 
 def diagnostics(directory, expected, phase, partial_failure=False):
