@@ -279,6 +279,46 @@ def query_failure_locations(log, bundle, source_root=ROOT):
     return reports
 
 
+def reachable_failure_locations(log, bundle, source_root=ROOT):
+    """현재 사례의 정확한 XCTFail 고정 문장만 보존한다. 원문·측정값은 버린다."""
+    require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
+    reasons = ('batchTargetIsNotReachableWithin15SecondsAnd12Scrolls', 'batchActualScrollOwnerMissing',
+               'batchActualScrollOwnerAmbiguous', 'batchScrollOwnerRequiresActualSurface')
+    targets = ('unknown', 'captureOpen', 'captureSave', 'captureClose', 'destinationToday', 'destinationLibrary',
+               'librarySearch', 'librarySelectToggle', 'librarySelectAll', 'taskRow', 'taskSelection',
+               'planToday', 'planTomorrow', 'planCancel', 'planDisclosure', 'planTask')
+    marker = re.compile(r'failed - (' + '|'.join(reasons) + r') target=(' + '|'.join(targets) + r')')
+    reports, source_line_count = [], None
+    for text in log.splitlines():
+        match = SUPPORT.UI_FAILURE_SOURCE.fullmatch(text)
+        if not match:
+            continue
+        case = SUPPORT.UI_FAILURE_CASE.fullmatch(match[4])
+        if not case or case[1] != bundle + '.' + CLASS or case[2] not in CASES:
+            continue
+        fixed = marker.fullmatch(case[3])
+        if fixed is None:
+            continue
+        location = SUPPORT.source_location(match[1], int(match[2]), int(match[3]) if match[3] else 1, source_root)
+        if not location or location['file'] != SOURCE:
+            continue
+        if source_line_count is None:
+            try:
+                source_line_count = len(SUPPORT.read_regular(source_root / SOURCE, SUPPORT.MAX_JSON).decode('utf-8').splitlines())
+            except (OSError, UnicodeError, SUPPORT.AdaptiveError):
+                return []
+        if location['line'] > source_line_count:
+            continue
+        report = {'scope': 'stdoutOnly', 'method': case[2], 'sourceFile': SOURCE,
+                  'line': location['line'], **({'column': location['column']} if match[3] else {}),
+                  'reason': fixed[1], 'target': fixed[2]}
+        if report not in reports:
+            reports.append(report)
+        if len(reports) == 12:
+            break
+    return reports
+
+
 def mobile_target_failure_locations(log, bundle, source_root=ROOT):
     """실제 44pt assertion 소스와 고정 control/axis만 보존한다. 원문과 측정값은 버린다."""
     require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
@@ -400,6 +440,11 @@ def diagnostics(directory, expected, phase, partial_failure=False):
         print('::notice::Batch UI query failure diagnostics: ' + json.dumps(
             {**expected, 'phase': phase, 'scope': 'stdoutOnly', 'locations': query_reports,
              'locationCount': len(query_reports)}, sort_keys=True))
+        reachable_reports = reachable_failure_locations(log, context['bundle'])
+        if reachable_reports:
+            print('::notice::Batch UI reachable failure diagnostics: ' + json.dumps(
+                {**expected, 'phase': phase, 'scope': 'stdoutOnly', 'locations': reachable_reports,
+                 'locationCount': len(reachable_reports)}, sort_keys=True))
         mobile_reports = mobile_target_failure_locations(log, context['bundle'])
         if mobile_reports:
             print('::notice::Batch UI mobile target diagnostics: ' + json.dumps(

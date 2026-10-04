@@ -368,6 +368,89 @@ class BatchResultGateTests(unittest.TestCase):
             self.assertEqual(empty['locations'], [])
             self.assertEqual(empty['locationCount'], 0)
 
+    def test_reachable_failure_diagnostics_accept_exact_reasons_and_target_enums(self):
+        reasons = ('batchTargetIsNotReachableWithin15SecondsAnd12Scrolls', 'batchActualScrollOwnerMissing',
+                   'batchActualScrollOwnerAmbiguous', 'batchScrollOwnerRequiresActualSurface')
+        targets = ('unknown', 'captureOpen', 'captureSave', 'captureClose', 'destinationToday', 'destinationLibrary',
+                   'librarySearch', 'librarySelectToggle', 'librarySelectAll', 'taskRow', 'taskSelection',
+                   'planToday', 'planTomorrow', 'planCancel', 'planDisclosure', 'planTask')
+        for index, reason in enumerate(reasons):
+            bundle = ('MirrorIOSBatchUITests', 'MirrorMacBatchUITests')[index % 2]
+            case = helper.CASES[index % 2]
+            for target in targets:
+                with self.subTest(reason=reason, target=target, bundle=bundle, case=case):
+                    value = self.query_failure_fixture('failed - ' + reason + ' target=' + target,
+                                                       bundle=bundle, case=case)
+                    self.assertEqual(helper.reachable_failure_locations(value, bundle),
+                                     [{'scope': 'stdoutOnly', 'method': case, 'sourceFile': helper.SOURCE,
+                                       'line': 30, 'column': 5, 'reason': reason, 'target': target}])
+        value = self.query_failure_fixture('failed - batchActualScrollOwnerMissing target=librarySearch', column=None)
+        self.assertNotIn('column', helper.reachable_failure_locations(value, BUNDLE)[0])
+
+    def test_reachable_failure_diagnostics_reject_payload_quotes_suffixes_and_unknown_enums(self):
+        fixed = 'failed - batchActualScrollOwnerMissing target=librarySearch'
+        invalid = (fixed + ' SYNTHETIC_PRIVATE_VALUE', fixed + '.', fixed + ' ',
+                   'SYNTHETIC_PRIVATE_VALUE ' + fixed, '"' + fixed + '"',
+                   'XCTAssertEqual failed: ' + fixed, 'failed - "' + fixed + '"',
+                   fixed.replace('batchActualScrollOwnerMissing', 'batchUnknownFailure'),
+                   fixed.replace('batchActualScrollOwnerMissing', 'batchActualScrollOwnerMissingExtra'),
+                   fixed.replace('librarySearch', 'SYNTHETIC_PRIVATE_VALUE'),
+                   fixed.replace('target=', 'target ='), fixed.replace('failed - ', 'XCTFail failed - '))
+        for payload in invalid:
+            with self.subTest(payload=payload):
+                self.assertEqual(helper.reachable_failure_locations(self.query_failure_fixture(payload), BUNDLE), [])
+
+    def test_reachable_failure_diagnostics_reject_other_owner_source_and_bounds(self):
+        payload = 'failed - batchActualScrollOwnerMissing target=librarySearch'
+        count = len((ROOT / helper.SOURCE).read_text().splitlines())
+        valid = self.query_failure_fixture(payload)
+        invalid = (self.query_failure_fixture(payload, bundle='MirrorMacBatchUITests'),
+                   self.query_failure_fixture(payload, bundle='OtherUITests'),
+                   self.query_failure_fixture(payload, case='testUnexpected'),
+                   valid.replace('.' + helper.CLASS + ' ', '.OtherTests '),
+                   self.query_failure_fixture(payload, source='Tests/Other.swift'),
+                   self.query_failure_fixture(payload, source='../' + helper.SOURCE),
+                   self.query_failure_fixture(payload, source_root=Path('/private/synthetic')),
+                   self.query_failure_fixture(payload, line=0),
+                   self.query_failure_fixture(payload, line=count + 1, column=1),
+                   self.query_failure_fixture(payload, column=0),
+                   self.query_failure_fixture(payload, column=99999))
+        for value in invalid:
+            with self.subTest(value=value):
+                self.assertEqual(helper.reachable_failure_locations(value, BUNDLE), [])
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            source = source_root / helper.SOURCE
+            source.parent.mkdir(parents=True)
+            source.symlink_to(ROOT / helper.SOURCE)
+            self.assertEqual(helper.reachable_failure_locations(
+                self.query_failure_fixture(payload, source_root=source_root), BUNDLE, source_root), [])
+        rows = [self.query_failure_fixture(payload, line=line, column=1) for line in range(1, 20)]
+        reports = helper.reachable_failure_locations('\n'.join(row for row in rows for _ in (0, 1)), BUNDLE)
+        self.assertEqual([report['line'] for report in reports], list(range(1, 13)))
+        with mock.patch.object(helper, 'MAX_LOG', 8), self.assertRaises(helper.BatchError):
+            helper.reachable_failure_locations(valid, BUNDLE)
+
+    def test_reachable_failure_notice_preserves_source_query_and_partial_diagnostics(self):
+        value = self.query_failure_fixture('failed - batchActualScrollOwnerMissing target=librarySearch')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / 'test.log').write_text(value)
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'test', partial_failure=True)
+        messages = [call.args[0] for call in printed.call_args_list]
+        self.assertEqual(len(messages), 4)
+        base = {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly'}
+        self.assertEqual(messages[0], '::notice::Batch UI source diagnostics: ' + json.dumps(
+            {**base, 'locations': helper.failure_locations(value, BUNDLE)}, sort_keys=True))
+        self.assertEqual(messages[1], '::notice::Batch UI query failure diagnostics: ' + json.dumps(
+            {**base, 'locations': helper.query_failure_locations(value, BUNDLE), 'locationCount': 1}, sort_keys=True))
+        self.assertEqual(messages[2], '::notice::Batch UI reachable failure diagnostics: ' + json.dumps(
+            {**base, 'locations': helper.reachable_failure_locations(value, BUNDLE), 'locationCount': 1}, sort_keys=True))
+        self.assertEqual(messages[3], '::notice::Batch UI partial progress diagnostics: ' + json.dumps(
+            {**EXPECTED, 'scope': 'partialFailureOnly', 'status': 'diagnosticUnavailable'}, sort_keys=True))
+        self.assertNotIn(str(ROOT), '\n'.join(messages))
+
     def mobile_target_fixture(self, source_root, payload, bundle=BUNDLE, case=None, line=1, column=1, source=None):
         case = helper.CASES[0] if case is None else case
         source = helper.SOURCE if source is None else source
