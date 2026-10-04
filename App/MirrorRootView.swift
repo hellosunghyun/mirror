@@ -226,6 +226,7 @@ struct MirrorRootView: View {
                         mainContent(destination)
                     }
                 }
+                .accessibilityIdentifier("destination.\(destination.rawValue)")
             }
         }
     }
