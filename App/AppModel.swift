@@ -637,11 +637,18 @@ final class AppModel {
         menuBarCaptureToken = token
         menuBarCaptureCommittedReceipt = nil
     }
-    func registerPresentedCapture(token: String, presentation: CapturePresentationRequest) {
-        guard capturePresentationCoordinator.isCurrent(presentation, contextID: storeObservationID) else { return }
-        guard presentedCaptureSubmission?.token != token else { return }
+    @discardableResult
+    func registerPresentedCapture(token: String, presentation: CapturePresentationRequest) -> Bool {
+        guard !isSaving, !projectionPending else { return false }
+        guard capturePresentationCoordinator.isCurrent(presentation, contextID: storeObservationID) else {
+            problem = "입력을 연 화면이나 저장 공간 연결이 바뀌었어요. 입력한 내용을 유지했어요. 닫고 현재 공간에서 다시 열어 주세요."
+            captureInputProblemRevision = problemRevision
+            return false
+        }
+        guard presentedCaptureSubmission?.token != token else { return true }
         presentedCaptureSubmission = (token, presentation)
         presentedCaptureCommittedToken = nil
+        return true
     }
     func canRetryPresentedCapture(_ presentation: CapturePresentationRequest) -> Bool {
         guard let submitted = presentedCaptureSubmission,

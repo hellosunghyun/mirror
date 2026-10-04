@@ -291,6 +291,158 @@ struct SystemNavigationTests {
         #expect(repeatedReceipt == nil)
     }
 
+    @Test("Task 예약 전 제출을 고정해 두 번째 입력과 pending 초기화가 원문·날짜 잠금을 바꾸지 못한다")
+    func captureSubmissionFreezesDraftBeforeDispatch() throws {
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let original = CaptureDraftSnapshot(title: "처음 누른 제목", note: "원래 메모", sourceURL: "https://example.com/original",
+            initialPlan: .day(context.planningDay), planContext: context)
+        let edited = CaptureDraftSnapshot(title: "뒤에 바꾼 제목", note: "바꾼 메모", sourceURL: "https://example.com/edited")
+        var state = CaptureDraftCommitState()
+        state.register(token: "old-failure", draft: original)
+        let admitted = state.beginSubmission(draft: original)
+        let submission = try #require(admitted)
+        // 아직 비동기 작업을 예약하지 않은 같은 호출 구간이다.
+        let duplicate = state.beginSubmission(draft: edited)
+        #expect(duplicate == nil)
+        state.clearPending()
+        #expect(state.isSubmitting && state.submission == submission)
+        #expect(submission.draft == original && submission.draft != edited)
+        let removedOldReceipt = state.consume(token: "old-failure", draft: original)
+        #expect(removedOldReceipt == nil)
+        state.register(token: "current-failure", draft: submission.draft)
+        let finished = state.endSubmission(submission)
+        #expect(finished && !state.isSubmitting && state.matchesWholeDraft(original))
+        let ownReceipt = state.consume(token: "current-failure", draft: original)
+        #expect(ownReceipt == .clearDraft)
+    }
+
+    @MainActor @Test("원본 저장 뒤 지연된 pending 동안 중복 제출을 막고 같은 키로 확인해 작업 하나와 수정 초안을 보존한다")
+    func captureSubmissionKeepsPendingReceiptAcrossDelayedStoreCommit() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorCaptureAdmission-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
+        let store = try await MirrorStore(configuration: config)
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let original = CaptureDraftSnapshot(title: "처음 저장한 제목", note: "원본 메모", sourceURL: "https://example.com/original",
+            initialPlan: .day(context.planningDay), planContext: context)
+        let edited = CaptureDraftSnapshot(title: "실패 안내 뒤 수정", note: "새 메모", sourceURL: "https://example.com/edited")
+        var state = CaptureDraftCommitState()
+        let admitted = state.beginSubmission(draft: original)
+        let submission = try #require(admitted)
+        let token = "capture-admitted-once", taskID = UUID()
+        let command = CommandEnvelope(requestID: token, idempotencyKey: token, source: .app,
+            context: context, workspaceEpoch: config.workspaceEpoch,
+            payload: .captureWithPlan(taskID: taskID,
+                content: try TaskContent(title: submission.draft.title, note: submission.draft.note, sourceURL: submission.draft.sourceURL),
+                initialPlan: try #require(submission.draft.initialPlan)))
+        let gate = ShareOperationGate<Void>()
+        let saving = Task {
+            defer { state.endSubmission(submission) }
+            let result = await store.execute(command, at: context.capturedAt, failurePoint: .afterCanonicalSave)
+            try await gate.suspend()
+            state.register(token: token, draft: submission.draft)
+            return result
+        }
+        await gate.waitUntilSuspended()
+        let duplicate = state.beginSubmission(draft: edited)
+        #expect(duplicate == nil && state.submission == submission)
+        gate.resolve(.success(()))
+        let failed = try await saving.value
+        #expect(failed.state == .committedProjectionPending)
+        #expect(!state.isSubmitting && state.matchesWholeDraft(original))
+        let retryAdmission = state.beginSubmission(draft: edited)
+        let retrySubmission = try #require(retryAdmission)
+        let retried = await store.execute(command, at: context.capturedAt)
+        #expect(retried.state == .alreadyApplied)
+        let accepted = state.consume(token: token, draft: retrySubmission.draft)
+        #expect(accepted == .preserveDraft)
+        let finishedRetry = state.endSubmission(retrySubmission)
+        #expect(finishedRetry && !state.isSubmitting)
+        let snapshot = try await store.snapshot()
+        #expect(snapshot.tasks.count == 1 && snapshot.records.count == 1)
+        let saved = try #require(snapshot.tasks.first)
+        #expect(saved.taskID == taskID && saved.title == original.title)
+        #expect(saved.content.note == original.note && saved.content.sourceURL == original.sourceURL)
+        #expect(saved.plan.target == original.initialPlan)
+        #expect(snapshot.records.first?.idempotencyKey == token)
+        _ = try await store.exportAndSuspend(exportedAt: navigationInstant)
+    }
+
+    @MainActor @Test("분할 제출은 줄 사이 잠금을 유지하고 pending 첫 줄 재시도 뒤 성공 prefix와 미저장 suffix를 보존한다")
+    func captureSplitSubmissionKeepsLeaseAndRemainingReceipt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorSplitAdmission-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
+        let store = try await MirrorStore(configuration: config)
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let original = CaptureDraftSnapshot(title: "첫 줄\n둘째 줄\n셋째 줄", note: "공통 원문 메모", sourceURL: "https://example.com/split",
+            initialPlan: .day(context.planningDay), planContext: context)
+        var state = CaptureDraftCommitState()
+        let admitted = state.beginSubmission(draft: original)
+        let submission = try #require(admitted)
+        let lines = submission.draft.title.components(separatedBy: .newlines)
+        func command(_ line: String, token: String) throws -> CommandEnvelope {
+            CommandEnvelope(requestID: token, idempotencyKey: token, source: .app,
+                context: context, workspaceEpoch: config.workspaceEpoch,
+                payload: .captureWithPlan(taskID: UUID(), content: try TaskContent(title: line,
+                    note: submission.draft.note, sourceURL: submission.draft.sourceURL),
+                    initialPlan: try #require(submission.draft.initialPlan)))
+        }
+        let first = try command(lines[0], token: "split-first")
+        let second = try command(lines[1], token: "split-second")
+        let firstResult = await store.execute(first, at: context.capturedAt)
+        #expect(firstResult.state == .locallyCommitted)
+        state.clearPending()
+        let duplicateBetweenLines = state.beginSubmission(draft: original)
+        #expect(duplicateBetweenLines == nil && state.submission == submission)
+        let secondResult = await store.execute(second, at: context.capturedAt, failurePoint: .afterCanonicalSave)
+        #expect(secondResult.state == .committedProjectionPending)
+        let remaining = CaptureDraftSnapshot(title: lines.dropFirst().joined(separator: "\n"), note: submission.draft.note,
+            sourceURL: submission.draft.sourceURL, initialPlan: submission.draft.initialPlan, planContext: submission.draft.planContext)
+        state.register(token: "split-second", draft: remaining, firstLine: lines[1])
+        let endedBatch = state.endSubmission(submission)
+        #expect(endedBatch && !state.isSubmitting)
+        let retryAdmission = state.beginSubmission(draft: remaining)
+        let retry = try #require(retryAdmission)
+        let retried = await store.execute(second, at: context.capturedAt)
+        #expect(retried.state == .alreadyApplied)
+        let accepted = state.consume(token: "split-second", draft: retry.draft)
+        #expect(accepted == .removeFirstLine)
+        let repeatedReceipt = state.consume(token: "split-second", draft: retry.draft)
+        #expect(repeatedReceipt == nil)
+        let endedRetry = state.endSubmission(retry)
+        #expect(endedRetry)
+        let snapshot = try await store.snapshot()
+        #expect(snapshot.tasks.count == 2 && snapshot.records.count == 2)
+        #expect(Set(snapshot.tasks.map(\.title)) == Set(lines.prefix(2)))
+        #expect(snapshot.tasks.allSatisfy { $0.content.note == original.note && $0.content.sourceURL == original.sourceURL
+            && $0.plan.target == original.initialPlan })
+        #expect(remaining.title.components(separatedBy: .newlines).dropFirst().joined(separator: "\n") == lines[2])
+        _ = try await store.exportAndSuspend(exportedAt: navigationInstant)
+    }
+
+    @Test("이전 제출의 늦은 해제는 새 제출의 잠금과 실패 receipt를 바꾸지 못한다")
+    func staleCaptureSubmissionCannotReleaseNewDraft() throws {
+        let original = CaptureDraftSnapshot(title: "첫 제출", note: "", sourceURL: "")
+        let changed = CaptureDraftSnapshot(title: "다음 제출", note: "다음 메모", sourceURL: "")
+        var state = CaptureDraftCommitState()
+        let firstAdmission = state.beginSubmission(draft: original)
+        let first = try #require(firstAdmission)
+        let endedFirst = state.endSubmission(first)
+        #expect(endedFirst)
+        let nextAdmission = state.beginSubmission(draft: changed)
+        let next = try #require(nextAdmission)
+        state.register(token: "next-failure", draft: next.draft)
+        let endedStale = state.endSubmission(first)
+        let duplicate = state.beginSubmission(draft: original)
+        #expect(!endedStale && duplicate == nil && state.submission == next)
+        #expect(state.matchesWholeDraft(changed))
+        let accepted = state.consume(token: "next-failure", draft: changed)
+        #expect(accepted == .clearDraft && state.isSubmitting)
+        let endedNext = state.endSubmission(next)
+        #expect(endedNext && !state.isSubmitting)
+    }
+
     @Test("같은 창의 입력 재호출은 생성 당시 모드와 presentation을 유지한다")
     func captureSameOwnerKeepsPresentation() throws {
         let contextID = UUID()

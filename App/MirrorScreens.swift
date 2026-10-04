@@ -369,6 +369,7 @@ struct MirrorCaptureView: View {
     @FocusState private var focusedField: InputField?
     @State private var textEditingOwnerID = UUID()
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
+    private var captureBusy: Bool { pendingCapture.isSubmitting || model.isSaving }
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -377,7 +378,7 @@ struct MirrorCaptureView: View {
                         .font(.title3)
                         .textFieldStyle(.plain)
                         .lineLimit(1...4).focused($focusedField, equals: .title)
-                        .disabled(model.isSaving || model.projectionPending)
+                        .disabled(captureBusy || model.projectionPending)
                         .accessibilityIdentifier("capture.title")
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -400,14 +401,15 @@ struct MirrorCaptureView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .disabled(captureBusy)
                         .accessibilityValue(more ? "펼침" : "접힘")
                         .accessibilityHint(more ? "추가 입력을 접습니다" : "날짜, 메모와 링크 입력을 펼칩니다")
                         .accessibilityIdentifier("capture.more")
                         if more {
                             VStack(alignment: .leading, spacing: 14) {
                                 capturePlanChoices
-                                TextField("메모", text: $note, axis: .vertical).lineLimit(1...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
-                                TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
+                                TextField("메모", text: $note, axis: .vertical).lineLimit(1...10).focused($focusedField, equals: .note).disabled(captureBusy || model.projectionPending).accessibilityIdentifier("capture.note")
+                                TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(captureBusy || model.projectionPending).accessibilityIdentifier("capture.url")
                                 Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(MirrorPalette.supportingText)
                             }.textFieldStyle(.roundedBorder).padding(.top, 12)
                         }
@@ -420,7 +422,7 @@ struct MirrorCaptureView: View {
                             .accessibilityIdentifier("capture.planCollapsedSummary")
                     }
                     if lines.count > 1 {
-                        Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }.disabled(model.isSaving || model.projectionPending)
+                        Button("줄마다 나누기 · \(lines.count)개 미리 보기") { splitPreview = true }.disabled(captureBusy || model.projectionPending)
                             .buttonStyle(.borderless).frame(minHeight: 44)
                     }
                 }
@@ -435,7 +437,7 @@ struct MirrorCaptureView: View {
             #if os(iOS)
             .safeAreaInset(edge: .top, spacing: 0) {
                 MirrorSheetHeader(title: "일단 넣기", actionTitle: "닫기", actionIdentifier: "capture.close",
-                                  isDisabled: model.isSaving, action: closeCapture)
+                                  isDisabled: captureBusy, action: closeCapture)
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
             #else
@@ -443,11 +445,11 @@ struct MirrorCaptureView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("닫기") { closeCapture() }
-                        .disabled(model.isSaving).accessibilityIdentifier("capture.close")
+                        .disabled(captureBusy).accessibilityIdentifier("capture.close")
                 }
             }
             #endif
-            .interactiveDismissDisabled(model.isSaving)
+            .interactiveDismissDisabled(captureBusy)
             .onAppear { model.clearCaptureInputProblem(); focusedField = .title; startCaptureFlow() }
             .onChange(of: title) { _, value in
                 if !value.isEmpty { showSavedFeedback = false; startCaptureFlow() }
@@ -468,37 +470,14 @@ struct MirrorCaptureView: View {
                     List {
                         Text("각 줄이 별개의 새 작업으로 저장돼요. 저장되지 않은 줄은 입력에 남겨요.")
                         ForEach(Array(lines.enumerated()), id: \.offset) { _, line in Text(line) }
-                        Button("\(lines.count)개를 각각 저장") {
-                            Task {
-                                let accepted = acceptCaptureCommit(model.presentedCaptureCommittedToken)
-                                if accepted == .clearDraft || (accepted == .removeFirstLine && lines.isEmpty) {
-                                    splitPreview = false
-                                    return
-                                }
-                                var remaining = lines
-                                for line in lines {
-                                    let submitted = CaptureDraftSnapshot(title: remaining.joined(separator: "\n"),
-                                        note: note, sourceURL: sourceURL, initialPlan: initialPlan, planContext: planContext)
-                                    requestToken = UUID().uuidString
-                                    let token = requestToken
-                                    pendingCapture = CaptureDraftCommitState()
-                                    model.registerPresentedCapture(token: token, presentation: request)
-                                    guard await model.capture(title: line, note: submitted.note, sourceURL: submitted.sourceURL, requestToken: token,
-                                                              initialPlan: submitted.initialPlan, displayedContext: submitted.planContext, presentation: request) else {
-                                        pendingCapture.register(token: token, draft: submitted, firstLine: line)
-                                        break
-                                    }
-                                    remaining.removeFirst()
-                                }
-                                title = remaining.joined(separator: "\n")
-                                splitPreview = false
-                                if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
-                                else { focusedField = .title }
-                            }
-                        }.disabled(model.isSaving || model.projectionPending)
+                        Button("\(lines.count)개를 각각 저장", action: saveSplitCapture)
+                            .disabled(captureBusy || model.projectionPending)
                     }.navigationTitle("줄마다 나누기")
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { splitPreview = false } } }
+                        .toolbar { ToolbarItem(placement: .cancellationAction) {
+                            Button("취소") { if !captureBusy { splitPreview = false } }.disabled(captureBusy)
+                        } }
                 }.tint(MirrorPalette.accent)
+                    .interactiveDismissDisabled(captureBusy)
                     .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "captureSplit"))
             }
             .sheet(isPresented: $showDatePicker, onDismiss: {
@@ -506,6 +485,7 @@ struct MirrorCaptureView: View {
             }) {
                 if let datePickerContext {
                     MirrorCaptureDatePicker(context: datePickerContext) { target in
+                        guard !captureBusy, !model.projectionPending else { return }
                         initialPlan = target
                         planContext = datePickerContext
                         showDatePicker = false
@@ -537,22 +517,20 @@ struct MirrorCaptureView: View {
                     .accessibilityIdentifier("capture.feedback")
             }
             Button { save() } label: {
-                Text(model.isSaving ? "저장 중…" : lines.count > 1 ? "한 개로 저장" : initialPlan == nil ? "보관함에 넣기" : "날짜에 넣기")
+                Text(captureBusy ? "저장 중…" : lines.count > 1 ? "한 개로 저장" : initialPlan == nil ? "보관함에 넣기" : "날짜에 넣기")
                     .foregroundStyle(MirrorPalette.onAccent)
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
                 .buttonStyle(.borderedProminent)
-                .disabled(model.isSaving || model.projectionPending)
+                .disabled(captureBusy || model.projectionPending)
                 .accessibilityIdentifier("capture.save")
                 .keyboardShortcut(.return, modifiers: .command)
                 #if os(macOS)
                 .frame(maxWidth: 200)
                 #endif
             if model.canRetryPresentedCapture(request) {
-                Button(model.projectionPending ? "저장 결과 다시 확인" : "이전 입력 다시 시도") {
-                    Task { await model.retryPresentedCapture(request) }
-                }
-                    .disabled(model.isSaving)
+                Button(model.projectionPending ? "저장 결과 다시 확인" : "이전 입력 다시 시도", action: retryCapture)
+                    .disabled(captureBusy)
                     .frame(minHeight: 44)
             }
         }.padding(12).frame(maxWidth: .infinity).background(MirrorPalette.surface)
@@ -576,7 +554,7 @@ struct MirrorCaptureView: View {
                     .frame(minHeight: 44).accessibilityIdentifier("capture.planClear")
             }
         }
-        .disabled(model.isSaving || model.projectionPending)
+        .disabled(captureBusy || model.projectionPending)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("날짜 선택")
         .accessibilityIdentifier("capture.planChoices")
@@ -586,26 +564,32 @@ struct MirrorCaptureView: View {
         planContext = context; initialPlan = .day(day)
     }
     private func closeCapture() {
-        guard model.closeCapture(request) else { return }
+        guard !captureBusy, model.closeCapture(request) else { return }
         model.clearCaptureInputProblem()
         focusedField = nil
         dismiss()
     }
     private func save() {
+        guard !captureBusy, !model.projectionPending else { return }
         let accepted = acceptCaptureCommit(model.presentedCaptureCommittedToken)
         if accepted == .clearDraft || (accepted == .removeFirstLine && title.isEmpty && sourceURL.isEmpty) { return }
         if pendingCapture.matchesWholeDraft(captureDraft), model.canRetryPresentedCapture(request) {
-            Task { await model.retryPresentedCapture(request) }
+            retryCapture()
             return
         }
+        guard let submission = pendingCapture.beginSubmission(draft: captureDraft) else { return }
+        let submitted = submission.draft
+        let token = UUID().uuidString
+        guard model.registerPresentedCapture(token: token, presentation: request) else {
+            pendingCapture.endSubmission(submission)
+            return
+        }
+        requestToken = token
+        pendingCapture.clearPending()
         showSavedFeedback = false
         startCaptureFlow()
         Task {
-            let submitted = captureDraft
-            requestToken = UUID().uuidString
-            let token = requestToken
-            pendingCapture = CaptureDraftCommitState()
-            model.registerPresentedCapture(token: token, presentation: request)
+            defer { pendingCapture.endSubmission(submission) }
             if await model.capture(title: submitted.title, note: submitted.note, sourceURL: submitted.sourceURL, requestToken: token,
                                    initialPlan: submitted.initialPlan, displayedContext: submitted.planContext, presentation: request) {
                 title = ""; note = ""; sourceURL = ""
@@ -614,6 +598,52 @@ struct MirrorCaptureView: View {
                 captureFlowStarted = false
                 finishSavedCapture()
             } else { pendingCapture.register(token: token, draft: submitted) }
+        }
+    }
+    private func saveSplitCapture() {
+        guard !captureBusy, !model.projectionPending else { return }
+        let accepted = acceptCaptureCommit(model.presentedCaptureCommittedToken)
+        if accepted == .clearDraft || (accepted == .removeFirstLine && lines.isEmpty) {
+            splitPreview = false
+            return
+        }
+        guard let submission = pendingCapture.beginSubmission(draft: captureDraft) else { return }
+        let submitted = submission.draft
+        let submittedLines = submitted.title.components(separatedBy: .newlines)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        showSavedFeedback = false
+        startCaptureFlow()
+        Task {
+            defer { pendingCapture.endSubmission(submission) }
+            var remaining = submittedLines
+            for line in submittedLines {
+                let remainingDraft = CaptureDraftSnapshot(title: remaining.joined(separator: "\n"),
+                    note: submitted.note, sourceURL: submitted.sourceURL,
+                    initialPlan: submitted.initialPlan, planContext: submitted.planContext)
+                let token = UUID().uuidString
+                guard model.registerPresentedCapture(token: token, presentation: request) else { break }
+                requestToken = token
+                pendingCapture.clearPending()
+                guard await model.capture(title: line, note: submitted.note, sourceURL: submitted.sourceURL, requestToken: token,
+                                          initialPlan: submitted.initialPlan, displayedContext: submitted.planContext, presentation: request) else {
+                    pendingCapture.register(token: token, draft: remainingDraft, firstLine: line)
+                    break
+                }
+                remaining.removeFirst()
+            }
+            title = remaining.joined(separator: "\n")
+            splitPreview = false
+            if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
+            else { focusedField = .title }
+        }
+    }
+    private func retryCapture() {
+        // pending 상태에서도 자기 재시도는 허용하되 같은 화면의 새 제출과 겹치지 않는다.
+        guard !captureBusy, model.canRetryPresentedCapture(request),
+              let submission = pendingCapture.beginSubmission(draft: captureDraft) else { return }
+        Task {
+            defer { pendingCapture.endSubmission(submission) }
+            await model.retryPresentedCapture(request)
         }
     }
     private var captureDraft: CaptureDraftSnapshot {

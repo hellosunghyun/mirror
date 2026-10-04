@@ -327,11 +327,42 @@ public enum CaptureDraftCommitDisposition: Equatable, Sendable {
     case clearDraft, removeFirstLine, preserveDraft
 }
 
+/// Task를 예약하기 전에 고정한 입력과 해당 비동기 제출의 수명이다.
+public struct CaptureDraftSubmission: Equatable, Sendable {
+    public let id: UUID
+    public let draft: CaptureDraftSnapshot
+
+    fileprivate init(draft: CaptureDraftSnapshot) {
+        id = UUID()
+        self.draft = draft
+    }
+}
+
 /// 한 실패 입력만 보유한다. 자기 receipt는 초안 변경 여부와 관계없이 정확히 한 번 소비한다.
 public struct CaptureDraftCommitState: Sendable {
     private var pending: (token: String, draft: CaptureDraftSnapshot, firstLine: String?)?
+    public private(set) var submission: CaptureDraftSubmission?
 
     public init() {}
+
+    public var isSubmitting: Bool { submission != nil }
+
+    public mutating func beginSubmission(draft: CaptureDraftSnapshot) -> CaptureDraftSubmission? {
+        guard submission == nil else { return nil }
+        let value = CaptureDraftSubmission(draft: draft)
+        submission = value
+        return value
+    }
+
+    @discardableResult
+    public mutating func endSubmission(_ value: CaptureDraftSubmission) -> Bool {
+        guard submission == value else { return false }
+        submission = nil
+        return true
+    }
+
+    /// 새 원문 제출을 승인한 뒤 실패 receipt만 교체한다. 현재 제출 잠금은 유지한다.
+    public mutating func clearPending() { pending = nil }
 
     public mutating func register(token: String, draft: CaptureDraftSnapshot, firstLine: String? = nil) {
         pending = (token, draft, firstLine)
