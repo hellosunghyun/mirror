@@ -53,7 +53,8 @@ PHASES = (
     'started', 'launched', 'captured', 'reviewOpened', 'tomorrowAssigned', 'reviewClosed',
     'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
     'futureRowVerified', 'searchTitleVerified', 'libraryScreenshotRecorded', 'detailOpened',
-    'detailPlanVerified', 'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
+    'detailPlanVerified', 'detailTitleVerified', 'detailTitleExpanded', 'detailTitleCollapsed',
+    'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
 )
 KEYBOARD_FRAME_FIELDS = (
     'continueFrameHasArea', 'continueFrameInsideKeyboard',
@@ -65,6 +66,8 @@ KEYBOARD_INTRODUCTION_FIELDS = (
 )
 UI_CAPTURE_PHASE_NOTICE = '::notice::UI capture phase diagnostic: '
 UI_CAPTURE_PHASE_REJECTED_NOTICE = '::notice::UI capture phase diagnostic rejected: '
+UI_VALUE_WAIT_NOTICE = '::notice::UI value wait failure diagnostic: '
+UI_VALUE_WAIT_REJECTED_NOTICE = '::notice::UI value wait failure diagnostic rejected: '
 CAPTURE_PHASES = (
     'started', 'launched', 'initialNavigationVerified', 'initialScreenshotRecorded', 'calendarSelected',
     'calendarNavigationVerified', 'calendarScreenshotRecorded', 'settingsRecorded', 'captureSaved',
@@ -207,6 +210,30 @@ def capture_phase_line(phase='started'):
     return 'UI capture phase diagnostic: ' + json.dumps({'phase': phase})
 
 
+def value_wait_payload(method=METHODS[0], **overrides):
+    source = (ROOT / helper.UI_FAILURE_SOURCE_FILE).read_text().splitlines()
+    # Shared capture() is exercised by every baseline case; direct empty waits are case-owned.
+    call = ('try waitForValue("", element: continuousTitle)' if method == METHODS[0]
+            else 'try replaceText(in: field, with: title, app: app, prepareKeyboardBeforeTyping: attachEvidence)')
+    caller = next(index for index, line in enumerate(source, 1)
+                  if call in line)
+    return {'target': 'captureTitle', 'callerLine': caller, 'expectedEmpty': True,
+            'actualStringPresent': True, 'actualMatchesExpected': False, 'actualMatchesPlaceholder': False,
+            'expectedLineCount': 0, 'actualLineCount': 2, **overrides}
+
+
+def value_wait_line(payload):
+    return 'UI value wait failure diagnostic: ' + json.dumps(payload)
+
+
+def value_wait_transcript(payload=None, method=METHODS[0], module='MirrorIOSUITests', terminal='failed'):
+    payload = value_wait_payload() if payload is None else payload
+    failure = ui_failure_message_line('입력 값이 기대 상태로 바뀌지 않았다.', method=method,
+                                      line=str(payload['callerLine']), kind='XCTFail').replace('MirrorIOSUITests', module)
+    return [started_line(method, owner=module + '.MirrorUITests'), value_wait_line(payload), failure,
+            case_line(method, event=terminal, module=module)]
+
+
 def navigation_geometry_payload(stage='initial-today', identifier='capture.open', **observations):
     # 실패한 경계에서도 수치 자체는 관측이다. 아래 버튼은 status 영역 아래가 아니다.
     return {'stage': stage, 'identifier': identifier, 'statusFrame': [0, 0, 390, 59],
@@ -235,6 +262,96 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
 
     def notices(self, output, prefix):
         return [json.loads(line[len(prefix):]) for line in output.splitlines() if line.startswith(prefix)]
+
+    def test_value_wait_reports_only_matching_failed_case_and_current_source_callsite(self):
+        for module in ('MirrorIOSUITests', 'MirrorMacUITests'):
+            for method in METHODS:
+                with self.subTest(module=module, method=method):
+                    payload = value_wait_payload(method=method)
+                    output = self.capture(helper.report_ui_value_wait_diagnostics,
+                                          value_wait_transcript(payload, method, module))
+                    self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE),
+                                     [{'scope': 'stdoutOnly', 'method': method,
+                                       'sourceFile': helper.UI_FAILURE_SOURCE_FILE, **payload}])
+                    self.assertNotIn(str(ROOT), output)
+        # A late update after the timeout is an observation, not a passing assertion.
+        payload = value_wait_payload(actualLineCount=0, actualMatchesExpected=True)
+        output = self.capture(helper.report_ui_value_wait_diagnostics, value_wait_transcript(payload))
+        self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE)[0]['actualMatchesExpected'], True)
+
+    def test_value_wait_rejects_foreign_parallel_restarted_duplicate_and_nonfailed_cases(self):
+        valid = value_wait_transcript()
+        invalid = [valid[1:], valid[:-1], value_wait_transcript(terminal='passed'),
+                   value_wait_transcript(terminal='skipped'), value_wait_transcript(module='OtherUITests'),
+                   value_wait_transcript(method='testUnexpected'),
+                   [valid[0], valid[0], *valid[1:]],
+                   [valid[0], started_line(METHODS[1]), *valid[1:]],
+                   [*valid[:2], case_line(event='failed'), valid[0], *valid[2:]],
+                   [valid[0], valid[1], valid[1], *valid[2:]], valid + valid,
+                   [*valid[:3], valid[3] + ' ' + started_line(METHODS[1])]]
+        for transcript in invalid:
+            with self.subTest(transcript=transcript):
+                output = self.capture(helper.report_ui_value_wait_diagnostics, transcript)
+                self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+                self.assertTrue(self.notices(output, UI_VALUE_WAIT_REJECTED_NOTICE))
+
+    def test_value_wait_requires_exact_owned_failure_and_matching_caller_line(self):
+        valid = value_wait_transcript()
+        wrong_failures = [valid[2].replace(helper.UI_FAILURE_SOURCE_FILE, 'Tests/Other.swift'),
+                          valid[2].replace(METHODS[0], METHODS[1]),
+                          valid[2].replace(':' + str(value_wait_payload()['callerLine']) + ':', ':1:'),
+                          valid[2] + PRIVATE, valid[2].replace('failed - ', 'XCTAssertTrue failed - ')]
+        for failure in wrong_failures:
+            output = self.capture(helper.report_ui_value_wait_diagnostics, [*valid[:2], failure, valid[3]])
+            self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+            self.assertTrue(self.notices(output, UI_VALUE_WAIT_REJECTED_NOTICE))
+        outside_call = value_wait_payload(callerLine=1)
+        output = self.capture(helper.report_ui_value_wait_diagnostics, value_wait_transcript(outside_call))
+        self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+        # An authentic callsite from another baseline test does not belong to this failure.
+        output = self.capture(helper.report_ui_value_wait_diagnostics,
+                              value_wait_transcript(value_wait_payload(), method=METHODS[1]))
+        self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+        self.assertTrue(self.notices(output, UI_VALUE_WAIT_REJECTED_NOTICE))
+
+    def test_value_wait_rejects_private_fields_invalid_types_and_inconsistent_bounded_counts(self):
+        bad = [{'private': PRIVATE}, {'target': PRIVATE}, {'target': []}, {'callerLine': True},
+               {'callerLine': 0}, {'callerLine': 100000}, {'callerLine': '1'},
+               {'expectedEmpty': 1}, {'actualStringPresent': None}, {'actualMatchesExpected': 'false'},
+               {'actualMatchesPlaceholder': 0}, {'expectedLineCount': True}, {'actualLineCount': -1},
+               {'actualLineCount': 17}, {'actualLineCount': '2'}, {'expectedEmpty': False},
+               {'actualStringPresent': False}, {'actualMatchesExpected': True}]
+        for change in bad:
+            with self.subTest(change=change):
+                output = self.capture(helper.report_ui_value_wait_diagnostics,
+                                      value_wait_transcript(value_wait_payload(**change)))
+                self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+                self.assertTrue(self.notices(output, UI_VALUE_WAIT_REJECTED_NOTICE))
+        for observations in ({'actualLineCount': 16}, {'actualStringPresent': False, 'actualLineCount': 0}):
+            output = self.capture(helper.report_ui_value_wait_diagnostics,
+                                  value_wait_transcript(value_wait_payload(**observations)))
+            self.assertEqual(len(self.notices(output, UI_VALUE_WAIT_NOTICE)), 1)
+
+    def test_value_wait_rejects_malformed_duplicate_oversize_and_mixed_payloads_without_fallback_leaks(self):
+        valid = value_wait_transcript()
+        encoded = json.dumps(value_wait_payload())
+        marker = 'UI value wait failure diagnostic: '
+        invalid = [marker + '{', marker + '[]', marker + encoded + PRIVATE,
+                   marker + encoded[:-1] + ', "target":"' + PRIVATE + '"}',
+                   marker + encoded[:-1] + ', "private":"' + PRIVATE + '한' * 1500 + '"}',
+                   valid[1] + ' ' + valid[1], valid[1] + ' ' + started_line(METHODS[1]),
+                   valid[1] + ' ' + capture_phase_line(), valid[1] + ' ' + ui_failure_line(),
+                   valid[1] + ' ' + store_dedup_line()]
+        for bad in invalid:
+            output = self.capture(helper.report_ui_value_wait_diagnostics, [valid[0], bad, *valid[2:]])
+            self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+            self.assertTrue(self.notices(output, UI_VALUE_WAIT_REJECTED_NOTICE))
+        log = self.root / 'value-wait-private.log'
+        log.write_text('\n'.join([valid[0], marker + json.dumps({'private': PRIVATE + ' fatal error'}), *valid[2:]]))
+        output = self.capture(helper.diagnostics, log)
+        self.assertNotIn(PRIVATE, output)
+        self.assertEqual(self.notices(output, UI_VALUE_WAIT_NOTICE), [])
+        self.assertTrue(self.notices(output, UI_FIRST_FAILURE_NOTICE))
 
     def test_capture_phase_preserves_every_actual_prefix_and_complete_without_success_inference(self):
         for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'):

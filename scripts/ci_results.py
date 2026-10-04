@@ -88,12 +88,13 @@ UI_TOOLBAR_DIAGNOSTIC_MARKER = 'UI search toolbar diagnostic:'
 UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER = 'UI validation recovery diagnostic:'
 UI_NAVIGATION_GEOMETRY_DIAGNOSTIC_MARKER = 'UI navigation geometry diagnostic:'
 UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER = 'UI capture phase diagnostic:'
+UI_VALUE_WAIT_DIAGNOSTIC_MARKER = 'UI value wait failure diagnostic:'
 STRUCTURED_DIAGNOSTIC_MARKERS = frozenset({
     STORE_DEDUP_DIAGNOSTIC_MARKER, UI_VIEWPORT_DIAGNOSTIC_MARKER,
     UI_KEYBOARD_DIAGNOSTIC_MARKER, UI_PHASE_DIAGNOSTIC_MARKER,
     UI_NATIVE_SCREENSHOT_DIAGNOSTIC_MARKER, UI_TOOLBAR_DIAGNOSTIC_MARKER,
     UI_VALIDATION_RECOVERY_DIAGNOSTIC_MARKER, UI_NAVIGATION_GEOMETRY_DIAGNOSTIC_MARKER,
-    UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER,
+    UI_CAPTURE_PHASE_DIAGNOSTIC_MARKER, UI_VALUE_WAIT_DIAGNOSTIC_MARKER,
 })
 UI_PHASE_METHOD = 'testTomorrowStaysOutOfTodayAndIsSearchableInLibrary'
 UI_TOOLBAR_IDENTIFIERS = ('capture.open', 'settings.button')
@@ -123,7 +124,8 @@ UI_PHASE_NAMES = (
     'started', 'launched', 'captured', 'reviewOpened', 'tomorrowAssigned', 'reviewClosed',
     'todayExcluded', 'searchNavigationRequested', 'searchReady', 'searchEntered',
     'futureRowVerified', 'searchTitleVerified', 'libraryScreenshotRecorded', 'detailOpened',
-    'detailPlanVerified', 'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
+    'detailPlanVerified', 'detailTitleVerified', 'detailTitleExpanded', 'detailTitleCollapsed',
+    'detailScreenshotRecorded', 'detailClosed', 'todayRechecked', 'complete',
 )
 UI_NATIVE_SCREENSHOT_METHOD = 'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday'
 UI_IMAGE_ORIENTATIONS = frozenset({
@@ -350,6 +352,85 @@ def report_ui_capture_phase_diagnostics(lines):
         print('::notice::UI capture phase diagnostic: ' + json.dumps({
             'scope': 'stdoutOnly', 'method': UI_CAPTURE_PHASE_METHOD, 'phases': phases,
         }))
+
+
+def report_ui_value_wait_diagnostics(lines):
+    """실제 실패한 동일 사례·호출행의 고정 관측만 보존한다. 원문은 출력하지 않는다."""
+    targets = {'unknown', 'captureTitle', 'captureNote', 'captureURL', 'librarySearch', 'detailTitle', 'ipadAdjacentToggle'}
+    bool_fields = ('expectedEmpty', 'actualStringPresent', 'actualMatchesExpected', 'actualMatchesPlaceholder')
+    count_fields = ('expectedLineCount', 'actualLineCount')
+    fields = {'target', 'callerLine', *bool_fields, *count_fields}
+    owners = {'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'}
+    active, depths, epochs = set(), {}, {}
+    next_epoch, ambiguous, invalid = 0, False, 0
+    reports, pending, seen = [], None, set()
+    try:
+        source_lines = (Path(__file__).resolve().parents[1] / UI_FAILURE_SOURCE_FILE).read_text().splitlines()
+    except (OSError, UnicodeError):
+        source_lines = []
+    callsite_methods, source_method = {}, None
+    for number, source_line in enumerate(source_lines, 1):
+        declaration = re.match(r'    (?:private )?func ([A-Za-z0-9_]+)\(', source_line)
+        if declaration:
+            source_method = declaration[1]
+        if re.search(r'\btry (?:waitForValue|replaceText)\(', source_line):
+            callsite_methods[number] = source_method
+    for text in lines:
+        if UI_VALUE_WAIT_DIAGNOSTIC_MARKER in text:
+            try:
+                value = fixed_diagnostic_json(text, UI_VALUE_WAIT_DIAGNOSTIC_MARKER)
+                case = next(iter(active)) if len(active) == 1 else None
+                if (not isinstance(value, dict) or set(value) != fields
+                        or not isinstance(value['target'], str) or value['target'] not in targets
+                        or any(type(value[key]) is not bool for key in bool_fields)
+                        or any(type(value[key]) is not int or not 0 <= value[key] <= 16 for key in count_fields)
+                        or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= len(source_lines)
+                        or value['callerLine'] not in callsite_methods
+                        or value['expectedEmpty'] != (value['expectedLineCount'] == 0)
+                        or (not value['actualStringPresent'] and (value['actualLineCount'] != 0
+                            or value['actualMatchesExpected'] or value['actualMatchesPlaceholder']))
+                        or (value['actualMatchesExpected'] and value['actualLineCount'] != value['expectedLineCount'])
+                        or ambiguous or case is None or case[0] not in owners or case[1] not in UI_BASELINE_METHODS
+                        or (callsite_methods[value['callerLine']] != case[1]
+                            and callsite_methods[value['callerLine']] != 'capture'
+                            and not (callsite_methods[value['callerLine']] == 'captureIPadLandscape'
+                                     and case[1] == UI_CAPTURE_PHASE_METHOD))
+                        or pending is not None or case in seen or epochs.get(case) is None):
+                    raise ValueError('실패 관측의 source·case·고정 값이 일치하지 않습니다.')
+                seen.add(case)
+                pending = {'case': case, 'epoch': epochs[case], 'value': value, 'failureSeen': False}
+            except (ValueError, TypeError, RecursionError):
+                invalid += 1
+            continue
+        if pending is not None and is_ui_failure_candidate(text):
+            source = UI_FAILURE_SOURCE_PATTERN.fullmatch(text)
+            explicit = UI_FAILURE_CASE_PATTERN.fullmatch(source[3].strip()) if source else None
+            if (source and (source[1] == UI_FAILURE_SOURCE_FILE or source[1].endswith('/' + UI_FAILURE_SOURCE_FILE))
+                    and int(source[2]) == pending['value']['callerLine'] and explicit
+                    and (explicit[1], explicit[2]) == pending['case']
+                    and explicit[3] == 'failed - 입력 값이 기대 상태로 바뀌지 않았다.'):
+                pending['failureSeen'] = True
+        # 다른 structured payload 안의 가짜 terminal은 현재 사례를 종료하지 않는다.
+        events = (list(UI_ANY_CASE_EVENT_PATTERN.finditer(text))
+                  if not any(marker in text for marker in STRUCTURED_DIAGNOSTIC_MARKERS)
+                  and not is_ui_failure_candidate(text) else [])
+        event = events[0] if len(events) == 1 else None
+        if event and pending is not None and (event[1], event[2]) == pending['case'] and event[3] != 'started':
+            if (event[3] == 'failed' and pending['failureSeen'] and not ambiguous
+                    and active == {pending['case']} and epochs.get(pending['case']) == pending['epoch']):
+                reports.append({'scope': 'stdoutOnly', 'method': pending['case'][1],
+                                'sourceFile': UI_FAILURE_SOURCE_FILE, **pending['value']})
+            else:
+                invalid += 1
+            pending = None
+        next_epoch, ambiguous = track_fixed_ui_case_instances(text, active, depths, epochs, next_epoch, ambiguous)
+    if pending is not None:
+        invalid += 1
+    if invalid:
+        print('::notice::UI value wait failure diagnostic rejected: ' + json.dumps({'invalidCount': invalid}))
+    else:
+        for report in reports:
+            print('::notice::UI value wait failure diagnostic: ' + json.dumps(report, sort_keys=True))
 
 
 def report_ui_navigation_geometry_diagnostics(lines):
@@ -881,6 +962,7 @@ def diagnostics(path):
     report_ui_validation_recovery_diagnostics(raw_lines)
     report_ui_navigation_geometry_diagnostics(raw_lines)
     report_ui_capture_phase_diagnostics(raw_lines)
+    report_ui_value_wait_diagnostics(raw_lines)
     report_ui_toolbar_diagnostics(raw_lines)
     report_ui_keyboard_diagnostics(raw_lines)
     report_ui_viewport_diagnostics(raw_lines)

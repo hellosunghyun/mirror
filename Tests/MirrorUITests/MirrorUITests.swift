@@ -399,18 +399,21 @@ final class MirrorUITests: XCTestCase {
         recordTomorrowPhase(.detailPlanVerified)
         XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
                        "상세는 저장한 500자 제목 원문을 생략하지 않는다.")
+        recordTomorrowPhase(.detailTitleVerified)
         try activate("expandableText.expand", in: app)
         let collapseTitle = try requireElement("expandableText.collapse", in: app, preferButtons: true)
         XCTAssertEqual(collapseTitle.elementType, .button, "전체 제목은 별도의 실제 Button으로 접을 수 있다.")
         XCTAssertFalse(element("expandableText.expand", in: app).exists)
         XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
                        "펼친 제목도 저장한 전체 원문을 보존한다.")
+        recordTomorrowPhase(.detailTitleExpanded)
         try activate("expandableText.collapse", in: app)
         let expandTitle = try requireElement("expandableText.expand", in: app, preferButtons: true)
         XCTAssertEqual(expandTitle.elementType, .button, "접힌 제목은 별도의 실제 Button으로 다시 펼칠 수 있다.")
         XCTAssertFalse(element("expandableText.collapse", in: app).exists)
         XCTAssertEqual(displayedText(of: element("detail.contentTitle", in: app)), title,
                        "다시 접어도 전체 원문과 접근성 내용은 바뀌지 않는다.")
+        recordTomorrowPhase(.detailTitleCollapsed)
         try recordUI("detail", in: app, identifiers: ["detail.contentTitle", "detail.plan", "detail.edit", "task.complete", "detail.close"])
         recordTomorrowPhase(.detailScreenshotRecorded)
         try activate("detail.close", in: app)
@@ -851,7 +854,8 @@ final class MirrorUITests: XCTestCase {
     private enum TomorrowPhase: String {
         case started, launched, captured, reviewOpened, tomorrowAssigned, reviewClosed, todayExcluded
         case searchNavigationRequested, searchReady, searchEntered, futureRowVerified, searchTitleVerified
-        case libraryScreenshotRecorded, detailOpened, detailPlanVerified, detailScreenshotRecorded
+        case libraryScreenshotRecorded, detailOpened, detailPlanVerified
+        case detailTitleVerified, detailTitleExpanded, detailTitleCollapsed, detailScreenshotRecorded
         case detailClosed, todayRechecked, complete
     }
 
@@ -2114,7 +2118,8 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func replaceText(in field: XCUIElement, with text: String, app: XCUIApplication,
-                             prepareKeyboardBeforeTyping: Bool = false) throws {
+                             prepareKeyboardBeforeTyping: Bool = false,
+                             file: StaticString = #filePath, line: UInt = #line) throws {
         try interact(with: field, in: app)
         #if os(iOS)
         if prepareKeyboardBeforeTyping && UIDevice.current.userInterfaceIdiom == .phone {
@@ -2141,7 +2146,7 @@ final class MirrorUITests: XCTestCase {
         }
         #endif
         field.typeText(text)
-        try waitForValue(text, element: field)
+        try waitForValue(text, element: field, file: file, line: line)
     }
 
     @MainActor
@@ -2156,16 +2161,43 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func waitForValue(_ expected: String, element: XCUIElement) throws {
+    private func waitForValue(_ expected: String, element: XCUIElement,
+                              file: StaticString = #filePath, line: UInt = #line) throws {
         let predicate: NSPredicate
         if expected.isEmpty {
             predicate = NSPredicate(format: "value == %@ OR value == placeholderValue OR value == nil", expected)
         } else { predicate = NSPredicate(format: "value == %@", expected) }
         let changed = XCTNSPredicateExpectation(predicate: predicate, object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
-            printFailurePrefix("입력 값이 기대 상태로 바뀌지 않았다: expected=\(expected)")
-            XCTFail("입력 값이 기대 상태로 바뀌지 않았다: \(describe(element))")
-            throw UIHarnessError.unexpectedValue(element.identifier)
+            // 실패한 기존 대상만 한 번씩 읽는다. 원문·label·frame과 추가 탐색은 남기지 않는다.
+            let identifier = element.identifier
+            let actual = element.value as? String
+            let placeholder = element.placeholderValue
+            let target: String
+            switch identifier {
+            case "capture.title": target = "captureTitle"
+            case "capture.note": target = "captureNote"
+            case "capture.url": target = "captureURL"
+            case "library.search": target = "librarySearch"
+            case "detail.title": target = "detailTitle"
+            case "ipad.adjacentCalendar.toggle": target = "ipadAdjacentToggle"
+            default: target = "unknown"
+            }
+            func boundedLines(_ text: String) -> Int {
+                text.isEmpty ? 0 : text.split(separator: "\n", maxSplits: 15, omittingEmptySubsequences: false).count
+            }
+            let report: [String: Any] = [
+                "target": target, "callerLine": Int(line), "expectedEmpty": expected.isEmpty,
+                "actualStringPresent": actual != nil, "actualMatchesExpected": actual == expected,
+                "actualMatchesPlaceholder": actual != nil && placeholder != nil && actual == placeholder,
+                "expectedLineCount": boundedLines(expected), "actualLineCount": actual.map(boundedLines) ?? 0,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
+               let json = String(data: data, encoding: .utf8) {
+                print("UI value wait failure diagnostic: \(json)")
+            }
+            XCTFail("입력 값이 기대 상태로 바뀌지 않았다.", file: file, line: line)
+            throw UIHarnessError.unexpectedValue(identifier)
         }
     }
 
