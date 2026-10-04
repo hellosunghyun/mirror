@@ -305,6 +305,62 @@ public enum MirrorDeepLink {
     }
 }
 
+public enum CaptureTitleCommitDisposition: Equatable, Sendable {
+    case clearTitle, preserveTitle
+}
+
+public struct CaptureCommittedReceipt: Equatable, Sendable {
+    public let token: String
+    public let title: String
+
+    public init(token: String, title: String) {
+        self.token = token
+        self.title = title
+    }
+
+    public func disposition(token: String, submittedTitle: String?, currentTitle: String) -> CaptureTitleCommitDisposition? {
+        guard self.token == token, let submittedTitle,
+              title == submittedTitle.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        return currentTitle == submittedTitle ? .clearTitle : .preserveTitle
+    }
+}
+
+/// 메뉴 막대가 제출한 원문과 저장 공간을 고정한다. 다른 표면의 실패 명령을 재시도하지 않는다.
+public struct MenuBarCaptureSubmission: Equatable, Sendable {
+    public let token: String
+    public let title: String
+    public let observationID: UUID
+    public let workspaceKey: String
+    public let workspaceEpoch: String
+
+    public init(token: String, title: String, observationID: UUID, workspaceKey: String, workspaceEpoch: String) {
+        self.token = token
+        self.title = title
+        self.observationID = observationID
+        self.workspaceKey = workspaceKey
+        self.workspaceEpoch = workspaceEpoch
+    }
+
+    public func ownedEnvelope(_ candidate: CommandEnvelope?, token: String, observationID: UUID,
+                              workspaceKey: String, workspaceEpoch: String) -> CommandEnvelope? {
+        guard self.token == token, self.observationID == observationID,
+              self.workspaceKey == workspaceKey, self.workspaceEpoch == workspaceEpoch,
+              let candidate, candidate.idempotencyKey == token, candidate.workspaceEpoch == workspaceEpoch,
+              candidate.source == .app, case let .capture(_, content) = candidate.payload,
+              content.title == title.trimmingCharacters(in: .whitespacesAndNewlines),
+              content.note == nil, content.sourceURL == nil else { return nil }
+        return candidate
+    }
+
+    public func committedReceipt(for envelope: CommandEnvelope, observationID: UUID,
+                                 workspaceKey: String, workspaceEpoch: String) -> CaptureCommittedReceipt? {
+        guard let owned = ownedEnvelope(envelope, token: token, observationID: observationID,
+                                       workspaceKey: workspaceKey, workspaceEpoch: workspaceEpoch),
+              case let .capture(_, content) = owned.payload else { return nil }
+        return CaptureCommittedReceipt(token: owned.idempotencyKey, title: content.title)
+    }
+}
+
 ///  실패한 입력의 원문과 선택 날짜를 receipt 소비까지 그대로 비교한다.
 public struct CaptureDraftSnapshot: Equatable, Sendable {
     public let title: String

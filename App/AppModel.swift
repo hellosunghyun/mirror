@@ -12,11 +12,6 @@ enum MirrorDestination: String, CaseIterable, Identifiable {
     var symbol: String { switch self { case .today: "sun.max"; case .calendar: "calendar"; case .library: "tray" } }
 }
 
-nonisolated struct CaptureCommittedReceipt: Equatable, Sendable {
-    let token: String
-    let title: String
-}
-
 struct ReviewCard: Codable, Identifiable {
     let id: String
     let taskID: UUID
@@ -140,7 +135,7 @@ final class AppModel {
     var lastCaptureCommittedToken: String?
     @ObservationIgnored private var presentedCaptureSubmission: (token: String, presentation: CapturePresentationRequest)?
     var presentedCaptureCommittedToken: String?
-    @ObservationIgnored private var menuBarCaptureToken: String?
+    @ObservationIgnored private var menuBarCaptureSubmission: MenuBarCaptureSubmission?
     var menuBarCaptureCommittedReceipt: CaptureCommittedReceipt?
     var confirmation: CommandEnvelope?
     var lastUndo: SafeUndo?
@@ -632,10 +627,29 @@ final class AppModel {
             systemProblem = "복구 상태를 확인하지 못했어요. 외부 노출과 알림은 계속 꺼져 있어요."
         }
     }
-    func registerMenuBarCapture(token: String) {
-        guard menuBarCaptureToken != token else { return }
-        menuBarCaptureToken = token
+    @discardableResult
+    func registerMenuBarCapture(token: String, title: String) -> Bool {
+        guard !isLoading, context != nil, !isSaving, !projectionPending,
+              !canRetryMenuBarCapture(token: token), let configuration else { return false }
+        let submission = MenuBarCaptureSubmission(token: token, title: title, observationID: storeObservationID,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch)
+        guard menuBarCaptureSubmission != submission else { return true }
+        menuBarCaptureSubmission = submission
         menuBarCaptureCommittedReceipt = nil
+        return true
+    }
+    private func menuBarRetryEnvelope(token: String) -> CommandEnvelope? {
+        guard let configuration else { return nil }
+        return menuBarCaptureSubmission?.ownedEnvelope(retryEnvelope, token: token, observationID: storeObservationID,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch)
+    }
+    func canRetryMenuBarCapture(token: String) -> Bool {
+        menuBarRetryEnvelope(token: token) != nil
+    }
+    @discardableResult
+    func retryMenuBarCapture(token: String) async -> Bool {
+        guard let envelope = menuBarRetryEnvelope(token: token) else { return false }
+        return await execute(envelope, success: "이 기기에 저장했어요.")
     }
     @discardableResult
     func registerPresentedCapture(token: String, presentation: CapturePresentationRequest) -> Bool {
@@ -1291,12 +1305,10 @@ final class AppModel {
                 recordUndo(envelope, result: result)
             }
             if envelope.kind == .capture {
-                if envelope.idempotencyKey == menuBarCaptureToken {
-                    switch envelope.payload {
-                    case let .capture(_, content), let .captureWithPlan(_, content, _):
-                        menuBarCaptureCommittedReceipt = CaptureCommittedReceipt(token: envelope.idempotencyKey, title: content.title)
-                    default: break
-                    }
+                if let configuration, let receipt = menuBarCaptureSubmission?.committedReceipt(for: envelope,
+                    observationID: storeObservationID, workspaceKey: configuration.workspaceKey,
+                    workspaceEpoch: configuration.workspaceEpoch) {
+                    menuBarCaptureCommittedReceipt = receipt
                 }
                 if let submitted = presentedCaptureSubmission,
                    envelope.idempotencyKey == submitted.token,
@@ -1855,7 +1867,7 @@ final class AppModel {
         endReviewExposureSegment()
         activeReviewMilliseconds = 0; reviewExposures = []
         tasks = []; records = []; review = nil; lastUndo = nil; picker = nil; confirmation = nil
-        menuBarCaptureToken = nil; menuBarCaptureCommittedReceipt = nil
+        menuBarCaptureSubmission = nil; menuBarCaptureCommittedReceipt = nil
         presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
         completedWidgetPickerID = nil; widgetNextDestination = nil
         completedBatchPickerID = nil; batchPickerOwner = nil

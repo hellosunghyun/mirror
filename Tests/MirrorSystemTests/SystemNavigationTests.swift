@@ -180,6 +180,124 @@ struct SystemNavigationTests {
         #expect(forward == TextEditingOwnershipState())
     }
 
+    @Test("메뉴 막대 제출은 자기 토큰의 앱 제목 입력 봉투만 그대로 돌려준다")
+    func menuBarCaptureOwnershipRejectsForeignCommands() throws {
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let observation = UUID(), taskID = UUID()
+        let owner = MenuBarCaptureSubmission(token: "menu-owned", title: "  메뉴 원문  ", observationID: observation,
+            workspaceKey: "personal-v1", workspaceEpoch: "local-v1")
+        let content = try TaskContent(title: owner.title)
+        let envelope = CommandEnvelope(requestID: "original-request", idempotencyKey: owner.token, source: .app,
+            context: context, workspaceEpoch: owner.workspaceEpoch, payload: .capture(taskID: taskID, content: content))
+        #expect(owner.ownedEnvelope(envelope, token: owner.token, observationID: observation,
+            workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch) == envelope)
+        #expect(owner.ownedEnvelope(envelope, token: "other-view-token", observationID: observation,
+            workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch) == nil)
+        let candidates: [CommandEnvelope?] = [
+            nil,
+            CommandEnvelope(requestID: "foreign", idempotencyKey: "other-window-token", source: .app,
+                context: context, workspaceEpoch: owner.workspaceEpoch, payload: envelope.payload),
+            CommandEnvelope(requestID: "share", idempotencyKey: owner.token, source: .share,
+                context: context, workspaceEpoch: owner.workspaceEpoch, payload: envelope.payload),
+            CommandEnvelope(requestID: "planned", idempotencyKey: owner.token, source: .app,
+                context: context, workspaceEpoch: owner.workspaceEpoch,
+                payload: .captureWithPlan(taskID: taskID, content: content, initialPlan: .day(context.planningDay))),
+            CommandEnvelope(requestID: "changed", idempotencyKey: owner.token, source: .app,
+                context: context, workspaceEpoch: owner.workspaceEpoch,
+                payload: .capture(taskID: taskID, content: try TaskContent(title: "다른 입력"))),
+            CommandEnvelope(requestID: "note", idempotencyKey: owner.token, source: .app,
+                context: context, workspaceEpoch: owner.workspaceEpoch,
+                payload: .capture(taskID: taskID, content: try TaskContent(title: owner.title, note: "다른 화면의 메모")))
+        ]
+        for candidate in candidates {
+            #expect(owner.ownedEnvelope(candidate, token: owner.token, observationID: observation,
+                workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch) == nil)
+            if let candidate {
+                #expect(owner.committedReceipt(for: candidate, observationID: observation,
+                    workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch) == nil)
+            }
+        }
+    }
+
+    @Test("메뉴 막대의 관측·공간·세대가 바뀌면 같은 토큰도 재시도와 성공 영수증을 거절한다")
+    func menuBarCaptureOwnershipRejectsChangedWorkspace() throws {
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let observation = UUID()
+        let owner = MenuBarCaptureSubmission(token: "menu-owned", title: "저장 공간 원문", observationID: observation,
+            workspaceKey: "personal-v1", workspaceEpoch: "local-v1")
+        let envelope = CommandEnvelope(requestID: "original-request", idempotencyKey: owner.token, source: .app,
+            context: context, workspaceEpoch: owner.workspaceEpoch,
+            payload: .capture(taskID: UUID(), content: try TaskContent(title: owner.title)))
+        for (currentObservation, currentKey, currentEpoch) in [
+            (UUID(), owner.workspaceKey, owner.workspaceEpoch),
+            (observation, "another-personal-space", owner.workspaceEpoch),
+            (observation, owner.workspaceKey, "new-epoch")
+        ] {
+            #expect(owner.ownedEnvelope(envelope, token: owner.token, observationID: currentObservation,
+                workspaceKey: currentKey, workspaceEpoch: currentEpoch) == nil)
+            #expect(owner.committedReceipt(for: envelope, observationID: currentObservation,
+                workspaceKey: currentKey, workspaceEpoch: currentEpoch) == nil)
+        }
+        let staleEnvelope = CommandEnvelope(requestID: envelope.requestID, idempotencyKey: owner.token, source: .app,
+            context: context, workspaceEpoch: "old-epoch", payload: envelope.payload)
+        #expect(owner.ownedEnvelope(staleEnvelope, token: owner.token, observationID: observation,
+            workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch) == nil)
+    }
+
+    @Test("메뉴 성공은 정확한 토큰·제출 제목만 수용하며 실패 뒤 수정한 제목과 다른 영수증을 보존한다")
+    func menuBarReceiptPreservesEditedTitleAndRejectsUnrelatedReceipt() {
+        let submitted = "  메뉴 원문  "
+        let receipt = CaptureCommittedReceipt(token: "menu-owned", title: "메뉴 원문")
+        #expect(receipt.disposition(token: "menu-owned", submittedTitle: submitted, currentTitle: submitted) == .clearTitle)
+        #expect(receipt.disposition(token: "menu-owned", submittedTitle: submitted, currentTitle: "수정한 제목") == .preserveTitle)
+        #expect(receipt.disposition(token: "menu-owned", submittedTitle: submitted, currentTitle: "메뉴 원문") == .preserveTitle)
+        #expect(receipt.disposition(token: "next-menu-token", submittedTitle: submitted, currentTitle: submitted) == nil)
+        #expect(receipt.disposition(token: "menu-owned", submittedTitle: nil, currentTitle: submitted) == nil)
+        #expect(receipt.disposition(token: "menu-owned", submittedTitle: "다른 제출", currentTitle: "다른 제출") == nil)
+        let unrelated = CaptureCommittedReceipt(token: "menu-owned", title: "다른 성공 원문")
+        #expect(unrelated.disposition(token: "menu-owned", submittedTitle: submitted, currentTitle: submitted) == nil)
+    }
+
+    @MainActor @Test("메뉴 pending은 다른 창 봉투를 실행하지 않고 기존 봉투 재시도로 작업 하나와 수정 제목을 보존한다")
+    func menuBarPendingRetryExecutesOnlyOwnedOriginalEnvelope() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorMenuRetry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = StoreConfiguration(directory: directory, deviceID: UUID().uuidString)
+        let store = try await MirrorStore(configuration: config)
+        let context = try PlanningContext.capture(at: navigationInstant, timeZoneID: "Asia/Seoul", policyRevision: "policy-v1")
+        let observation = UUID(), taskID = UUID()
+        let owner = MenuBarCaptureSubmission(token: "menu-original", title: "  먼저 저장한 제목  ", observationID: observation,
+            workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch)
+        let original = CommandEnvelope(requestID: "original-request", idempotencyKey: owner.token, source: .app,
+            context: context, workspaceEpoch: config.workspaceEpoch,
+            payload: .capture(taskID: taskID, content: try TaskContent(title: owner.title)))
+        let pending = await store.execute(original, at: context.capturedAt, failurePoint: .afterCanonicalSave)
+        #expect(pending.state == .committedProjectionPending)
+        let foreign = CommandEnvelope(requestID: "other-window-request", idempotencyKey: "other-window-token", source: .app,
+            context: context, workspaceEpoch: config.workspaceEpoch,
+            payload: .capture(taskID: UUID(), content: try TaskContent(title: "다른 창에서 실패한 제목")))
+        let rejected = owner.ownedEnvelope(foreign, token: owner.token, observationID: observation,
+            workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch)
+        #expect(rejected == nil)
+        if let rejected { _ = await store.execute(rejected, at: context.capturedAt) }
+        let retry = try #require(owner.ownedEnvelope(original, token: owner.token, observationID: observation,
+            workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch))
+        #expect(retry == original)
+        let confirmed = await store.execute(retry, at: context.capturedAt)
+        #expect(confirmed.state == .alreadyApplied)
+        let receipt = try #require(owner.committedReceipt(for: retry, observationID: observation,
+            workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch))
+        let editedTitle = "저장 결과를 기다린 뒤 수정한 제목"
+        #expect(receipt.disposition(token: owner.token, submittedTitle: owner.title, currentTitle: editedTitle) == .preserveTitle)
+        #expect(owner.committedReceipt(for: retry, observationID: UUID(),
+            workspaceKey: config.workspaceKey, workspaceEpoch: config.workspaceEpoch) == nil)
+        let snapshot = try await store.snapshot()
+        #expect(snapshot.tasks.count == 1 && snapshot.records.count == 1)
+        #expect(snapshot.tasks.first?.taskID == taskID && snapshot.tasks.first?.title == "먼저 저장한 제목")
+        #expect(snapshot.records.first?.idempotencyKey == owner.token)
+        _ = try await store.exportAndSuspend(exportedAt: navigationInstant)
+    }
+
     @Test("일반 저장 실패 뒤 자기 성공 receipt만 초안을 정확히 한 번 소비한다")
     func captureDraftFailureRetryConsumesOwnTokenOnce() {
         let draft = CaptureDraftSnapshot(title: "  실패 뒤 유지할 제목  ", note: "메모", sourceURL: "https://example.com/original")

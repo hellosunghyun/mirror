@@ -209,9 +209,15 @@ struct MirrorMenuBarContent: View {
                 .disabled(submittingCapture || model.isSaving || model.projectionPending)
                 .accessibilityIdentifier("menuBar.title")
             Button("보관함에 넣기") { saveCapture() }
-                .disabled(submittingCapture || model.isSaving || model.projectionPending)
+                .disabled(model.isLoading || model.context == nil || submittingCapture || model.isSaving || model.projectionPending
+                          || model.canRetryMenuBarCapture(token: captureRequestToken))
                 .accessibilityIdentifier("menuBar.save")
-            if model.isSaving {
+            if model.canRetryMenuBarCapture(token: captureRequestToken) {
+                Button(model.projectionPending ? "저장 결과 다시 확인" : "이전 입력 다시 시도", action: retryCapture)
+                    .disabled(submittingCapture || model.isSaving)
+                    .accessibilityIdentifier("menuBar.retry")
+            }
+            if submittingCapture || model.isSaving {
                 Text("저장 중…")
             } else if model.projectionPending {
                 Text("저장 결과를 확인하고 있어요")
@@ -233,7 +239,8 @@ struct MirrorMenuBarContent: View {
             .onDisappear { model.setTextEditing(false, ownerID: textEditingOwnerID) }
     }
     private func saveCapture() {
-        guard !submittingCapture, !model.isSaving, !model.projectionPending else { return }
+        guard !model.isLoading, model.context != nil, !submittingCapture, !model.isSaving, !model.projectionPending,
+              !model.canRetryMenuBarCapture(token: captureRequestToken) else { return }
         // onChange가 전달되기 전 자기 성공을 먼저 수용하고, 비운 입력으로 새 저장을 하지 않는다.
         if acceptCaptureReceipt(model.menuBarCaptureCommittedReceipt), title.isEmpty {
             focused = true
@@ -242,23 +249,38 @@ struct MirrorMenuBarContent: View {
         startCaptureFlow()
         let capturedTitle = title
         let token = captureRequestToken
-        submittedTitle = capturedTitle
         submittingCapture = true
-        model.registerMenuBarCapture(token: token)
+        guard model.registerMenuBarCapture(token: token, title: capturedTitle) else {
+            submittingCapture = false
+            return
+        }
+        submittedTitle = capturedTitle
         Task {
             defer { submittingCapture = false }
             if await model.capture(title: capturedTitle, note: "", sourceURL: "", requestToken: token) {
-                acceptCaptureReceipt(CaptureCommittedReceipt(token: token,
-                    title: capturedTitle.trimmingCharacters(in: .whitespacesAndNewlines)))
+                acceptCaptureReceipt(model.menuBarCaptureCommittedReceipt)
+                focused = true
+            }
+        }
+    }
+    private func retryCapture() {
+        guard !submittingCapture, !model.isSaving,
+              model.canRetryMenuBarCapture(token: captureRequestToken) else { return }
+        let token = captureRequestToken
+        submittingCapture = true
+        Task {
+            defer { submittingCapture = false }
+            if await model.retryMenuBarCapture(token: token) {
+                acceptCaptureReceipt(model.menuBarCaptureCommittedReceipt)
                 focused = true
             }
         }
     }
     @discardableResult
     private func acceptCaptureReceipt(_ receipt: CaptureCommittedReceipt?) -> Bool {
-        guard let receipt, receipt.token == captureRequestToken, let submittedTitle else { return false }
-        if title == submittedTitle,
-           submittedTitle.trimmingCharacters(in: .whitespacesAndNewlines) == receipt.title { title = "" }
+        guard let disposition = receipt?.disposition(token: captureRequestToken,
+            submittedTitle: submittedTitle, currentTitle: title) else { return false }
+        if disposition == .clearTitle { title = "" }
         self.submittedTitle = nil
         captureRequestToken = UUID().uuidString
         captureFlowStarted = false
