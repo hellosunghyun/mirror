@@ -145,7 +145,7 @@ final class AppModel {
     var reviewSummary: String?
     var currentReviewFeedback: String? {
         guard let session = review else { return nil }
-        guard projectionPending || feedbackReviewSessionID == session.id else { return nil }
+        guard feedbackReviewSessionID == session.id else { return nil }
         return feedback
     }
     var currentReviewUndo: SafeUndo? {
@@ -1665,6 +1665,7 @@ final class AppModel {
         let feedbackSessionID: String?
         switch envelope.payload {
         case let .setPlan(_, _, decision): feedbackSessionID = decision?.sessionID
+        case let .reviewClose(closure): feedbackSessionID = closure.sessionID
         case let .undo(operationID, _):
             feedbackSessionID = records.first(where: { $0.operationID == operationID })?.reviewDecision?.sessionID
         default: feedbackSessionID = nil
@@ -1719,7 +1720,8 @@ final class AppModel {
                 return false
             }
             feedback = success
-            feedbackReviewSessionID = feedbackSessionID
+            // 종료 성공 안내는 재개한 정리로 가져오지 않는다. 종료의 pending 안내만 세션에 남긴다.
+            feedbackReviewSessionID = envelope.kind == .reviewClose ? nil : feedbackSessionID
             advanceReview(envelope, result: result)
             if case let .undo(originalID, _) = envelope.payload {
                 // projection 복구 재시도도 같은 후처리를 거친다. 다른 공간의 응답으로 Undo·정리 큐를 바꾸지 않는다.
