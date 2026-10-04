@@ -57,17 +57,20 @@ final class CoreDataPersistence: @unchecked Sendable {
                 throw StoreError.invalidConfiguration
             }
             let container = NSPersistentCloudKitContainer(name: "MirrorCanonical", managedObjectModel: canonicalModel)
-            let description = storeDescription(url: configuration.directory.appendingPathComponent("Canonical.sqlite"))
+            let description = storeDescription(url: configuration.directory.appendingPathComponent("Canonical.sqlite"),
+                canonical: true, model: canonicalModel)
             description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: cloud.containerIdentifier)
             container.persistentStoreDescriptions = [description]
             canonical = container
         } else {
             canonical = NSPersistentContainer(name: "MirrorCanonical", managedObjectModel: canonicalModel)
-            canonical.persistentStoreDescriptions = [storeDescription(url: configuration.directory.appendingPathComponent("Canonical.sqlite"))]
+            canonical.persistentStoreDescriptions = [storeDescription(url: configuration.directory.appendingPathComponent("Canonical.sqlite"),
+                canonical: true, model: canonicalModel)]
         }
-        let projection = NSPersistentContainer(name: "MirrorProjection", managedObjectModel: model(canonical: false))
+        let projectionModel = model(canonical: false)
+        let projection = NSPersistentContainer(name: "MirrorProjection", managedObjectModel: projectionModel)
         let projectionURL = configuration.directory.appendingPathComponent("LocalProjection.sqlite")
-        projection.persistentStoreDescriptions = [storeDescription(url: projectionURL)]
+        projection.persistentStoreDescriptions = [storeDescription(url: projectionURL, canonical: false, model: projectionModel)]
         // MirrorStore의 Writer.lock 안에서 호출된다. 열린 다른 프로세스의 SQLite도 이동하지 않는다.
         let lifetime: ProjectionLifetimeLease
         do { lifetime = try ProjectionLifetimeLease.acquire(in: configuration.directory) }
@@ -492,11 +495,18 @@ final class CoreDataPersistence: @unchecked Sendable {
         }.value
     }
 
-    private static func storeDescription(url: URL) -> NSPersistentStoreDescription {
+    private static func storeDescription(url: URL, canonical: Bool, model: NSManagedObjectModel) -> NSPersistentStoreDescription {
         let description = NSPersistentStoreDescription(url: url)
         description.type = NSSQLiteStoreType
         description.shouldMigrateStoreAutomatically = true
         description.shouldInferMappingModelAutomatically = true
+        // programmatic 모델은 Bundle 검색으로 이전 버전을 찾을 수 없다. 이전 모델을 명시해
+        // Core Data가 데이터 변환 없이 인덱스 차이를 추론하도록 한다.
+        let previousModel = Self.model(canonical: canonical, queryIndexes: false)
+        let stage = NSCustomMigrationStage(
+            migratingFrom: NSManagedObjectModelReference(model: previousModel, versionChecksum: previousModel.versionChecksum),
+            to: NSManagedObjectModelReference(model: model, versionChecksum: model.versionChecksum))
+        description.setOption(NSStagedMigrationManager([stage]), forKey: NSPersistentStoreStagedMigrationManagerOptionKey)
         description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
         description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
         #if os(iOS)
@@ -505,7 +515,7 @@ final class CoreDataPersistence: @unchecked Sendable {
         return description
     }
 
-    private static func model(canonical: Bool) -> NSManagedObjectModel {
+    private static func model(canonical: Bool, queryIndexes: Bool = true) -> NSManagedObjectModel {
         let model = NSManagedObjectModel()
         if canonical {
             model.entities = [entity("Operation", attributes: [
@@ -525,6 +535,15 @@ final class CoreDataPersistence: @unchecked Sendable {
                 entity("Receipt", attributes: [string("key"), string("digest"), string("operationID"), binary("result")],
                        indexes: [("ReceiptByKey", ["key"])])
             ]
+        }
+        for entity in model.entities {
+            if queryIndexes {
+                // fetch index만 추가하면 기존 SQLite와 호환된다고 판정되어 실제 생성이 생략된다.
+                // 명시적인 버전 차이로 공식 migration과 원본 사전 backup을 함께 활성화한다.
+                entity.versionHashModifier = "Mirror.query-indexes.v1"
+            } else {
+                entity.indexes = []
+            }
         }
         return model
     }

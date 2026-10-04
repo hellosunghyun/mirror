@@ -58,7 +58,7 @@ private func legacyRecoveryModel(payloadType: NSAttributeType = .binaryDataAttri
 }
 
 /// 인덱스 도입 직전의 모델을 고정한다. requestDigest와 Data() 기본값도 실제 기존 모델과 같다.
-private func preIndexRecoveryModel(canonical: Bool) -> NSManagedObjectModel {
+private func preIndexRecoveryModel(canonical: Bool, unversionedIndexes: Bool = false) -> NSManagedObjectModel {
     func entity(_ name: String, _ attributes: [NSAttributeDescription]) -> NSEntityDescription {
         let entity = NSEntityDescription()
         entity.name = name; entity.managedObjectClassName = "NSManagedObject"; entity.properties = attributes
@@ -83,6 +83,23 @@ private func preIndexRecoveryModel(canonical: Bool) -> NSManagedObjectModel {
     } else {
         model.entities = [entity("CacheValue", [string("key"), binary("value")]),
                           entity("Receipt", [string("key"), string("digest"), string("operationID"), binary("result")])]
+    }
+    if unversionedIndexes {
+        let indexes: [String: [(String, [String])]] = [
+            "Operation": [("OperationByID", ["operationID"]),
+                          ("OperationByDecision", ["workspaceKey", "workspaceEpoch", "idempotencyKey"]),
+                          ("OperationByLamport", ["workspaceKey", "workspaceEpoch", "lamport"])],
+            "CacheValue": [("CacheValueByKey", ["key"])], "Receipt": [("ReceiptByKey", ["key"])]
+        ]
+        for entity in model.entities {
+            entity.indexes = (indexes[entity.name ?? ""] ?? []).map { name, properties in
+                let elements = properties.map { name in
+                    guard let property = entity.propertiesByName[name] else { preconditionFailure("fixture index property") }
+                    return NSFetchIndexElementDescription(property: property, collationType: .binary)
+                }
+                return NSFetchIndexDescription(name: name, elements: elements)
+            }
+        }
     }
     return model
 }
@@ -176,9 +193,9 @@ private func indexedRecoveryOperations(configuration: StoreConfiguration) throws
 }
 
 private func seedPreIndexRecoveryStores(configuration: StoreConfiguration, operations: [StoredOperation],
-                                        preferences: Data, receipt: StoredReceipt) async throws {
+                                        preferences: Data, receipt: StoredReceipt, unversionedIndexes: Bool = false) async throws {
     let canonical = try await openLegacyRecoveryStore(at: configuration.directory.appendingPathComponent("Canonical.sqlite"),
-        model: preIndexRecoveryModel(canonical: true), historyTracking: true)
+        model: preIndexRecoveryModel(canonical: true, unversionedIndexes: unversionedIndexes), historyTracking: true)
     defer { try? closeLegacyRecoveryStore(canonical) }
     let writeCanonical = canonical.newBackgroundContext()
     try await writeCanonical.perform {
@@ -200,7 +217,7 @@ private func seedPreIndexRecoveryStores(configuration: StoreConfiguration, opera
         try writeCanonical.save()
     }
     let projection = try await openLegacyRecoveryStore(at: configuration.directory.appendingPathComponent("LocalProjection.sqlite"),
-        model: preIndexRecoveryModel(canonical: false), historyTracking: true)
+        model: preIndexRecoveryModel(canonical: false, unversionedIndexes: unversionedIndexes), historyTracking: true)
     defer { try? closeLegacyRecoveryStore(projection) }
     let writeProjection = projection.newBackgroundContext()
     try await writeProjection.perform {
@@ -310,6 +327,15 @@ struct PersistenceRecoveryTests {
     @Test("새 저장소와 인덱스 이전 저장소는 첫 개설·재개설에 실제 인덱스와 모든 원문·로컬 값을 보존한다",
           arguments: [false, true])
     func physicalIndexesPreserveExistingRows(preExisting: Bool) async throws {
+        try await checkPhysicalIndexesPreserveExistingRows(preExisting: preExisting)
+    }
+
+    @Test("버전 표식 없이 이미 인덱스를 만든 저장소도 공식 migration 이후 원문과 로컬 값을 보존한다")
+    func unversionedIndexesPreserveExistingRows() async throws {
+        try await checkPhysicalIndexesPreserveExistingRows(preExisting: true, unversionedIndexes: true)
+    }
+
+    private func checkPhysicalIndexesPreserveExistingRows(preExisting: Bool, unversionedIndexes: Bool = false) async throws {
         let configuration = recoveryConfiguration()
         defer { try? FileManager.default.removeItem(at: configuration.directory) }
         try FileManager.default.createDirectory(at: configuration.directory, withIntermediateDirectories: true)
@@ -318,10 +344,16 @@ struct PersistenceRecoveryTests {
         let preferences = Data(#"{"planningTimeZoneID":"Asia/Seoul","hideExternalTitles":true,"selectedCalendarIDs":["fixture-calendar"]}"#.utf8)
         let receipt = StoredReceipt(key: "fixture-receipt", digest: "fixture-digest", operationID: "fixture-collision",
             result: Data(#"{"state":"locallyCommitted","requestID":"fixture-request"}"#.utf8))
+        let canonicalURL = configuration.directory.appendingPathComponent("Canonical.sqlite")
+        let metadataOptions: [AnyHashable: Any] = [NSReadOnlyPersistentStoreOption: true]
+        var previousHashes: [String: Data]?
         if preExisting {
             try await seedPreIndexRecoveryStores(configuration: configuration, operations: operations,
-                preferences: preferences, receipt: receipt)
-            try expectRecoveryPhysicalIndexes(in: configuration.directory, installed: false)
+                preferences: preferences, receipt: receipt, unversionedIndexes: unversionedIndexes)
+            try expectRecoveryPhysicalIndexes(in: configuration.directory, installed: unversionedIndexes)
+            let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+                ofType: NSSQLiteStoreType, at: canonicalURL, options: metadataOptions)
+            previousHashes = try #require(metadata[NSStoreModelVersionHashesKey] as? [String: Data])
         }
         for opening in 0..<2 {
             let persistence = try await CoreDataPersistence.open(configuration: configuration)
@@ -357,8 +389,40 @@ struct PersistenceRecoveryTests {
                 throw error
             }
             try expectRecoveryPhysicalIndexes(in: configuration.directory, installed: true)
+            let backups = try recoveryChildren(in: configuration.directory.appendingPathComponent("MigrationBackups"))
+            #expect(backups.count == (preExisting ? 1 : 0))
+            if preExisting {
+                let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+                    ofType: NSSQLiteStoreType, at: canonicalURL, options: metadataOptions)
+                let currentHashes = try #require(metadata[NSStoreModelVersionHashesKey] as? [String: Data])
+                let modelVersionChanged = currentHashes != previousHashes
+                #expect(modelVersionChanged)
+                let backupURL = try #require(backups.first).appendingPathComponent("Canonical.sqlite")
+                let backupMetadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+                    ofType: NSSQLiteStoreType, at: backupURL, options: metadataOptions)
+                let backupVersionMatches = (backupMetadata[NSStoreModelVersionHashesKey] as? [String: Data]) == previousHashes
+                #expect(backupVersionMatches)
+                let backup = try await openLegacyRecoveryStore(at: backupURL,
+                    model: preIndexRecoveryModel(canonical: true, unversionedIndexes: unversionedIndexes), readOnly: true)
+                do {
+                    let read = backup.newBackgroundContext()
+                    let payloads: [Data] = try await read.perform {
+                        try read.fetch(NSFetchRequest<NSManagedObject>(entityName: "Operation")).map { row in
+                            let payload = row.value(forKey: "payload") as? Data
+                            return try #require(payload)
+                        }
+                    }
+                    let preserved = payloads.reduce(into: [Data: Int]()) { $0[$1, default: 0] += 1 }
+                    let originals = operations.reduce(into: [Data: Int]()) { $0[$1.payload, default: 0] += 1 }
+                    let backupOriginalsMatch = preserved == originals
+                    #expect(backupOriginalsMatch)
+                    try closeLegacyRecoveryStore(backup)
+                } catch {
+                    try? closeLegacyRecoveryStore(backup)
+                    throw error
+                }
+            }
         }
-        // 인덱스만의 metadata 변경이 backup을 요구하는지는 SDK의 호환성 판단에 맡긴다.
         #expect(try recoveryChildren(in: configuration.directory.appendingPathComponent("ProjectionQuarantine")).isEmpty)
     }
 
