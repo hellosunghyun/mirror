@@ -16,8 +16,8 @@ struct MirrorApp: App {
     @State private var model = AppModel()
     init() { NotificationService.bootstrapNavigation() }
     var body: some Scene {
-        WindowGroup(id: "main") {
-            MirrorRootView()
+        WindowGroup(id: "main", for: UUID.self) { windowRequest in
+            MirrorRootView(windowRequestID: windowRequest.wrappedValue)
                 .environment(model)
                 .preferredColorScheme(uiTestingColorScheme)
                 .modifier(MirrorUITestingDynamicType())
@@ -253,8 +253,14 @@ struct MirrorMenuBarContent: View {
                 Text(feedback).font(.caption)
             }
             Divider()
-            Button("오늘 목록 열기") { openWindow(id: "main"); model.destination = .today }
-            Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") { openWindow(id: "main"); model.beginReview(mode: .manualResume) }
+            Button("오늘 목록 열기") {
+                let token = model.makeMainWindowRequest(.deepLink(.today))
+                openWindow(id: "main", value: token)
+            }
+            Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") {
+                let token = model.makeMainWindowRequest(.resumeReview)
+                openWindow(id: "main", value: token)
+            }
                 .disabled(model.isDetailEditing)
             Text(model.storageLabel).font(.caption).foregroundStyle(.secondary)
         }.padding().frame(width: 320)
@@ -322,6 +328,21 @@ struct MirrorMenuBarContent: View {
 #endif
 
 #if os(macOS)
+/// 메뉴 명령도 실행을 받은 창을 보유한다. 다른 창의 표시 상태를 다시 선택하지 않는다.
+nonisolated struct MirrorSceneNavigationAction: Equatable, Sendable {
+    let model: AppModel
+    let scene: SceneNavigationState
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.scene === rhs.scene
+    }
+
+    @MainActor var isReviewPresented: Bool { model.isReviewPresented(in: scene) }
+    @MainActor func beginReview(mode: ReviewMode) { model.beginReview(in: scene, mode: mode) }
+    @MainActor func finishReview() async { await model.finishReview(in: scene) }
+    @MainActor func undo() async { await model.undo(in: scene) }
+}
+
 private struct MirrorCaptureOpenFocusedKey: FocusedValueKey {
     typealias Value = MirrorCaptureOpenAction
 }
@@ -331,8 +352,15 @@ private struct MirrorLibrarySearchFocusedKey: FocusedValueKey {
 private struct MirrorSettingsOpenFocusedKey: FocusedValueKey {
     typealias Value = MirrorSettingsOpenAction
 }
+private struct MirrorNavigationFocusedKey: FocusedValueKey {
+    typealias Value = MirrorSceneNavigationAction
+}
 
 extension FocusedValues {
+    var mirrorNavigation: MirrorSceneNavigationAction? {
+        get { self[MirrorNavigationFocusedKey.self] }
+        set { self[MirrorNavigationFocusedKey.self] = newValue }
+    }
     var mirrorSettingsOpen: MirrorSettingsOpenAction? {
         get { self[MirrorSettingsOpenFocusedKey.self] }
         set { self[MirrorSettingsOpenFocusedKey.self] = newValue }
@@ -350,11 +378,15 @@ extension FocusedValues {
 @MainActor
 struct MirrorCommands: Commands {
     let model: AppModel
+    @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.mirrorCaptureOpen) private var openCapture
     @FocusedValue(\.mirrorLibrarySearch) private var searchLibrary
     @FocusedValue(\.mirrorSettingsOpen) private var openSettings
+    @FocusedValue(\.mirrorNavigation) private var navigation
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("새 창") { openWindow(id: "main") }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("할 일 일단 넣기") { openCapture?.callAsFunction() }
                 .keyboardShortcut("n", modifiers: .command)
                 .disabled(openCapture == nil)
@@ -364,25 +396,20 @@ struct MirrorCommands: Commands {
                 .disabled(searchLibrary == nil)
         }
         CommandGroup(after: .undoRedo) {
-            Button(model.showReview ? "직전 정리 결정 되돌리기" : "미러의 직전 작업 되돌리기") {
-                if model.showReview {
-                    if let candidate = model.currentReviewUndo, let sessionID = model.review?.id {
-                        Task { await model.undoReview(operationID: candidate.id, sessionID: sessionID) }
-                    }
-                } else {
-                    Task { await model.undo() }
-                }
+            Button(navigation?.isReviewPresented == true ? "직전 정리 결정 되돌리기" : "미러의 직전 작업 되돌리기") {
+                if let navigation { Task { await navigation.undo() } }
             }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled((model.showReview ? model.currentReviewUndo == nil : model.lastUndo == nil)
+                .disabled(navigation == nil || (navigation?.isReviewPresented == true ? model.currentReviewUndo == nil : model.lastUndo == nil)
                           || model.isTextEditing || model.isDetailEditing || model.isSaving || model.projectionPending)
         }
         CommandMenu("정리") {
-            Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") { model.beginReview(mode: .manualResume) }
-                .disabled(model.isDetailEditing)
-            Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
-                .disabled(model.isDetailEditing)
-            Button("오늘은 여기까지") { Task { await model.finishReview() } }.disabled(model.review == nil || model.isDetailEditing)
+            Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") { navigation?.beginReview(mode: .manualResume) }
+                .disabled(navigation == nil || model.isDetailEditing)
+            Button("오늘 다시 정리") { navigation?.beginReview(mode: .manualTodayOverride) }
+                .disabled(navigation == nil || model.isDetailEditing)
+            Button("오늘은 여기까지") { if let navigation { Task { await navigation.finishReview() } } }
+                .disabled(navigation?.isReviewPresented != true || model.review == nil || model.isDetailEditing)
         }
         CommandGroup(replacing: .appSettings) {
             Button("미러 설정…") { openSettings?.callAsFunction() }

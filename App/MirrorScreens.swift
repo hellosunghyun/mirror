@@ -11,6 +11,7 @@ struct MirrorTaskSelectionRequest: Equatable, Sendable {
     let destinationID: UUID
     let workspaceKey: String
     let workspaceEpoch: String
+    let navigation: SceneNavigationTarget
 }
 
 @MainActor @Observable
@@ -19,28 +20,31 @@ final class MirrorDetailNavigationState {
     var draftTaskID: UUID?
     var selectionRequested: MirrorTaskSelectionRequest?
 
-    func requestTaskSelection(_ id: UUID, model: AppModel) {
-        guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
-        if let owner = model.selectedTask, (draftTaskID == owner.taskID || model.isDetailEditing) {
+    func requestTaskSelection(_ id: UUID, model: AppModel, scene: SceneNavigationState) {
+        guard !model.isSaving, let navigation = model.navigationTarget(in: scene),
+              let target = model.tasks.first(where: { $0.taskID == id }) else { return }
+        if let owner = model.selectedTask(in: scene), (draftTaskID == owner.taskID || model.isDetailEditing(in: scene)) {
             guard id != owner.taskID, !model.projectionPending,
                   target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
             selectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
-                                                           workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch)
-        } else { model.selectedTaskID = id }
+                                                           workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch,
+                                                           navigation: navigation)
+        } else { model.selectTask(id, in: scene) }
     }
 }
 
 nonisolated struct MirrorTaskSelectionAction: Equatable, Sendable {
     let model: AppModel
     let navigation: MirrorDetailNavigationState
+    let scene: SceneNavigationState
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.model === rhs.model && lhs.navigation === rhs.navigation
+        lhs.model === rhs.model && lhs.navigation === rhs.navigation && lhs.scene === rhs.scene
     }
 
     @MainActor
     func callAsFunction(_ id: UUID) {
-        navigation.requestTaskSelection(id, model: model)
+        navigation.requestTaskSelection(id, model: model, scene: scene)
     }
 }
 
@@ -55,16 +59,7 @@ nonisolated struct MirrorCaptureOpenAction: Equatable, Sendable {
 
     @MainActor
     func callAsFunction() {
-        let model = model
-        let owner = owner
-        if model.isLoading || model.context == nil {
-            Task {
-                await model.start()
-                model.openCapture(owner: owner)
-            }
-        } else {
-            model.openCapture(owner: owner)
-        }
+        model.openCaptureWhenReady(owner: owner)
     }
 }
 
@@ -93,6 +88,7 @@ extension EnvironmentValues {
 @MainActor
 struct MirrorTodayView: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.mirrorCaptureOpen) private var openCapture
     @Environment(\.mirrorTaskSelection) private var selectTask
     @State private var showCompleted = false
@@ -115,13 +111,13 @@ struct MirrorTodayView: View {
                         }
                         Menu {
                             if let review = model.review, !review.cards.isEmpty {
-                                Button("이어서 정리") { model.beginReview(mode: .manualResume) }
+                                Button("이어서 정리") { model.beginReview(in: scene, mode: .manualResume) }
                                     .accessibilityIdentifier("today.resumeReview")
                             }
-                            Button("오늘 다시 정리") { model.beginReview(mode: .manualTodayOverride) }
+                            Button("오늘 다시 정리") { model.beginReview(in: scene, mode: .manualTodayOverride) }
                                 .accessibilityIdentifier("today.reviewAgain")
                             if model.reviewSummary != nil, !model.pendingTasks.isEmpty {
-                                Button("새로 넣은 일도 정리") { model.beginReview(mode: .manualResume, includeNewInputs: true) }
+                                Button("새로 넣은 일도 정리") { model.beginReview(in: scene, mode: .manualResume, includeNewInputs: true) }
                             }
                         } label: {
                             Label("정리 옵션", systemImage: "ellipsis")
@@ -204,17 +200,17 @@ struct MirrorTodayView: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         .accessibilityIdentifier("today.list")
         .navigationTitle("오늘")
-        .onChange(of: model.showReview) { _, isPresented in
+        .onChange(of: model.isReviewPresented(in: scene)) { _, isPresented in
             if !isPresented { showReviewSummary = false }
         }
     }
     private func deadlineRow(_ task: TaskProjection) -> some View {
-        Button { if let selectTask { selectTask(task.taskID) } else { model.selectedTaskID = task.taskID } } label: {
+        Button { selectTask?(task.taskID) } label: {
             Label { VStack(alignment: .leading) { Text(task.title).lineLimit(3).accessibilityLabel(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
         }.buttonStyle(.plain).padding(.vertical, 4)
     }
     private var reviewButton: some View {
-        Button { model.beginReview(mode: .manualResume) } label: {
+        Button { model.beginReview(in: scene, mode: .manualResume) } label: {
             Text(reviewButtonTitle)
                 .foregroundStyle(model.tasks.isEmpty ? MirrorPalette.accent : MirrorPalette.onAccent)
         }
@@ -249,6 +245,7 @@ struct MirrorTodayView: View {
 @MainActor
 struct MirrorTaskRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.mirrorCalendarDropAvailable) private var calendarDropAvailable
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -265,7 +262,7 @@ struct MirrorTaskRow: View {
             }), due: planLabel(task.plan.target), style: rowStyle, onTap: openDetail, snoozeLabel: "내일로 미루기",
                     onSnooze: tomorrowAction(context: displayedContext), onDelete: { Task { await model.trash(task) } })
                 .background {
-                    if model.selectedTaskID == task.taskID {
+                    if scene.selectedTaskID == task.taskID {
                         RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
                     }
                 }
@@ -276,16 +273,16 @@ struct MirrorTaskRow: View {
                     Button(task.status == .completed ? "다시 열기" : "완료") { Task { await model.setCompleted(task, completed: task.status != .completed) } }
                     if task.status == .open, !model.isDetailEditing, let displayedContext,
                        model.canPostponeToTomorrow(task, context: displayedContext) {
-                        Button("내일로 미루기") { Task { await model.postponeToTomorrow(task, context: displayedContext) } }
+                        Button("내일로 미루기") { Task { await model.postponeToTomorrow(task, context: displayedContext, in: scene) } }
                     }
                     if task.status == .open, !model.isDetailEditing {
-                        Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID]) }
+                        Button("날짜 바꾸기") { model.makePicker(taskIDs: [task.taskID], in: scene) }
                         Button("당분간 보관") { Task { await model.park(task) } }
                     }
                     Button("휴지통으로 이동", role: .destructive) { Task { await model.trash(task) } }
                 }
             if task.status == .open {
-                Button { model.makePicker(taskIDs: [task.taskID]) } label: {
+                Button { model.makePicker(taskIDs: [task.taskID], in: scene) } label: {
                     Text("미루기").font(.callout)
                         .padding(.horizontal, 10)
                         .frame(minWidth: 60, minHeight: 44)
@@ -310,12 +307,11 @@ struct MirrorTaskRow: View {
     private func tomorrowAction(context: PlanningContext?) -> (() -> Void)? {
         guard task.status == .open, !model.isDetailEditing, let context else { return nil }
         guard model.canPostponeToTomorrow(task, context: context) else { return nil }
-        return { Task { await model.postponeToTomorrow(task, context: context) } }
+        return { Task { await model.postponeToTomorrow(task, context: context, in: scene) } }
     }
     private func openDetail() {
         if let onOpen { onOpen() }
         else if let selectTask { selectTask(task.taskID) }
-        else { model.selectedTaskID = task.taskID }
     }
 }
 
@@ -820,9 +816,11 @@ final class MirrorLibraryNavigationState {
 nonisolated struct MirrorLibrarySearchAction: Equatable, Sendable {
     let model: AppModel
     let navigation: MirrorLibraryNavigationState
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.model === rhs.model && lhs.navigation === rhs.navigation }
+    let scene: SceneNavigationState
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.model === rhs.model && lhs.navigation === rhs.navigation && lhs.scene === rhs.scene }
     @MainActor func callAsFunction() {
-        model.destination = .library
+        guard model.navigationTarget(in: scene) != nil else { return }
+        model.selectDestination(.library, in: scene)
         navigation.searchRequested = true
     }
 }
@@ -830,6 +828,7 @@ nonisolated struct MirrorLibrarySearchAction: Equatable, Sendable {
 @MainActor
 struct MirrorLibraryView: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding private var filter: LibraryFilter
@@ -998,9 +997,9 @@ struct MirrorLibraryView: View {
                 VStack(spacing: 0) {
                     Button {
                         let taskIDs = eligibleTaskIDs.filter(selectedIDs.contains)
-                        let previousPickerID = model.picker?.id
-                        model.makePicker(taskIDs: taskIDs)
-                        if let request = model.picker, request.id != previousPickerID, request.taskIDs == taskIDs,
+                        let previousPickerID = model.picker(in: scene)?.id
+                        model.makePicker(taskIDs: taskIDs, in: scene)
+                        if let request = model.picker(in: scene), request.id != previousPickerID, request.taskIDs == taskIDs,
                            request.review == nil, request.widgetState == nil {
                             pendingBatchPickerID = request.id
                             model.registerLibraryBatchPicker(request)
@@ -1069,13 +1068,14 @@ struct MirrorLibraryView: View {
         searchFocused = false
         model.setTextEditing(false, ownerID: textEditingOwnerID)
         if let selectTask { selectTask(task.taskID) }
-        else { model.selectedTaskID = task.taskID }
     }
 }
 
 @MainActor
 struct MirrorReviewView: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
+    let presentation: ScenePresentationRequest
     @AccessibilityFocusState private var cardFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -1171,17 +1171,13 @@ struct MirrorReviewView: View {
             .sheet(item: reviewPickerPresentation) {
                 MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
             }
-            .sheet(item: Binding(get: { model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: {
-                guard $0 == nil, model.showReview, !model.isSaving else { return }
-                if let id = model.selectedTaskID, (detailNavigation.draftTaskID == id || model.isDetailEditing) { detailNavigation.closeRequestedID = id }
-                else { model.selectedTaskID = nil }
-            })) { detail in
+            .sheet(item: reviewDetailPresentation) { detail in
                 NavigationStack {
                     if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailState.closeRequestedID, draftTaskID: $detailState.draftTaskID, selectionRequested: $detailState.selectionRequested) }
                 }
                 .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "detail"))
             }
-            .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil && model.selectedTaskID == nil))
+            .modifier(MirrorDeadlineConfirmation(enabled: model.picker(in: scene) == nil && scene.selectedTaskID == nil))
         }
         .environment(\.mirrorTaskSelection, taskSelectionAction)
         .tint(MirrorPalette.accent)
@@ -1192,17 +1188,32 @@ struct MirrorReviewView: View {
         #endif
         .onAppear { model.setReviewVisible(exposureID, visible: true) }
         .onDisappear { model.setReviewVisible(exposureID, visible: false) }
+        .interactiveDismissDisabled(model.isSaving || model.isDetailEditing(in: scene))
     }
 
     private var reviewPickerPresentation: Binding<PlanPickerRequest?> {
-        let displayedRequest = model.selectedTaskID == nil ? model.picker : nil
-        return Binding(get: { model.selectedTaskID == nil ? model.picker : nil }, set: { presented in
+        let displayedRequest = scene.selectedTaskID == nil ? model.picker(in: scene) : nil
+        return Binding(get: { scene.selectedTaskID == nil ? model.picker(in: scene) : nil }, set: { presented in
             guard presented == nil, let displayedRequest else { return }
             model.closePlanPicker(requestID: displayedRequest.id)
         })
     }
+    private var reviewDetailPresentation: Binding<MirrorDetailRequest?> {
+        let displayedTaskID = scene.selectedTaskID
+        let displayedTarget = model.navigationTarget(in: scene)
+        return Binding(get: {
+            model.isReviewPresented(in: scene) ? scene.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil
+        }, set: { detail in
+            guard detail == nil, let displayedTaskID, scene.selectedTaskID == displayedTaskID,
+                  let displayedTarget, model.navigationTarget(in: scene) == displayedTarget,
+                  model.reviewPresentation(in: scene) == presentation, !model.isSaving else { return }
+            if detailNavigation.draftTaskID == displayedTaskID || model.isDetailEditing(in: scene) {
+                detailNavigation.closeRequestedID = displayedTaskID
+            } else { model.selectTask(nil, in: scene) }
+        })
+    }
     private var taskSelectionAction: MirrorTaskSelectionAction {
-        MirrorTaskSelectionAction(model: model, navigation: detailNavigation)
+        MirrorTaskSelectionAction(model: model, navigation: detailNavigation, scene: scene)
     }
     @ViewBuilder private func immediateChoices(_ destinations: DateDestinations, card: ReviewCard, session: AppReviewSession) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
@@ -1248,7 +1259,7 @@ struct MirrorReviewView: View {
     }
 
     private func todayButton(_ day: LocalDate, card: ReviewCard, session: AppReviewSession) -> some View {
-        Button { Task { await model.decide(.day(day), card: card, session: session) } } label: {
+        Button { Task { await model.decide(.day(day), card: card, session: session, in: scene) } } label: {
             Text("오늘").foregroundStyle(MirrorPalette.onAccent)
                 .fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -1259,7 +1270,7 @@ struct MirrorReviewView: View {
     }
 
     private func tomorrowButton(_ day: LocalDate, card: ReviewCard, session: AppReviewSession) -> some View {
-        Button { Task { await model.decide(.day(day), card: card, session: session) } } label: {
+        Button { Task { await model.decide(.day(day), card: card, session: session, in: scene) } } label: {
             Text("내일").fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
@@ -1269,7 +1280,7 @@ struct MirrorReviewView: View {
     }
 
     private func thisWeekButton(_ week: WeekRange, card: ReviewCard, session: AppReviewSession) -> some View {
-        Button { model.makePicker(taskIDs: [card.taskID], week: week, reviewCard: card, reviewSession: session) } label: {
+        Button { model.makePicker(taskIDs: [card.taskID], week: week, reviewCard: card, reviewSession: session, in: scene) } label: {
             Text("이번 주").font(.callout.weight(.medium)).fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
@@ -1280,7 +1291,7 @@ struct MirrorReviewView: View {
     }
 
     private func nextWeekButton(_ week: WeekRange, card: ReviewCard, session: AppReviewSession) -> some View {
-        Button { model.makePicker(taskIDs: [card.taskID], week: week, reviewCard: card, reviewSession: session) } label: {
+        Button { model.makePicker(taskIDs: [card.taskID], week: week, reviewCard: card, reviewSession: session, in: scene) } label: {
             Text("다음 주").font(.callout.weight(.medium)).fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
@@ -1291,7 +1302,7 @@ struct MirrorReviewView: View {
     }
 
     private func otherDayButton(card: ReviewCard, session: AppReviewSession) -> some View {
-        Button { model.makePicker(taskIDs: [card.taskID], reviewCard: card, reviewSession: session) } label: {
+        Button { model.makePicker(taskIDs: [card.taskID], reviewCard: card, reviewSession: session, in: scene) } label: {
             Text("다른 날").font(.callout.weight(.medium)).fixedSize(horizontal: true, vertical: false)
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
@@ -1330,7 +1341,7 @@ struct MirrorReviewView: View {
             }
         }
         if model.projectionPending {
-            Button("저장 결과 다시 확인") { Task { await model.retry() } }.frame(minHeight: 44)
+            Button("저장 결과 다시 확인") { Task { await model.retry(in: scene) } }.frame(minHeight: 44)
         }
     }
 
@@ -1346,7 +1357,7 @@ struct MirrorReviewView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Button { Task { await model.finishReview() } } label: {
+            Button { Task { await model.finishReview(in: scene) } } label: {
                 HStack {
                     if model.isSaving { ProgressView().controlSize(.small) }
                     Text(model.isSaving ? "저장 중…" : "오늘은 여기까지")
@@ -1664,9 +1675,9 @@ private final class MirrorDeadlineEditingRequest: Identifiable {
     private var initialAlarmAt: Date?
     private(set) var savedDeadline: Deadline?
 
-    init?(task: TaskProjection, model: AppModel) {
+    init?(task: TaskProjection, model: AppModel, scene: SceneNavigationState) {
         let ownerID = UUID()
-        guard let claim = model.beginDetailEditing(ownerID: ownerID, task: task) else { return nil }
+        guard let claim = model.beginDetailEditing(ownerID: ownerID, task: task, in: scene) else { return nil }
         id = ownerID; self.claim = claim; self.model = model; self.task = task
         policyRevision = model.preferences.policyRevision
         let initialDate: Date
@@ -1722,6 +1733,7 @@ private final class MirrorDeadlineEditingRequest: Identifiable {
 @MainActor
 struct MirrorTaskDetail: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let task: TaskProjection
     @Binding private var closeRequestedID: UUID?
@@ -1755,7 +1767,7 @@ struct MirrorTaskDetail: View {
         editingClaim = nil; editing = false; editingSnapshot = nil
     }
     private func requestClose() {
-        guard model.selectedTaskID == task.taskID, !model.isSaving,
+        guard scene.selectedTaskID == task.taskID, !model.isSaving,
               !editing || editingSnapshot?.taskID == task.taskID else { return }
         if hasUnsavedChanges {
             guard !model.projectionPending else { return }
@@ -1763,10 +1775,11 @@ struct MirrorTaskDetail: View {
             if selectionRequested?.ownerID == task.taskID { selectionRequested = nil }
             discardRequestedID = task.taskID; showDiscardConfirmation = true
         }
-        else { finishEditing(); model.selectedTaskID = nil }
+        else { finishEditing(); model.selectTask(nil, in: scene) }
     }
     private func selectionIsCurrent(_ request: MirrorTaskSelectionRequest) -> Bool {
-        selectionRequested == request && request.ownerID == task.taskID && model.selectedTaskID == task.taskID
+        selectionRequested == request && request.ownerID == task.taskID && scene.selectedTaskID == task.taskID
+            && request.navigation == model.navigationTarget(in: scene)
             && request.workspaceKey == task.workspaceKey && request.workspaceEpoch == task.workspaceEpoch
             && (!editing || (editingSnapshot?.taskID == task.taskID
                 && editingSnapshot?.workspaceKey == request.workspaceKey && editingSnapshot?.workspaceEpoch == request.workspaceEpoch))
@@ -1830,7 +1843,7 @@ struct MirrorTaskDetail: View {
                                 }.font(.callout)
                             }
                             Button("내용 편집") {
-                                guard let claim = model.beginDetailEditing(ownerID: detailEditorOwnerID, task: task) else { return }
+                                guard let claim = model.beginDetailEditing(ownerID: detailEditorOwnerID, task: task, in: scene) else { return }
                                 editingClaim = claim
                                 editingSnapshot = task
                                 title = task.title; note = task.content.note ?? ""; link = task.content.sourceURL ?? ""; editing = true
@@ -1851,17 +1864,17 @@ struct MirrorTaskDetail: View {
                             Text(planLabel(task.plan.target)).font(.body).accessibilityIdentifier("detail.plan")
                             if task.status == .open {
                                 MirrorActionGroup {
-                                    if !model.showReview, let displayedContext = model.context,
+                                    if !model.isReviewPresented(in: scene), let displayedContext = model.context,
                                        model.canPostponeToTomorrow(task, context: displayedContext) {
                                         Button {
-                                            Task { await model.postponeToTomorrow(task, context: displayedContext) }
+                                            Task { await model.postponeToTomorrow(task, context: displayedContext, in: scene) }
                                         } label: {
                                             Text("내일로 미루기").frame(minHeight: 44)
                                         }
                                         .accessibilityIdentifier("detail.postponeTomorrow")
                                         .disabled(model.projectionPending)
                                     }
-                                    Button { model.makePicker(taskIDs: [task.taskID]) } label: {
+                                    Button { model.makePicker(taskIDs: [task.taskID], in: scene) } label: {
                                         Text("날짜 바꾸기").frame(minHeight: 44)
                                     }
                                     .disabled(model.projectionPending)
@@ -1967,7 +1980,7 @@ struct MirrorTaskDetail: View {
                     Button("편집 취소") { finishEditing() }
                         .buttonStyle(.borderless).frame(minHeight: 44)
                     if model.problem != nil || model.projectionPending {
-                        Button { Task { await model.retry() } } label: {
+                        Button { Task { await model.retry(in: scene) } } label: {
                             Text("저장 결과 다시 확인")
                                 #if os(iOS)
                                 .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -2041,18 +2054,18 @@ struct MirrorTaskDetail: View {
             }
             if hasUnsavedChanges {
                 discardRequestedID = task.taskID; discardSelectionRequest = request; showDiscardConfirmation = true
-            } else { finishEditing(); selectionRequested = nil; model.selectedTaskID = request.destinationID }
+            } else { finishEditing(); selectionRequested = nil; model.selectTask(request.destinationID, in: scene) }
         }
         .alert(discardSelectionRequest == nil ? "편집한 내용을 버리고 닫을까요?" : "편집한 내용을 버리고 다른 일을 열까요?", isPresented: $showDiscardConfirmation) {
             Button(discardSelectionRequest == nil ? "버리고 닫기" : "버리고 다른 일 열기", role: .destructive) {
-                guard discardRequestedID == task.taskID, model.selectedTaskID == task.taskID,
+                guard discardRequestedID == task.taskID, scene.selectedTaskID == task.taskID,
                       editingSnapshot?.taskID == task.taskID, !model.isSaving, !model.projectionPending else { return }
                 if let request = discardSelectionRequest {
                     guard selectionRequested == request, selectionIsCurrent(request) else { return }
                     finishEditing(); title = ""; note = ""; link = ""
                     discardRequestedID = nil; discardSelectionRequest = nil; selectionRequested = nil
-                    model.selectedTaskID = request.destinationID
-                } else { finishEditing(); discardRequestedID = nil; model.selectedTaskID = nil }
+                    model.selectTask(request.destinationID, in: scene)
+                } else { finishEditing(); discardRequestedID = nil; model.selectTask(nil, in: scene) }
             }.accessibilityIdentifier("detail.discardEdit")
             Button("계속 편집", role: .cancel) {
                 showDiscardConfirmation = false
@@ -2084,11 +2097,11 @@ struct MirrorTaskDetail: View {
         .sheet(item: detailPickerPresentation) {
             MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
         }
-        .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil))
+        .modifier(MirrorDeadlineConfirmation(enabled: model.picker(in: scene) == nil))
     }
     private func openDeadlineEditor() {
         guard deadlineEditor == nil, !model.isSaving else { return }
-        deadlineEditor = MirrorDeadlineEditingRequest(task: task, model: model)
+        deadlineEditor = MirrorDeadlineEditingRequest(task: task, model: model, scene: scene)
     }
     private var deadlinePresentation: Binding<MirrorDeadlineEditingRequest?> {
         let displayed = deadlineEditor
@@ -2098,8 +2111,8 @@ struct MirrorTaskDetail: View {
         })
     }
     private var detailPickerPresentation: Binding<PlanPickerRequest?> {
-        let displayedRequest = model.picker
-        return Binding(get: { model.picker }, set: { presented in
+        let displayedRequest = model.picker(in: scene)
+        return Binding(get: { model.picker(in: scene) }, set: { presented in
             guard presented == nil, let displayedRequest else { return }
             model.closePlanPicker(requestID: displayedRequest.id)
         })

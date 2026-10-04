@@ -21,11 +21,12 @@ nonisolated struct MirrorSettingsOpenAction: Equatable, Sendable {
 
 @MainActor
 struct MirrorRootView: View {
+    let windowRequestID: UUID?
     @Environment(AppModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var sceneOwner = CaptureSceneOwner()
+    @State private var navigation = SceneNavigationState()
     @State private var adjacentCalendarVisible = false
     @State private var libraryNavigation = MirrorLibraryNavigationState()
     @State private var calendarNavigation = MirrorCalendarNavigationState()
@@ -37,7 +38,10 @@ struct MirrorRootView: View {
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    init(windowRequestID: UUID? = nil) { self.windowRequestID = windowRequestID }
+    private var sceneOwner: CaptureSceneOwner { navigation.owner }
     private var sceneExposureID: UUID { sceneOwner.id }
+    private var isReviewPresented: Bool { model.isReviewPresented(in: navigation) }
     private var isCompact: Bool {
         #if os(iOS)
         // 큰 글자에서는 iPad의 좁은 사이드바 대신 탭으로 본문 너비를 확보한다.
@@ -61,7 +65,6 @@ struct MirrorRootView: View {
         #endif
     }
     var body: some View {
-        @Bindable var model = model
         @Bindable var detailState = detailNavigation
         Group {
             if isCompact {
@@ -77,10 +80,11 @@ struct MirrorRootView: View {
         #endif
         .inspector(isPresented: taskInspectorPresentation) {
             NavigationStack {
-                if let task = model.selectedTask {
+                if let task = model.selectedTask(in: navigation) {
                     MirrorTaskDetail(task: task, closeRequestedID: $detailState.closeRequestedID, draftTaskID: $detailState.draftTaskID, selectionRequested: $detailState.selectionRequested)
                 }
             }
+            .environment(navigation)
             .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "detail"))
             .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
         }
@@ -88,39 +92,47 @@ struct MirrorRootView: View {
         .environment(\.mirrorCaptureOpen, captureOpenAction)
         #if os(macOS)
         .focusedSceneValue(\.mirrorCaptureOpen, captureOpenAction)
-        .focusedSceneValue(\.mirrorLibrarySearch, MirrorLibrarySearchAction(model: model, navigation: libraryNavigation))
+        .focusedSceneValue(\.mirrorLibrarySearch, MirrorLibrarySearchAction(model: model, navigation: libraryNavigation, scene: navigation))
         .focusedSceneValue(\.mirrorSettingsOpen, settingsOpenAction)
+        .focusedSceneValue(\.mirrorNavigation, MirrorSceneNavigationAction(model: model, scene: navigation))
         #endif
         .tint(MirrorPalette.accent)
         .sheet(item: capturePresentation) { request in
             MirrorCaptureView(request: request)
+                .environment(navigation)
                 .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "capture"))
         }
         .sheet(item: settingsPresentation) { _ in
-            MirrorSettingsView().modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "settings"))
+            MirrorSettingsView().environment(navigation)
+                .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "settings"))
         }
-        .sheet(isPresented: $model.showReview) {
-            MirrorReviewView().modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "review"))
+        .sheet(item: reviewPresentation) { request in
+            MirrorReviewView(presentation: request).environment(navigation)
+                .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "review"))
         }
         .sheet(item: basePicker, onDismiss: basePickerDismissal) { request in
-            MirrorPlanPicker(request: request).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
+            MirrorPlanPicker(request: request).environment(navigation)
+                .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
                 .onAppear {
                     if displayedBasePicker?.id == request.id { basePickerDidAppear = true }
                 }
         }
-        .onChange(of: model.picker?.id, initial: true) { _, _ in retainBasePickerIfNeeded() }
-        .onChange(of: model.showReview) { _, _ in retainBasePickerIfNeeded() }
-        .onChange(of: model.selectedTaskID) { _, _ in retainBasePickerIfNeeded() }
-        .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
-        .task { await model.start() }
+        .onChange(of: model.picker(in: navigation)?.id, initial: true) { _, _ in retainBasePickerIfNeeded() }
+        .onChange(of: isReviewPresented) { _, _ in retainBasePickerIfNeeded() }
+        .onChange(of: navigation.selectedTaskID) { _, _ in retainBasePickerIfNeeded() }
+        .modifier(MirrorDeadlineConfirmation(enabled: !isReviewPresented && model.picker(in: navigation) == nil && navigation.selectedTaskID == nil))
+        .environment(navigation)
+        .onAppear { model.registerScene(navigation, windowRequestID: windowRequestID) }
+        .task { model.registerScene(navigation, windowRequestID: windowRequestID); await model.start() }
         .onChange(of: model.sceneNavigationGeneration) { _, _ in
             libraryNavigation = MirrorLibraryNavigationState()
             calendarNavigation = MirrorCalendarNavigationState()
             adjacentCalendarNavigation = MirrorCalendarNavigationState()
+            detailNavigation = MirrorDetailNavigationState()
             adjacentCalendarVisible = false
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
-            model.setSceneActive(sceneExposureID, active: phase == .active)
+            model.setSceneActive(navigation, active: phase == .active)
             if phase == .active {
                 Task {
                     await model.refresh()
@@ -128,13 +140,14 @@ struct MirrorRootView: View {
                 }
             }
         }
-        .onDisappear { model.setSceneActive(sceneExposureID, active: false) }
+        .onDisappear { model.unregisterScene(navigation) }
         .onOpenURL { url in
-            let owner = sceneOwner
-            Task { await model.handleURL(url, captureOwner: owner) }
+            model.registerScene(navigation, windowRequestID: windowRequestID)
+            Task { await model.handleURL(url, in: navigation) }
         }
         .onContinueUserActivity(CSSearchableItemActionType) { activity in
-            Task { await model.handleSpotlight(activity) }
+            model.registerScene(navigation, windowRequestID: windowRequestID)
+            Task { await model.handleSpotlight(activity, in: navigation) }
         }
         #if os(macOS)
         // Inspector는 자신의 최소 폭을 별도로 더하므로, 열렸을 때는 탐색 영역만 확보한다.
@@ -152,8 +165,8 @@ struct MirrorRootView: View {
             } else if isCompact {
                 compactNavigation
             } else {
-                let calendarEligible = model.selectedTask == nil && !model.showReview
-                    && showsAdjacentCalendar(width: availableWidth, destination: model.destination)
+                let calendarEligible = model.selectedTask(in: navigation) == nil && !isReviewPresented
+                    && showsAdjacentCalendar(width: availableWidth, destination: navigation.destination)
                 NavigationSplitView {
                     List(selection: sidebarSelection) {
                         ForEach(MirrorDestination.allCases) { destination in
@@ -171,14 +184,14 @@ struct MirrorRootView: View {
                             }
                             .buttonStyle(.plain)
                             .tag(destination)
-                            .listRowBackground(model.destination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
+                            .listRowBackground(navigation.destination == destination ? MirrorPalette.accent.opacity(0.12) : .clear)
                             .accessibilityIdentifier("destination.\(destination.rawValue)")
                         }
                     }
                     .navigationTitle("미러")
                     .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
                 } detail: {
-                    mainContent(model.destination, showCalendar: calendarEligible && adjacentCalendarVisible,
+                    mainContent(navigation.destination, showCalendar: calendarEligible && adjacentCalendarVisible,
                                 offersCalendarToggle: calendarEligible)
                 }
                 .navigationSplitViewStyle(.balanced)
@@ -189,7 +202,7 @@ struct MirrorRootView: View {
     @ViewBuilder private var compactNavigation: some View {
         if usesPhoneTabs {
             VStack(spacing: 0) {
-                phoneHeader(model.destination)
+                phoneHeader(navigation.destination)
                     .fixedSize(horizontal: false, vertical: true)
                 compactTabs
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -214,7 +227,7 @@ struct MirrorRootView: View {
         }
     }
     private var isTaskInspectorVisible: Bool {
-        model.preferences.onboardingComplete && !model.isLoading && !model.showReview && model.selectedTask != nil
+        model.preferences.onboardingComplete && !model.isLoading && !isReviewPresented && model.selectedTask(in: navigation) != nil
     }
     private func showsAdjacentCalendar(width: CGFloat, destination: MirrorDestination) -> Bool {
         #if os(iOS)
@@ -369,14 +382,14 @@ struct MirrorRootView: View {
     }
     @ViewBuilder private var statusBar: some View {
         if model.capturePresentation(for: sceneExposureID) == nil,
-            (!model.showReview || model.systemProblem != nil || model.cleanupProblem != nil),
+            (!isReviewPresented || model.systemProblem != nil || model.cleanupProblem != nil),
             model.isSaving || model.feedback != nil || model.problem != nil || model.projectionPending
             || model.lastUndo != nil || model.systemProblem != nil || model.cleanupProblem != nil {
             VStack(alignment: .leading, spacing: 8) {
                 let layout = dynamicTypeSize.isAccessibilitySize
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                     : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
-                if !model.showReview {
+                if !isReviewPresented {
                     layout {
                         statusMessage
                         statusActions
@@ -416,7 +429,7 @@ struct MirrorRootView: View {
     }
     @ViewBuilder private var statusActionButtons: some View {
         if model.problem != nil || model.projectionPending || model.systemProblem != nil {
-            Button { Task { await model.retry() } } label: {
+            Button { Task { await model.retry(in: navigation) } } label: {
                 Text("다시 확인")
                     #if os(iOS)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -425,8 +438,8 @@ struct MirrorRootView: View {
                 .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
         }
         if let undo = model.lastUndo,
-           !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
-            Button { Task { await model.undo() } } label: {
+           !isTaskInspectorVisible || undo.taskID != navigation.selectedTaskID {
+            Button { Task { await model.undo(in: navigation) } } label: {
                 Text("되돌리기")
                     #if os(iOS)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -474,26 +487,36 @@ struct MirrorRootView: View {
         })
     }
     private var taskInspectorPresentation: Binding<Bool> {
-        Binding(get: {
+        let displayedTaskID = navigation.selectedTaskID
+        let displayedTarget = model.navigationTarget(in: navigation)
+        return Binding(get: {
             isTaskInspectorVisible
         }, set: { shown in
-            guard !shown, !model.showReview, !model.isSaving else { return }
-            if let id = model.selectedTaskID, (detailNavigation.draftTaskID == id || model.isDetailEditing) { detailNavigation.closeRequestedID = id }
-            else { model.selectedTaskID = nil }
+            guard !shown, !isReviewPresented, !model.isSaving, let displayedTaskID,
+                  navigation.selectedTaskID == displayedTaskID, let displayedTarget,
+                  model.navigationTarget(in: navigation) == displayedTarget else { return }
+            if detailNavigation.draftTaskID == displayedTaskID || model.isDetailEditing(in: navigation) { detailNavigation.closeRequestedID = displayedTaskID }
+            else { model.selectTask(nil, in: navigation) }
         })
     }
     private var sidebarSelection: Binding<MirrorDestination?> {
-        Binding(get: { model.destination }, set: { if let destination = $0 { selectDestination(destination) } })
+        Binding(get: { navigation.destination }, set: { if let destination = $0 { selectDestination(destination) } })
     }
     private var destinationSelection: Binding<MirrorDestination> {
-        Binding(get: { model.destination }, set: { selectDestination($0) })
+        Binding(get: { navigation.destination }, set: { selectDestination($0) })
     }
     private func selectDestination(_ destination: MirrorDestination) {
-        if destination != model.destination && !model.isDetailEditing { model.selectedTaskID = nil }
-        model.destination = destination
+        model.selectDestination(destination, in: navigation)
     }
     private var taskSelectionAction: MirrorTaskSelectionAction {
-        MirrorTaskSelectionAction(model: model, navigation: detailNavigation)
+        MirrorTaskSelectionAction(model: model, navigation: detailNavigation, scene: navigation)
+    }
+    private var reviewPresentation: Binding<ScenePresentationRequest?> {
+        let displayedRequest = model.reviewPresentation(in: navigation)
+        return Binding(get: { model.reviewPresentation(in: navigation) }, set: { presented in
+            guard presented == nil, let displayedRequest else { return }
+            model.closeReview(displayedRequest)
+        })
     }
     private var basePicker: Binding<PlanPickerRequest?> {
         let displayedRequest = displayedBasePicker
@@ -506,7 +529,7 @@ struct MirrorRootView: View {
         })
     }
     private var eligibleBasePicker: PlanPickerRequest? {
-        !model.showReview && model.selectedTaskID == nil ? model.picker : nil
+        !isReviewPresented && navigation.selectedTaskID == nil ? model.picker(in: navigation) : nil
     }
     private func retainBasePickerIfNeeded() {
         let next = eligibleBasePicker
@@ -592,14 +615,24 @@ struct MirrorDetailRequest: Identifiable { let id: UUID }
 @MainActor
 struct MirrorDeadlineConfirmation: ViewModifier {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     let enabled: Bool
     func body(content: Content) -> some View {
-        let displayed = model.confirmation
+        let displayed = model.confirmation(in: scene)
+        let displayedTarget = model.navigationTarget(in: scene)
         return content.alert("실제 마감 이후로 배치할까요?", isPresented: Binding(
-            get: { enabled && displayed != nil && model.confirmation == displayed },
-            set: { if !$0, let displayed { model.dismissDeadlineConfirmation(displayed) } }), presenting: displayed) { envelope in
-            Button("마감은 유지하고 배치") { Task { await model.confirmAfterDeadline(envelope) } }
-            Button("취소", role: .cancel) { model.cancelDeadlineConfirmation(envelope) }
+            get: { enabled && displayed != nil && model.confirmation(in: scene) == displayed },
+            set: {
+                if !$0, let displayed, let displayedTarget {
+                    model.dismissDeadlineConfirmation(displayed, expectedNavigation: displayedTarget)
+                }
+            }), presenting: displayed) { envelope in
+            Button("마감은 유지하고 배치") {
+                if let displayedTarget { Task { await model.confirmAfterDeadline(envelope, expectedNavigation: displayedTarget) } }
+            }
+            Button("취소", role: .cancel) {
+                if let displayedTarget { model.cancelDeadlineConfirmation(envelope, expectedNavigation: displayedTarget) }
+            }
         } message: { _ in Text("선택한 계획이 실제 마감 뒤예요. 원래 마감은 변경하지 않아요.") }
     }
 }

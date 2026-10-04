@@ -706,7 +706,100 @@ final class MirrorUITests: XCTestCase {
         let restoredToday = try requireRow(edited, in: app)
         XCTAssertTrue(value(of: restoredToday).contains("9월 30일"))
         XCTAssertTrue(value(of: restoredToday).contains("미완료"))
+        #if os(macOS)
+        try verifyIndependentWindows(in: app, todayTitle: edited, unassignedTitle: selectionControl)
+        #endif
     }
+
+    #if os(macOS)
+    @MainActor
+    private func verifyIndependentWindows(in app: XCUIApplication, todayTitle: String, unassignedTitle: String) throws {
+        // 기존 사례가 실제로 저장한 두 작업을 사용하며 새 store나 테스트용 창은 만들지 않는다.
+        try interact(with: requireRow(todayTitle, in: app), in: app)
+        try waitForLabel(todayTitle, element: requireElement("detail.contentTitle", in: app), in: app)
+        let originalWindows = app.windows.allElementsBoundByAccessibilityElement
+        XCTAssertEqual(originalWindows.count, 1)
+        guard originalWindows.count == 1 else { throw UIHarnessError.unexpectedElement("initialWindowCount") }
+        let first = originalWindows[0]
+
+        // 사용자가 사용하는 새 창 명령이다. Cmd-N은 빠른 입력이므로 사용하지 않는다.
+        app.typeKey("n", modifierFlags: [.command, .shift])
+        try waitForWindowCount(2, in: app)
+        _ = try requireWindowElement("today.list", type: .any, in: first)
+        XCTAssertEqual(displayedText(of: try requireWindowElement("detail.contentTitle", type: .staticText, in: first)), todayTitle,
+                       "새 창을 열어도 기존 창의 선택과 상세를 유지한다.")
+        let newWindows = app.windows.allElementsBoundByAccessibilityElement.filter {
+            !$0.buttons.matching(identifier: "detail.close").firstMatch.exists
+        }
+        XCTAssertEqual(newWindows.count, 1, "선택 없이 열리는 새 창 하나를 실제 창으로 구분한다.")
+        guard newWindows.count == 1 else { throw UIHarnessError.unexpectedElement("newWindowSelection") }
+        let second = newWindows[0]
+        _ = try requireWindowElement("today.list", type: .any, in: second)
+        try clickWindowButton("destination.library", in: second)
+        _ = try requireWindowElement("library.search", type: .textField, in: second)
+        let rows = second.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "task.row.", unassignedTitle))
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(rows.count, 1, "새 창의 보관함에 저장된 실제 작업 하나를 선택한다.")
+        guard rows.count == 1 else { throw UIHarnessError.unexpectedElement("newWindowTaskRow") }
+        let row = rows.firstMatch
+        XCTAssertTrue(row.isEnabled && row.isHittable && second.frame.contains(row.frame))
+        guard row.isEnabled && row.isHittable && second.frame.contains(row.frame) else {
+            throw UIHarnessError.missingElement("newWindowTaskRow")
+        }
+        row.click()
+        try waitForLabel(unassignedTitle,
+                         element: requireWindowElement("detail.contentTitle", type: .staticText, in: second), in: app)
+        XCTAssertEqual(displayedText(of: try requireWindowElement("detail.contentTitle", type: .staticText, in: first)), todayTitle,
+                       "다른 창의 작업 선택이 기존 창의 상세를 바꾸지 않는다.")
+        _ = try requireWindowElement("today.list", type: .any, in: first)
+        XCTAssertFalse(first.textFields.matching(identifier: "library.search").firstMatch.exists,
+                       "다른 창의 보관함 전환이 기존 창의 오늘 목록을 바꾸지 않는다.")
+        try clickWindowButton("detail.close", in: second)
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                               object: second.buttons.matching(identifier: "detail.close").firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 15), .completed)
+        XCTAssertEqual(displayedText(of: try requireWindowElement("detail.contentTitle", type: .staticText, in: first)), todayTitle,
+                       "다른 창의 상세 닫기가 기존 창의 상세를 닫지 않는다.")
+        _ = try requireWindowElement("library.search", type: .textField, in: second)
+        // 두 번째 창에서 마지막 클릭을 수행했으므로 그 창의 표준 닫기를 실행한다.
+        app.typeKey("w", modifierFlags: .command)
+        try waitForWindowCount(1, in: app)
+        XCTAssertFalse(second.exists)
+        XCTAssertTrue(first.exists)
+        _ = try requireWindowElement("today.list", type: .any, in: first)
+        XCTAssertEqual(displayedText(of: try requireWindowElement("detail.contentTitle", type: .staticText, in: first)), todayTitle,
+                       "다른 창의 수명 종료 후에도 원래 창의 목록과 선택을 유지한다.")
+    }
+
+    @MainActor
+    private func waitForWindowCount(_ count: Int, in app: XCUIApplication) throws {
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == %d", count), object: app.windows)
+        guard XCTWaiter.wait(for: [expected], timeout: 15) == .completed else {
+            XCTFail("실제 앱 창 수가 기대값에 도달해야 한다.")
+            throw UIHarnessError.unexpectedElement("windowCount")
+        }
+    }
+
+    @MainActor
+    private func requireWindowElement(_ identifier: String, type: XCUIElement.ElementType, in window: XCUIElement) throws -> XCUIElement {
+        let query = window.descendants(matching: type).matching(identifier: identifier)
+        guard window.exists, query.firstMatch.waitForExistence(timeout: 15), query.count == 1 else {
+            XCTFail("대상 창 안에 고유한 실제 UI 요소가 있어야 한다: \(identifier)")
+            throw UIHarnessError.missingElement(identifier)
+        }
+        return query.firstMatch
+    }
+
+    @MainActor
+    private func clickWindowButton(_ identifier: String, in window: XCUIElement) throws {
+        let button = try requireWindowElement(identifier, type: .button, in: window)
+        guard button.isEnabled, button.isHittable, window.frame.contains(button.frame) else {
+            XCTFail("대상 창의 버튼을 실제로 클릭할 수 있어야 한다: \(identifier)")
+            throw UIHarnessError.missingElement(identifier)
+        }
+        button.click()
+    }
+    #endif
 
     @MainActor
     func testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday() throws {

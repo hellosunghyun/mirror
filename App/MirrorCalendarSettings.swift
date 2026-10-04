@@ -51,6 +51,7 @@ private var supportsCalendarDrag: Bool {
 @MainActor
 struct MirrorCalendarDragHandle: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.mirrorCalendarDropAvailable) private var dropAvailable
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(iOS)
@@ -80,7 +81,7 @@ struct MirrorCalendarDragHandle: View {
                 .accessibilityHint("끌어서 날짜나 요일 미정에 놓으세요. 미루기 버튼으로도 날짜를 바꿀 수 있어요.")
                 .accessibilityAction(named: Text("날짜 선택")) {
                     guard !model.isSaving, !model.projectionPending, !model.isDetailEditing else { return }
-                    model.makePicker(taskIDs: [task.taskID])
+                    model.makePicker(taskIDs: [task.taskID], in: scene)
                 }
                 .accessibilityIdentifier("calendar.drag.\(task.taskID.uuidString)")
                 .disabled(model.isSaving || model.projectionPending || model.isDetailEditing)
@@ -88,7 +89,7 @@ struct MirrorCalendarDragHandle: View {
     }
 
     private func provider(context: PlanningContext) -> NSItemProvider {
-        guard let token = model.beginCalendarDrag(task, context: context),
+        guard let token = model.beginCalendarDrag(task, context: context, in: scene),
               let data = try? JSONEncoder().encode(MirrorCalendarDragPayload(token: token)) else {
             return NSItemProvider()
         }
@@ -105,6 +106,7 @@ struct MirrorCalendarDragHandle: View {
 @MainActor
 private struct MirrorCalendarDropTarget: ViewModifier {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     let target: PlanTarget
     @State private var isTargeted = false
 
@@ -121,7 +123,7 @@ private struct MirrorCalendarDropTarget: ViewModifier {
                 }
                 .dropDestination(for: MirrorCalendarDragPayload.self) { payloads, _ in
                     guard payloads.count == 1, let payload = payloads.first,
-                          let request = model.takeCalendarDrag(token: payload.token) else { return false }
+                          let request = model.takeCalendarDrag(token: payload.token, in: scene) else { return false }
                     Task { await model.choosePlan(request, target: target) }
                     return true
                 } isTargeted: { isTargeted = $0 }
@@ -143,6 +145,7 @@ struct MirrorCalendarView: View {
     var compact = false
     @Binding var navigation: MirrorCalendarNavigationState
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.mirrorTaskSelection) private var selectTask
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -278,7 +281,7 @@ struct MirrorCalendarView: View {
                 Label("이 날의 실제 마감", systemImage: "flag")
                     .font(.caption.weight(.medium)).foregroundStyle(.secondary)
                 ForEach(deadlines, id: \.taskID) { task in
-                    Button { if let selectTask { selectTask(task.taskID) } else { model.selectedTaskID = task.taskID } } label: {
+                    Button { if let selectTask { selectTask(task.taskID) } else { model.selectTask(task.taskID, in: scene) } } label: {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(task.title).lineLimit(3).accessibilityLabel(task.title).foregroundStyle(.primary)
                             Text(deadlineLabel(task.deadline, context: context))
@@ -430,6 +433,7 @@ struct MirrorArchiveDocument: FileDocument {
 @MainActor
 struct MirrorSettingsView: View {
     @Environment(AppModel.self) private var model
+    @Environment(SceneNavigationState.self) private var scene
     @Environment(\.dismiss) private var dismiss
     @State private var exporting = false
     @State private var importing = false
@@ -465,7 +469,7 @@ struct MirrorSettingsView: View {
                                 .disabled(model.isSaving).accessibilityIdentifier("settings.recoveryAcknowledge")
                         } else {
                             Text("복구 안내를 읽지 못했어요. 원본은 유지하고 저장소를 다시 확인해 주세요.")
-                            Button("다시 확인") { Task { await model.retry() } }.disabled(model.isSaving)
+                            Button("다시 확인") { Task { await model.retry(in: scene) } }.disabled(model.isSaving)
                         }
                         Text("확인 뒤 필요한 외부 기능을 각각 다시 켜 주세요.").font(.caption)
                     }

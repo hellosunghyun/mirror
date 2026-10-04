@@ -3,6 +3,149 @@ import Observation
 import MirrorDomain
 import MirrorData
 
+/// 저장소와 분리된 창의 표시 상태. 대상 ticket은 창과 공간 세대에 함께 묶인다.
+public enum SceneDestination: String, CaseIterable, Identifiable, Sendable {
+    case today, calendar, library
+    public var id: String { rawValue }
+}
+
+public struct SceneNavigationTarget: Equatable, Hashable, Sendable {
+    public let sceneID: UUID
+    public let generation: UUID
+    public let registrationID: UUID
+    public init(sceneID: UUID, generation: UUID, registrationID: UUID) {
+        self.sceneID = sceneID; self.generation = generation; self.registrationID = registrationID
+    }
+}
+
+public enum SceneWindowRoute: Equatable, Sendable { case deepLink(MirrorRoute), resumeReview }
+public struct SceneNavigationDelivery: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let route: SceneWindowRoute
+    public let target: SceneNavigationTarget
+}
+
+public struct ScenePresentationRequest: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let target: SceneNavigationTarget
+    public init(target: SceneNavigationTarget, id: UUID = UUID()) { self.id = id; self.target = target }
+}
+
+@MainActor @Observable
+public final class SceneNavigationState {
+    public let owner: CaptureSceneOwner
+    public var destination: SceneDestination = .today
+    public var selectedTaskID: UUID?
+    public private(set) var generation: UUID?
+    fileprivate var registrationID: UUID?
+    public init() { owner = CaptureSceneOwner() }
+    fileprivate func reset(generation: UUID) {
+        guard self.generation != generation else { return }
+        self.generation = generation; destination = .today; selectedTaskID = nil
+    }
+}
+
+/// registry는 창을 보유하지 않는다. 비동기 작업이 창을 retain해도 unregister 뒤 ticket은 무효다.
+@MainActor
+public final class SceneNavigationCoordinator {
+    private final class Reference {
+        weak var value: SceneNavigationState?
+        var windowRequestID: UUID?
+        init(_ value: SceneNavigationState) { self.value = value }
+    }
+    private var scenes: [UUID: Reference] = [:]
+    private var order: [UUID] = []
+    private var active: [UUID] = []
+    private var initialSetup: (origins: Set<UUID>, to: UUID)?
+    private var pending: (id: UUID, route: SceneWindowRoute, generation: UUID?)?
+    private var windowRequests: [UUID: (route: SceneWindowRoute, generation: UUID?)] = [:]
+    public init() {}
+    public func register(_ scene: SceneNavigationState, generation: UUID, windowRequestID: UUID? = nil) {
+        let id = scene.owner.id
+        if scenes[id]?.value !== scene {
+            scenes[id] = Reference(scene); order.append(id); scene.registrationID = UUID()
+        }
+        if let windowRequestID, scenes[id]?.windowRequestID == nil { scenes[id]?.windowRequestID = windowRequestID }
+        scene.reset(generation: generation)
+    }
+    public func unregister(_ scene: SceneNavigationState) {
+        guard scenes[scene.owner.id]?.value === scene else { return }
+        scenes[scene.owner.id] = nil
+        scene.registrationID = nil
+        order.removeAll { $0 == scene.owner.id }; active.removeAll { $0 == scene.owner.id }
+    }
+    public func setActive(_ scene: SceneNavigationState, active isActive: Bool) {
+        guard scenes[scene.owner.id]?.value === scene else { return }
+        active.removeAll { $0 == scene.owner.id }
+        if isActive { active.append(scene.owner.id) }
+    }
+    public func target(for scene: SceneNavigationState) -> SceneNavigationTarget? {
+        guard scenes[scene.owner.id]?.value === scene, let generation = scene.generation,
+              let registrationID = scene.registrationID else { return nil }
+        return SceneNavigationTarget(sceneID: scene.owner.id, generation: generation, registrationID: registrationID)
+    }
+    public func target(for owner: CaptureSceneOwner) -> SceneNavigationTarget? {
+        guard let scene = scenes[owner.id]?.value, scene.owner === owner else { return nil }
+        return target(for: scene)
+    }
+    public func resolve(_ target: SceneNavigationTarget) -> SceneNavigationState? {
+        guard let scene = scenes[target.sceneID]?.value, scene.generation == target.generation,
+              scene.registrationID == target.registrationID else { return nil }
+        return scene
+    }
+    /// 처음 저장 공간을 연 한 번만 cold-start 요청을 같은 등록 창으로 이어 준다.
+    public func targetAfterInitialSetup(_ original: SceneNavigationTarget) -> SceneNavigationTarget? {
+        if resolve(original) != nil { return original }
+        guard let initialSetup, initialSetup.origins.contains(original.generation),
+              let scene = scenes[original.sceneID]?.value, scene.generation == initialSetup.to,
+              scene.registrationID == original.registrationID else { return nil }
+        return target(for: scene)
+    }
+    public func preferredTarget() -> SceneNavigationTarget? {
+        for id in Array(active.reversed()) + Array(order.reversed()) {
+            if let scene = scenes[id]?.value, let target = target(for: scene) { return target }
+        }
+        return nil
+    }
+    public func reset(generation: UUID, initialSetup: Bool = false) {
+        let previous = order.compactMap { scenes[$0]?.value?.generation }.first
+        var origins = self.initialSetup.flatMap { $0.to == previous ? $0.origins : nil } ?? []
+        if let previous { origins.insert(previous) }
+        self.initialSetup = initialSetup ? (origins, generation) : nil
+        if !initialSetup || pending?.generation != nil { pending = nil }
+        windowRequests = initialSetup ? windowRequests.filter { $0.value.generation == nil } : [:]
+        for reference in scenes.values { reference.value?.reset(generation: generation) }
+    }
+    public func request(_ route: SceneWindowRoute, generation: UUID?) -> SceneNavigationDelivery? {
+        let id = UUID()
+        if let target = preferredTarget() {
+            guard generation == nil || generation == target.generation else { return nil }
+            pending = nil
+            return SceneNavigationDelivery(id: id, route: route, target: target)
+        }
+        pending = (id, route, generation)
+        return nil
+    }
+    public func takePending(in scene: SceneNavigationState, generation: UUID) -> SceneNavigationDelivery? {
+        guard let pending, pending.generation == nil || pending.generation == generation,
+              let target = target(for: scene), target.generation == generation else { return nil }
+        self.pending = nil
+        return SceneNavigationDelivery(id: pending.id, route: pending.route, target: target)
+    }
+    public func requestNewWindow(_ route: SceneWindowRoute, generation: UUID?) -> UUID {
+        let id = UUID()
+        windowRequests[id] = (route, generation)
+        return id
+    }
+    public func takeNewWindowRoute(_ id: UUID, in scene: SceneNavigationState, generation: UUID) -> SceneNavigationDelivery? {
+        guard scenes[scene.owner.id]?.windowRequestID == id,
+              let request = windowRequests[id], request.generation == nil || request.generation == generation,
+              let target = target(for: scene), target.generation == generation else { return nil }
+        windowRequests[id] = nil
+        return SceneNavigationDelivery(id: id, route: request.route, target: target)
+    }
+}
+
 /// 명시적 공간 변경만 제한한다. 저장 결과 재확인과 자동 계정 격리는 별도 경로다.
 public enum WorkspaceChangeBlocker: Equatable, Sendable {
     case detailEditing, capture, projectionPending, saving, pendingCommand

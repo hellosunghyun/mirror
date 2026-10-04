@@ -5,9 +5,8 @@ import MirrorSystem
 import Observation
 import SwiftUI
 
-enum MirrorDestination: String, CaseIterable, Identifiable {
-    case today, calendar, library
-    var id: String { rawValue }
+typealias MirrorDestination = SceneDestination
+extension SceneDestination {
     var title: String { switch self { case .today: "오늘"; case .calendar: "일정"; case .library: "보관함" } }
     var symbol: String { switch self { case .today: "sun.max"; case .calendar: "calendar"; case .library: "tray" } }
 }
@@ -44,6 +43,7 @@ struct PlanPickerRequest: Identifiable {
     let token: String
     let review: ReviewDecisionContext?
     let week: WeekRange?
+    var navigation: SceneNavigationTarget?
     var widgetState: WidgetReviewState? = nil
 }
 
@@ -67,20 +67,10 @@ struct MirrorPreferences: Codable {
 @Observable
 @MainActor
 final class AppModel {
-    var destination: MirrorDestination = .today
     var tasks: [TaskProjection] = []
-    private var selectedTaskIDBacking: UUID?
-    var selectedTaskID: UUID? {
-        get { selectedTaskIDBacking }
-        set {
-            guard newValue == selectedTaskIDBacking || !isDetailEditing else {
-                feedback = "편집 중인 내용을 먼저 저장하거나 편집을 취소한 뒤, 다른 일을 열거나 상세를 닫아 주세요."
-                detailEditingFeedback = feedback
-                return
-            }
-            selectedTaskIDBacking = newValue
-        }
-    }
+    @ObservationIgnored private let sceneNavigation = SceneNavigationCoordinator()
+    private var commandNavigation: [String: SceneNavigationTarget] = [:]
+    @ObservationIgnored private var pendingNotificationObservation: UUID?
     private var textEditingOwnership = TextEditingOwnershipState()
     var isTextEditing: Bool { textEditingOwnership.isEditing }
     func setTextEditing(_ active: Bool, ownerID: UUID) {
@@ -92,11 +82,13 @@ final class AppModel {
         let taskID: UUID
         let workspaceKey: String
         let workspaceEpoch: String
+        let navigation: SceneNavigationTarget
     }
     private var detailEditingOwners: [UUID: DetailEditingClaim] = [:]
     var isDetailEditing: Bool { !detailEditingOwners.isEmpty }
     var selectedTaskIDs: Set<UUID> = []
     private let capturePresentationCoordinator = CapturePresentationCoordinator()
+    private var captureNavigation: [UUID: SceneNavigationTarget] = [:]
     var showCapture: Bool { capturePresentationCoordinator.request != nil }
     private var workspaceChangeInProgress = false
     var workspaceChangeBlockedMessage: String? {
@@ -114,7 +106,8 @@ final class AppModel {
     var canChangeWorkspace: Bool { workspaceChangeBlockedMessage == nil }
     private let settingsPresentationCoordinator = SettingsPresentationCoordinator()
     var showSettings: Bool { settingsPresentationCoordinator.request != nil }
-    var showReview = false
+    private var reviewPresentationRequest: ScenePresentationRequest?
+    var showReview: Bool { reviewPresentationRequest.flatMap { sceneNavigation.resolve($0.target) } != nil }
     private var pickerPresentationState = PlanPickerPresentationState()
     var picker: PlanPickerRequest? {
         didSet { pickerPresentationState.replace(with: picker?.id) }
@@ -122,7 +115,7 @@ final class AppModel {
     var completedWidgetPickerID: UUID?
     var completedBatchPickerID: UUID?
     @ObservationIgnored private var batchPickerOwner: (id: UUID, token: String, observationID: UUID)?
-    @ObservationIgnored private var widgetNextDestination: (requestID: UUID, resume: Bool, observationID: UUID)?
+    @ObservationIgnored private var widgetNextDestination: (requestID: UUID, resume: Bool, observationID: UUID, navigation: SceneNavigationTarget?)?
     var isLoading = true
     var isSaving = false
     var feedback: String? {
@@ -164,7 +157,14 @@ final class AppModel {
     var syncState: StoreSyncState = .localOnly
     var quarantinedCount = 0
     var context: PlanningContext?
-    private(set) var sceneNavigationGeneration = UUID()
+    private(set) var sceneNavigationGeneration = UUID() {
+        didSet {
+            sceneNavigation.reset(generation: sceneNavigationGeneration, initialSetup: establishingInitialNavigationWorkspace)
+            reviewPresentationRequest = nil
+            commandNavigation.removeAll()
+            if let request = capturePresentationCoordinator.request { _ = closeCapture(request) }
+        }
+    }
     var archiveData: Data?
     var exportFileName = "Mirror-backup"
     private var archiveImportSelection = ArchiveImportSelection()
@@ -187,13 +187,17 @@ final class AppModel {
     var cloudDeletionMessage: String?
 
     @ObservationIgnored private var store: MirrorStore?
+    @ObservationIgnored private var navigationWorkspaceEstablished = false
+    @ObservationIgnored private var establishingInitialNavigationWorkspace = false
     @ObservationIgnored private var configuration: StoreConfiguration? {
         didSet {
             if oldValue?.directory.standardizedFileURL != configuration?.directory.standardizedFileURL
                 || oldValue?.workspaceKey != configuration?.workspaceKey
                 || oldValue?.workspaceEpoch != configuration?.workspaceEpoch
                 || oldValue?.cloudSync != configuration?.cloudSync {
+                establishingInitialNavigationWorkspace = !navigationWorkspaceEstablished && configuration != nil
                 sceneNavigationGeneration = UUID()
+                establishingInitialNavigationWorkspace = false
                 clearCalendarDisplays()
             }
         }
@@ -269,17 +273,18 @@ final class AppModel {
         systemReconciliationTask?.cancel()
     }
 
-    func beginDetailEditing(ownerID: UUID, task: TaskProjection) -> DetailEditingClaim? {
+    func beginDetailEditing(ownerID: UUID, task: TaskProjection, in scene: SceneNavigationState) -> DetailEditingClaim? {
         guard !isDetailEditing else {
             feedback = "다른 창에서 편집 중이에요. 먼저 그 내용을 저장하거나 편집을 취소해 주세요."
             detailEditingFeedback = feedback
             return nil
         }
-        guard store != nil, !isSaving, let configuration, selectedTaskID == task.taskID,
+        guard let target = sceneNavigation.target(for: scene), store != nil, !isSaving, let configuration,
+              scene.selectedTaskID == task.taskID,
               task.workspaceKey == configuration.workspaceKey, task.workspaceEpoch == configuration.workspaceEpoch,
               tasks.contains(where: { $0.taskID == task.taskID && $0.workspaceKey == task.workspaceKey && $0.workspaceEpoch == task.workspaceEpoch }) else { return nil }
         let claim = DetailEditingClaim(observationID: storeObservationID, taskID: task.taskID,
-                                       workspaceKey: task.workspaceKey, workspaceEpoch: task.workspaceEpoch)
+                                       workspaceKey: task.workspaceKey, workspaceEpoch: task.workspaceEpoch, navigation: target)
         detailEditingOwners[ownerID] = claim
         detailEditingFeedback = nil
         return claim
@@ -300,13 +305,99 @@ final class AppModel {
     }
     func isCurrentDetailEditing(ownerID: UUID, claim: DetailEditingClaim?) -> Bool {
         guard let claim, detailEditingOwners[ownerID] == claim, claim.observationID == storeObservationID,
-              store != nil, selectedTaskID == claim.taskID, let configuration,
+              store != nil, sceneNavigation.resolve(claim.navigation)?.selectedTaskID == claim.taskID, let configuration,
               claim.workspaceKey == configuration.workspaceKey, claim.workspaceEpoch == configuration.workspaceEpoch,
               tasks.contains(where: { $0.taskID == claim.taskID && $0.workspaceKey == claim.workspaceKey && $0.workspaceEpoch == claim.workspaceEpoch }) else { return false }
         return true
     }
 
-    var selectedTask: TaskProjection? { tasks.first { $0.taskID == selectedTaskID } }
+    func selectedTask(in scene: SceneNavigationState) -> TaskProjection? {
+        guard sceneNavigation.target(for: scene) != nil else { return nil }
+        return tasks.first { $0.taskID == scene.selectedTaskID }
+    }
+    func navigationTarget(in scene: SceneNavigationState) -> SceneNavigationTarget? { sceneNavigation.target(for: scene) }
+    func isDetailEditing(in scene: SceneNavigationState) -> Bool {
+        detailEditingOwners.values.contains { $0.navigation == sceneNavigation.target(for: scene) }
+    }
+    func selectTask(_ id: UUID?, in scene: SceneNavigationState) {
+        guard sceneNavigation.target(for: scene) != nil else { return }
+        guard id == scene.selectedTaskID || !isDetailEditing(in: scene) else {
+            feedback = "편집 중인 내용을 먼저 저장하거나 편집을 취소한 뒤, 다른 일을 열거나 상세를 닫아 주세요."
+            detailEditingFeedback = feedback
+            return
+        }
+        scene.selectedTaskID = id
+    }
+    func selectDestination(_ destination: MirrorDestination, in scene: SceneNavigationState) {
+        guard sceneNavigation.target(for: scene) != nil else { return }
+        if scene.destination != destination, !isDetailEditing(in: scene) { scene.selectedTaskID = nil }
+        scene.destination = destination
+    }
+    func registerScene(_ scene: SceneNavigationState, windowRequestID: UUID? = nil) {
+        sceneNavigation.register(scene, generation: sceneNavigationGeneration, windowRequestID: windowRequestID)
+        if let windowRequestID, let delivery = sceneNavigation.takeNewWindowRoute(windowRequestID, in: scene, generation: sceneNavigationGeneration) {
+            Task { await deliverMainWindowRoute(delivery, in: scene) }
+        }
+        consumePendingRoute(in: scene)
+    }
+    func setSceneActive(_ scene: SceneNavigationState, active: Bool) {
+        guard sceneNavigation.target(for: scene) != nil else { return }
+        sceneNavigation.setActive(scene, active: active)
+        setSceneActive(scene.owner.id, active: active)
+        if active { consumePendingRoute(in: scene) }
+    }
+    func unregisterScene(_ scene: SceneNavigationState) {
+        guard let target = sceneNavigation.target(for: scene) else { return }
+        sceneNavigation.unregister(scene)
+        setSceneActive(scene.owner.id, active: false)
+        detailEditingOwners = detailEditingOwners.filter { $0.value.navigation != target }
+        if reviewPresentationRequest?.target == target { reviewPresentationRequest = nil }
+        if picker?.navigation == target { picker = nil }
+        if let confirmation, commandNavigation[confirmation.idempotencyKey] == target {
+            cancelDeadlineConfirmation(confirmation)
+        }
+        if let request = capturePresentationCoordinator.presentation(for: scene.owner.id) { _ = closeCapture(request) }
+        if let request = settingsPresentationCoordinator.presentation(for: scene.owner.id) { _ = closeSettings(request) }
+    }
+    func isReviewPresented(in scene: SceneNavigationState) -> Bool { reviewPresentation(in: scene) != nil }
+    func reviewPresentation(in scene: SceneNavigationState) -> ScenePresentationRequest? {
+        guard let request = reviewPresentationRequest, request.target == sceneNavigation.target(for: scene) else { return nil }
+        return request
+    }
+    func closeReview(_ request: ScenePresentationRequest) {
+        guard reviewPresentationRequest == request, !isSaving,
+              !detailEditingOwners.values.contains(where: { $0.navigation == request.target }) else { return }
+        reviewPresentationRequest = nil
+    }
+    func picker(in scene: SceneNavigationState) -> PlanPickerRequest? {
+        guard let target = sceneNavigation.target(for: scene), let picker, picker.navigation == target else { return nil }
+        return picker
+    }
+    func confirmation(in scene: SceneNavigationState) -> CommandEnvelope? {
+        guard let confirmation, let target = sceneNavigation.target(for: scene),
+              commandNavigation[confirmation.idempotencyKey] == target else { return nil }
+        return confirmation
+    }
+    func makeMainWindowRequest(_ route: SceneWindowRoute) -> UUID {
+        sceneNavigation.requestNewWindow(route, generation: navigationWorkspaceEstablished ? sceneNavigationGeneration : nil)
+    }
+    private func consumePendingRoute(in scene: SceneNavigationState) {
+        guard let delivery = sceneNavigation.takePending(in: scene, generation: sceneNavigationGeneration) else { return }
+        let observationID = pendingNotificationObservation
+        pendingNotificationObservation = nil
+        Task { await deliverMainWindowRoute(delivery, in: scene, observationID: observationID) }
+    }
+    private func deliverMainWindowRoute(_ delivery: SceneNavigationDelivery, in scene: SceneNavigationState, observationID: UUID? = nil) async {
+        guard let target = sceneNavigation.targetAfterInitialSetup(delivery.target), sceneNavigation.resolve(target) === scene else { return }
+        switch delivery.route {
+        case let .deepLink(route): await handleURL(MirrorDeepLink.url(for: route), in: scene, expectedObservationID: observationID)
+        case .resumeReview:
+            if store == nil || isLoading { await start() }
+            guard let current = sceneNavigation.targetAfterInitialSetup(target),
+                  sceneNavigation.resolve(current) === scene else { return }
+            beginReview(in: scene, mode: .manualResume)
+        }
+    }
     var todayTasks: [TaskProjection] {
         guard let context else { return [] }
         return tasks.filter { PlanningRules.isToday($0.planningState, on: context.planningDay) }.sorted(by: todayOrder)
@@ -345,6 +436,7 @@ final class AppModel {
     }
     private func performStart() async {
         guard store == nil else { await refresh(); return }
+        defer { navigationWorkspaceEstablished = true }
         isLoading = true
         do {
             let configuredGroup = (Bundle.main.object(forInfoDictionaryKey: "MirrorAppGroupIdentifier") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -377,6 +469,7 @@ final class AppModel {
             configuration = config
             if !isUITesting, let cloud, let active = try await cloud.restoreActiveConfiguration() { config = active }
             configuration = config
+            navigationWorkspaceEstablished = true
             let system = try await SystemCompositionRoot.open(configuration: config)
             services = system
             store = await system.store
@@ -541,7 +634,12 @@ final class AppModel {
                     guard let self, self.storeObservationID == identity else { return }
                     Task { @MainActor [weak self] in
                         guard let self, self.storeObservationID == identity else { return }
-                        await self.handleURL(MirrorDeepLink.url(for: route), expectedObservationID: identity)
+                        self.pendingNotificationObservation = identity
+                        if let delivery = self.sceneNavigation.request(.deepLink(route), generation: self.sceneNavigationGeneration),
+                           let scene = self.sceneNavigation.resolve(delivery.target) {
+                            self.pendingNotificationObservation = nil
+                            await self.deliverMainWindowRoute(delivery, in: scene, observationID: identity)
+                        }
                     }
                 }
             } catch {
@@ -710,34 +808,49 @@ final class AppModel {
     func capturePresentation(for ownerSceneID: UUID) -> CapturePresentationRequest? {
         capturePresentationCoordinator.presentation(for: ownerSceneID)
     }
+    func openCaptureWhenReady(owner: CaptureSceneOwner) {
+        guard let target = sceneNavigation.target(for: owner) else { return }
+        if isLoading || context == nil {
+            Task {
+                await start()
+                guard let current = sceneNavigation.targetAfterInitialSetup(target), sceneNavigation.resolve(current) != nil else { return }
+                openCapture(owner: owner)
+            }
+        } else { openCapture(owner: owner) }
+    }
     func openCapture(owner: CaptureSceneOwner, single: Bool = false) {
         guard !workspaceChangeInProgress else {
             feedback = "저장 공간 변경을 마친 뒤 새 입력을 열 수 있어요."
             return
         }
-        guard !isLoading, context != nil else { return }
+        guard !isLoading, context != nil, let navigation = sceneNavigation.target(for: owner) else { return }
         guard capturePresentationCoordinator.open(owner: owner, single: single, contextID: storeObservationID) else {
             feedback = "다른 창에서 입력 중이에요. 그 창에서 입력을 마무리해 주세요."
             return
         }
+        if let request = capturePresentationCoordinator.presentation(for: owner.id) { captureNavigation[request.id] = navigation }
     }
     @discardableResult
     func closeCapture(_ request: CapturePresentationRequest) -> Bool {
         guard capturePresentationCoordinator.close(presentationID: request.id, ownerSceneID: request.ownerSceneID) else { return false }
+        captureNavigation[request.id] = nil
         presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
         return true
     }
     @discardableResult
     func finishCapture(_ request: CapturePresentationRequest) -> Bool {
-        guard capturePresentationCoordinator.finish(presentationID: request.id, ownerSceneID: request.ownerSceneID) else { return false }
+        guard let target = captureNavigation[request.id], let scene = sceneNavigation.resolve(target),
+              capturePresentationCoordinator.finish(presentationID: request.id, ownerSceneID: request.ownerSceneID) else { return false }
+        captureNavigation[request.id] = nil
         presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
-        destination = .today
+        scene.destination = .today
         return true
     }
     func settingsPresentation(for ownerSceneID: UUID) -> SettingsPresentationRequest? {
         settingsPresentationCoordinator.presentation(for: ownerSceneID)
     }
     func openSettings(owner: CaptureSceneOwner) {
+        guard sceneNavigation.target(for: owner) != nil else { return }
         guard settingsPresentationCoordinator.open(owner: owner) else {
             feedback = "다른 창에서 설정을 열고 있어요. 그 창에서 설정을 마무리해 주세요."
             return
@@ -876,7 +989,12 @@ final class AppModel {
     }
 
     func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil,
-                    reviewSession: AppReviewSession? = nil) {
+                    reviewSession: AppReviewSession? = nil, in scene: SceneNavigationState) {
+        guard let navigation = sceneNavigation.target(for: scene) else { return }
+        if let current = picker, current.navigation != navigation, current.navigation.flatMap(sceneNavigation.resolve) != nil {
+            feedback = "다른 창에서 날짜를 고르고 있어요. 그 창에서 선택을 마치거나 닫아 주세요."
+            return
+        }
         guard planPickerDecision == nil, widgetDecision == nil else {
             problem = "이전 날짜 배치의 저장 결과를 먼저 다시 확인해 주세요."
             return
@@ -896,10 +1014,11 @@ final class AppModel {
         }
         picker = PlanPickerRequest(taskIDs: taskIDs, expected: items,
                                    displayedContext: reviewCard == nil ? context : (reviewSession?.context ?? context),
-                                   token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week)
+                                   token: reviewCard?.decisionToken ?? UUID().uuidString, review: decision, week: week, navigation: navigation)
     }
     @discardableResult
     func closePlanPicker(requestID: UUID) -> Bool {
+        defer { pruneCommandNavigation() }
         guard !isSaving, pickerPresentationState.close(requestID: requestID) else { return false }
         if let decision = widgetDecision, decision.request.id == requestID {
             cancelWidgetConfirmation(decision.ownership.envelope)
@@ -924,10 +1043,10 @@ final class AppModel {
         return true
     }
     /// 전송에는 작업 ID를 싣지 않는다. 표시한 원본 버전·날짜는 프로세스 안에 고정한다.
-    func beginCalendarDrag(_ task: TaskProjection, context displayedContext: PlanningContext) -> UUID? {
+    func beginCalendarDrag(_ task: TaskProjection, context displayedContext: PlanningContext, in scene: SceneNavigationState) -> UUID? {
         guard !isSaving, !projectionPending, !isDetailEditing, !showReview, !showCapture, !showSettings,
               picker == nil, confirmation == nil, widgetDecision == nil,
-              let configuration, let context, task.status == .open, task.isProjectionComplete,
+              let navigation = sceneNavigation.target(for: scene), let configuration, let context, task.status == .open, task.isProjectionComplete,
               task.workspaceKey == configuration.workspaceKey, task.workspaceEpoch == configuration.workspaceEpoch,
               PlanningRules.checkContext(displayed: displayedContext, current: context,
                   matchingReceiptExists: false) == .continueValidation else { return nil }
@@ -937,20 +1056,25 @@ final class AppModel {
         let token = UUID()
         let request = PlanPickerRequest(taskIDs: [task.taskID],
             expected: [PlanCommandItem(taskID: task.taskID, expected: ExpectedVersions(task))],
-            displayedContext: displayedContext, token: token.uuidString, review: nil, week: nil)
+            displayedContext: displayedContext, token: token.uuidString, review: nil, week: nil, navigation: navigation)
         calendarDrags[token] = CalendarDrag(request: request, workspaceKey: configuration.workspaceKey,
             workspaceEpoch: configuration.workspaceEpoch, observationID: storeObservationID,
             expiresAt: instant.advanced(by: .seconds(120)))
         return token
     }
-    func takeCalendarDrag(token: UUID) -> PlanPickerRequest? {
+    func takeCalendarDrag(token: UUID, in scene: SceneNavigationState) -> PlanPickerRequest? {
         guard let drag = calendarDrags.removeValue(forKey: token),
               !isSaving, !projectionPending, !isDetailEditing, !showReview, !showCapture, !showSettings,
               picker == nil, confirmation == nil, widgetDecision == nil,
+              let navigation = sceneNavigation.target(for: scene),
+              let origin = drag.request.navigation, sceneNavigation.resolve(origin) != nil,
               let configuration, drag.observationID == storeObservationID,
               drag.workspaceKey == configuration.workspaceKey, drag.workspaceEpoch == configuration.workspaceEpoch,
               drag.expiresAt > ContinuousClock.now else { return nil }
-        return drag.request
+        // 명시적 drop은 받는 창에 표시한다. 원래 카드·버전·날짜·멱등 키와 요청 ID는 유지한다.
+        var request = drag.request
+        request.navigation = navigation
+        return request
     }
 
     func canPostponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext) -> Bool {
@@ -961,10 +1085,11 @@ final class AppModel {
         return task.plan.target != .day(tomorrow)
     }
 
-    func postponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext) async {
+    func postponeToTomorrow(_ task: TaskProjection, context displayedContext: PlanningContext, in scene: SceneNavigationState) async {
         guard task.status == .open, !isSaving, !projectionPending,
               !showCapture, !showSettings, !showReview, !isDetailEditing,
-              picker == nil, confirmation == nil, widgetDecision == nil else { return }
+              picker == nil, confirmation == nil, widgetDecision == nil,
+              let navigation = sceneNavigation.target(for: scene) else { return }
         guard let tomorrow = try? displayedContext.planningDay.addingDays(1) else {
             problem = "내일 날짜를 확인할 수 없어요."
             return
@@ -973,11 +1098,13 @@ final class AppModel {
         let request = PlanPickerRequest(taskIDs: [task.taskID],
                                         expected: [PlanCommandItem(taskID: task.taskID, expected: ExpectedVersions(task))],
                                         displayedContext: displayedContext, token: UUID().uuidString,
-                                        review: nil, week: nil)
+                                        review: nil, week: nil, navigation: navigation)
         await choosePlan(request, target: .day(tomorrow))
     }
 
     func choosePlan(_ request: PlanPickerRequest, target: PlanTarget, fromPicker: Bool = false) async {
+        defer { pruneCommandNavigation() }
+        guard let navigation = request.navigation, sceneNavigation.resolve(navigation) != nil else { return }
         if fromPicker { guard picker?.id == request.id else { return } }
         if request.widgetState != nil {
             _ = await commitWidget(request, target: target)
@@ -989,6 +1116,7 @@ final class AppModel {
         } else { payload = .batchSetPlan(items: request.expected, target: target) }
         let envelope = makeEnvelope(payload, context: request.displayedContext, token: request.token)
         guard let envelope else { return }
+        commandNavigation[envelope.idempotencyKey] = navigation
         if fromPicker {
             if let previous = planPickerDecision {
                 guard previous.ownership.acceptsSubmission(requestID: request.id, envelope: envelope) else {
@@ -1035,6 +1163,7 @@ final class AppModel {
                 currentStore: store, originalConfiguration: decision.configuration, currentConfiguration: configuration) != nil
     }
     func retryPlanPicker(requestID: UUID) async {
+        defer { pruneCommandNavigation() }
         guard !isSaving, var decision = planPickerDecision, decision.request.id == requestID,
               decision.ownership.canRetry(whileProjectionPending: projectionPending, pendingEnvelope: retryEnvelope),
               let store, let configuration,
@@ -1087,25 +1216,32 @@ final class AppModel {
         planPickerDecision = nil
     }
 
-    func decide(_ target: PlanTarget, card: ReviewCard, session: AppReviewSession) async {
-        guard review?.id == session.id else { return }
+    func decide(_ target: PlanTarget, card: ReviewCard, session: AppReviewSession, in scene: SceneNavigationState) async {
+        defer { pruneCommandNavigation() }
+        guard review?.id == session.id, isReviewPresented(in: scene), let navigation = sceneNavigation.target(for: scene) else { return }
         let item = PlanCommandItem(taskID: card.taskID, expected: card.expected)
         let decision = ReviewDecisionContext(cycleID: session.cycleID, sessionID: session.id, cardID: card.id, taskID: card.taskID)
         guard let envelope = makeEnvelope(.setPlan(item: item, target: target, review: decision),
                                           context: session.context, token: card.decisionToken) else { return }
+        commandNavigation[envelope.idempotencyKey] = navigation
         _ = await execute(envelope, success: "\(planLabel(target))로 보냈어요.")
     }
 
-    func beginReview(mode: ReviewMode = .automatic, includeNewInputs: Bool = false, weekly: Bool? = nil) {
+    func beginReview(in scene: SceneNavigationState, mode: ReviewMode = .automatic, includeNewInputs: Bool = false, weekly: Bool? = nil) {
         guard !isDetailEditing else { return }
-        guard let context, let configuration else { return }
-        selectedTaskID = nil
+        guard let navigation = sceneNavigation.target(for: scene), let context, let configuration else { return }
+        if let current = reviewPresentationRequest, current.target != navigation, sceneNavigation.resolve(current.target) != nil {
+            feedback = "다른 창에서 정리 중이에요. 그 창에서 정리를 마치거나 닫아 주세요."
+            return
+        }
+        selectTask(nil, in: scene)
+        let presentation = ScenePresentationRequest(target: navigation)
         if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty,
            weekly == nil || weekly == review.isWeekly {
             refreshUpcomingCards(renewCurrentCard: false)
             refreshReviewCounts()
             persistSession()
-            showReview = true
+            reviewPresentationRequest = presentation
             return
         }
         let cycleID = ReviewCycle.id(workspaceEpoch: configuration.workspaceEpoch, context: context)
@@ -1123,20 +1259,21 @@ final class AppModel {
                                   isWeekly: weekly ?? (weekday == preferences.weeklyWeekday), todayOverride: mode == .manualTodayOverride, cards: cards)
         persistSession()
         reviewSummary = nil
-        showReview = true
+        reviewPresentationRequest = presentation
     }
 
-    func finishReview() async {
-        guard let session = review else { showReview = false; return }
+    func finishReview(in scene: SceneNavigationState) async {
+        guard let presentation = reviewPresentation(in: scene) else { return }
+        guard let session = review else { closeReview(presentation); return }
         let weeklyStart = session.isWeekly ? (try? session.context.planningDay.mondayWeek().startDate) : nil
         let result = await submit(.reviewClose(ReviewClosure(cycleID: session.cycleID, sessionID: session.id,
                                                             weeklyCoverageStartDate: weeklyStart)), success: "오늘은 여기까지 정리했어요.")
-        if result, review?.id == session.id {
+        if result, review?.id == session.id, reviewPresentation(in: scene) == presentation {
             refreshUpcomingCards(renewCurrentCard: false)
             guard let finished = review else { return }
             reviewSummary = "이번 정리에서 오늘에 남긴 일 \(finished.decidedToday)개 · 다른 때로 보낸 일 \(finished.decidedElsewhere)개 · 아직 정하지 않은 일 \(finished.cards.count)개"
-            showReview = false
-            destination = .today
+            closeReview(presentation)
+            selectDestination(.today, in: scene)
         }
     }
     func refreshReviewCard() async {
@@ -1149,6 +1286,13 @@ final class AppModel {
     func undo() async {
         guard let candidate = lastUndo else { return }
         await undo(candidate)
+    }
+    func undo(in scene: SceneNavigationState) async {
+        guard sceneNavigation.target(for: scene) != nil else { return }
+        if isReviewPresented(in: scene) {
+            guard let candidate = currentReviewUndo, let sessionID = review?.id else { return }
+            await undoReview(operationID: candidate.id, sessionID: sessionID)
+        } else { await undo() }
     }
     func undoReview(operationID: String, sessionID: String) async {
         guard showReview, review?.id == sessionID,
@@ -1165,16 +1309,25 @@ final class AppModel {
         _ = await submit(.undo(operationID: candidate.id, expected: candidate.expected), success: "직전 변경을 되돌렸어요.")
     }
 
-    func dismissDeadlineConfirmation(_ displayed: CommandEnvelope) {
+    private func ownsConfirmationNavigation(_ displayed: CommandEnvelope, expectedNavigation: SceneNavigationTarget?) -> Bool {
+        guard let expectedNavigation else { return true }
+        return commandNavigation[displayed.idempotencyKey] == expectedNavigation && sceneNavigation.resolve(expectedNavigation) != nil
+    }
+    func dismissDeadlineConfirmation(_ displayed: CommandEnvelope, expectedNavigation: SceneNavigationTarget? = nil) {
+        guard ownsConfirmationNavigation(displayed, expectedNavigation: expectedNavigation) else { return }
         deadlineConfirmationState.dismiss(displayed)
     }
-    func cancelDeadlineConfirmation(_ displayed: CommandEnvelope) {
+    func cancelDeadlineConfirmation(_ displayed: CommandEnvelope, expectedNavigation: SceneNavigationTarget? = nil) {
+        guard ownsConfirmationNavigation(displayed, expectedNavigation: expectedNavigation) else { return }
         deadlineConfirmationState.take(displayed)
         cancelWidgetConfirmation(displayed)
         cancelPlanPickerConfirmation(displayed)
+        pruneCommandNavigation()
     }
-    func confirmAfterDeadline(_ displayed: CommandEnvelope) async {
-        guard !isSaving, let envelope = deadlineConfirmationState.take(displayed) else { return }
+    func confirmAfterDeadline(_ displayed: CommandEnvelope, expectedNavigation: SceneNavigationTarget) async {
+        defer { pruneCommandNavigation() }
+        guard !isSaving, ownsConfirmationNavigation(displayed, expectedNavigation: expectedNavigation),
+              let envelope = deadlineConfirmationState.take(displayed) else { return }
         if envelope.source == .widget {
             guard let decision = widgetDecision, decision.awaitingConfirmation, ownsWidgetDecision(decision.ownership),
                   let configuration,
@@ -1378,7 +1531,20 @@ final class AppModel {
         }
     }
 
-    func retry() async {
+    func retry(in scene: SceneNavigationState? = nil) async {
+        defer { pruneCommandNavigation() }
+        if let scene {
+            guard let target = sceneNavigation.target(for: scene) else { return }
+            let token = planPickerDecision?.ownership.envelope.idempotencyKey
+                ?? widgetDecision?.ownership.envelope.idempotencyKey ?? retryEnvelope?.idempotencyKey
+            if let token {
+                if let owner = commandNavigation[token], owner != target, sceneNavigation.resolve(owner) != nil {
+                    problem = "다른 창에 저장 결과가 남아 있어요. 그 창에서 다시 확인해 주세요."
+                    return
+                }
+                commandNavigation[token] = target
+            }
+        }
         if let decision = planPickerDecision,
            decision.ownership.canRetry(whileProjectionPending: projectionPending, pendingEnvelope: retryEnvelope) {
             await retryPlanPicker(requestID: decision.request.id)
@@ -1419,6 +1585,13 @@ final class AppModel {
         guard let store, storeObservationID == observationID else { return false }
         return store === submittedStore
     }
+    private func pruneCommandNavigation() {
+        guard !isSaving else { return }
+        let retained = Set([retryEnvelope?.idempotencyKey, confirmation?.idempotencyKey,
+                            widgetDecision?.ownership.envelope.idempotencyKey,
+                            planPickerDecision?.ownership.envelope.idempotencyKey].compactMap { $0 })
+        commandNavigation = commandNavigation.filter { retained.contains($0.key) }
+    }
 
     @discardableResult
     private func execute(_ envelope: CommandEnvelope, success: String,
@@ -1433,7 +1606,7 @@ final class AppModel {
         // 시트 닫기는 허용하되, 계정 격리나 저장소 재연결 뒤 옛 응답으로 상태를 되살리지 않는다.
         let observationID = storeObservationID
         isSaving = true; problem = nil
-        defer { finishSaving() }
+        defer { finishSaving(); pruneCommandNavigation() }
         if configuration?.cloudSync != nil, let cloud, !isUITesting {
             let valid = await cloud.validateLocalIdentity()
             guard isCurrentCommandStore(store, observationID: observationID) else { return false }
@@ -1596,7 +1769,13 @@ final class AppModel {
             feedbackReviewSessionID = feedbackSessionID
             retryEnvelope = envelope
             return false
-        case .requiresConfirmation: confirmation = envelope; return false
+        case .requiresConfirmation:
+            confirmation = envelope
+            if commandNavigation[envelope.idempotencyKey].flatMap(sceneNavigation.resolve) == nil {
+                retryEnvelope = envelope
+                problem = "닫힌 창의 날짜 배치에 확인이 필요해요. 다시 확인을 눌러 이어갈 수 있어요."
+            }
+            return false
         case .staleContext, .staleSnapshot, .alreadyDecided:
             problem = result.safeUserMessage
             retryEnvelope = nil
@@ -1880,11 +2059,18 @@ final class AppModel {
             return false
         }
     }
-    func handleURL(_ url: URL, expectedObservationID: UUID? = nil, captureOwner: CaptureSceneOwner? = nil) async {
+    func handleURL(_ url: URL, in scene: SceneNavigationState, expectedObservationID: UUID? = nil) async {
+        guard let originalTarget = sceneNavigation.target(for: scene) else { return }
+        var target = originalTarget
+        var identity = expectedObservationID
         do {
             if store == nil || isLoading { await start() }
+            guard let current = sceneNavigation.targetAfterInitialSetup(originalTarget), sceneNavigation.resolve(current) === scene else { return }
+            target = current
+            if let identity, identity != storeObservationID { return }
+            identity = storeObservationID
             guard await refresh() else { return }
-            if let expectedObservationID, expectedObservationID != storeObservationID { return }
+            guard identity == storeObservationID, sceneNavigation.resolve(target) === scene else { return }
             let route = try MirrorDeepLink.parse(url)
             let displayedReview = review
             var trustedCards: [UUID: UUID] = Dictionary(uniqueKeysWithValues: (displayedReview?.cards ?? []).compactMap { card in
@@ -1894,17 +2080,19 @@ final class AppModel {
             if case let .schedule(taskID, sessionID, cardID) = route, let services,
                let sessionID, let cardID {
                 let widget = await services.widget
+                guard identity == storeObservationID, sceneNavigation.resolve(target) === scene else { return }
                 let state = try await widget.snapshot(at: now)
+                guard identity == storeObservationID, sceneNavigation.resolve(target) === scene else { return }
                 if state.sessionID == sessionID, let card = state.card,
                    card.cardID == cardID, card.taskID == taskID {
                     trustedCards[cardID] = taskID
                     widgetState = state
                 }
             }
-            if let expectedObservationID, expectedObservationID != storeObservationID { return }
+            guard identity == storeObservationID, sceneNavigation.resolve(target) === scene else { return }
             let validated = try MirrorDeepLink.validate(route, ownedTaskIDs: Set(tasks.map(\.taskID)), trustedCards: trustedCards)
             switch validated {
-            case let .task(id) where isDetailEditing && selectedTaskID != id:
+            case let .task(id) where isDetailEditing(in: scene) && scene.selectedTaskID != id:
                 feedback = "편집 중인 내용을 먼저 저장하거나 편집을 취소한 뒤, 알림이나 링크를 다시 열어 주세요."
                 detailEditingFeedback = feedback
                 return
@@ -1916,49 +2104,54 @@ final class AppModel {
             }
             switch validated {
             case .capture:
-                guard let captureOwner else {
-                    feedback = "이 창에서 일단 넣기를 눌러 입력을 열어 주세요."
-                    return
-                }
-                openCapture(owner: captureOwner, single: true)
-            case .today: destination = .today
-            case let .review(weekly): beginReview(mode: .manualResume, weekly: weekly)
-            case let .task(id): selectedTaskID = id
+                openCapture(owner: scene.owner, single: true)
+            case .today: selectDestination(.today, in: scene)
+            case let .review(weekly): beginReview(in: scene, mode: .manualResume, weekly: weekly)
+            case let .task(id): selectTask(id, in: scene)
             case let .schedule(id, _, cardID):
                 guard planPickerDecision == nil else {
                     problem = "이전 날짜 배치의 저장 결과를 먼저 다시 확인해 주세요."
                     return
                 }
+                if let picker, picker.navigation != target, picker.navigation.flatMap(sceneNavigation.resolve) != nil {
+                    feedback = "다른 창에서 날짜를 고르고 있어요. 그 창에서 선택을 마치거나 닫아 주세요."
+                    return
+                }
                 if let widgetState, let card = widgetState.card {
-                    selectedTaskID = nil
+                    selectTask(nil, in: scene)
                     picker = PlanPickerRequest(taskIDs: [id], expected: [PlanCommandItem(taskID: id, expected: card.expected)],
                                                displayedContext: card.context, token: card.decisionToken,
                                                review: ReviewDecisionContext(cycleID: widgetState.cycleID, sessionID: widgetState.sessionID.uuidString,
-                                                                             cardID: card.cardID.uuidString, taskID: id), week: nil,
+                                                                             cardID: card.cardID.uuidString, taskID: id), week: nil, navigation: target,
                                                widgetState: widgetState)
                     return
                 }
                 let card = displayedReview?.cards.first { UUID(uuidString: $0.id) == cardID && $0.taskID == id }
-                makePicker(taskIDs: [id], reviewCard: card, reviewSession: card == nil ? nil : displayedReview)
+                makePicker(taskIDs: [id], reviewCard: card, reviewSession: card == nil ? nil : displayedReview, in: scene)
             }
-        } catch { problem = "이 공간의 작업을 찾을 수 없거나 링크가 오래되었어요. 데이터는 바뀌지 않았어요." }
+        } catch {
+            guard sceneNavigation.resolve(target) === scene, identity == storeObservationID else { return }
+            problem = "이 공간의 작업을 찾을 수 없거나 링크가 오래되었어요. 데이터는 바뀌지 않았어요."
+        }
     }
-    func handleSpotlight(_ activity: NSUserActivity) async {
+    func handleSpotlight(_ activity: NSUserActivity, in scene: SceneNavigationState) async {
+        guard let originalTarget = sceneNavigation.target(for: scene) else { return }
         if store == nil || isLoading { await start() }
+        guard let target = sceneNavigation.targetAfterInitialSetup(originalTarget), sceneNavigation.resolve(target) === scene else { return }
         let identity = storeObservationID
         guard await refresh() else { return }
-        guard storeObservationID == identity, let services else { return }
+        guard storeObservationID == identity, sceneNavigation.resolve(target) === scene, let services else { return }
         do {
             let currentPreferences = try await services.preferences()
-            guard storeObservationID == identity else { return }
+            guard storeObservationID == identity, sceneNavigation.resolve(target) === scene else { return }
             guard let route = SpotlightService.navigationRoute(for: activity, tasks: tasks,
                 enabled: currentPreferences.spotlightEnabled, hideTitles: currentPreferences.hideExternalTitles) else {
                 problem = "검색 노출 설정이나 현재 작업을 확인해 주세요. 데이터는 바뀌지 않았어요."
                 return
             }
-            await handleURL(MirrorDeepLink.url(for: route), expectedObservationID: identity)
+            await handleURL(MirrorDeepLink.url(for: route), in: scene, expectedObservationID: identity)
         } catch {
-            guard storeObservationID == identity else { return }
+            guard storeObservationID == identity, sceneNavigation.resolve(target) === scene else { return }
             problem = "현재 검색 노출 동의를 확인하지 못했어요. 데이터는 바뀌지 않았어요."
         }
     }
@@ -2006,6 +2199,7 @@ final class AppModel {
         }
     }
     private func commitWidget(_ request: PlanPickerRequest, target: PlanTarget, acknowledgment: DeadlineAcknowledgment? = nil) async -> Bool {
+        defer { pruneCommandNavigation() }
         guard let services, let store, let state = request.widgetState, let card = state.card, !isSaving,
               let configuration else { return false }
         let observationID = storeObservationID
@@ -2015,6 +2209,10 @@ final class AppModel {
                                        context: card.context, workspaceEpoch: configuration.workspaceEpoch,
                                        payload: .setPlan(item: PlanCommandItem(taskID: card.taskID, expected: card.expected, acknowledgment: acknowledgment),
                                                          target: target, review: request.review))
+        if commandNavigation[envelope.idempotencyKey].flatMap(sceneNavigation.resolve) == nil,
+           let navigation = request.navigation, sceneNavigation.resolve(navigation) != nil {
+            commandNavigation[envelope.idempotencyKey] = navigation
+        }
         if let previous = widgetDecision {
             guard ownsWidgetDecision(previous.ownership) else { return false }
             if previous.request.id == request.id, previous.ownership.envelope.payload == envelope.payload {
@@ -2082,7 +2280,7 @@ final class AppModel {
     }
     func finishWidgetPlan(_ request: PlanPickerRequest, resume: Bool) {
         guard completedWidgetPickerID == request.id, picker?.id == request.id, !isSaving, !projectionPending else { return }
-        widgetNextDestination = (request.id, resume, storeObservationID)
+        widgetNextDestination = (request.id, resume, storeObservationID, request.navigation)
         completedWidgetPickerID = nil
         closePlanPicker(requestID: request.id)
     }
@@ -2094,10 +2292,10 @@ final class AppModel {
         if decision.clearsCompletion { completedWidgetPickerID = nil }
         guard decision.consumesNextDestination, let next = widgetNextDestination else { return }
         widgetNextDestination = nil
-        guard decision.continuesNavigation else { return }
-        selectedTaskID = nil
-        if next.resume { beginReview(mode: .manualResume) }
-        else { destination = .today }
+        guard decision.continuesNavigation, let target = next.navigation, let scene = sceneNavigation.resolve(target) else { return }
+        selectTask(nil, in: scene)
+        if next.resume { beginReview(in: scene, mode: .manualResume) }
+        else { selectDestination(.today, in: scene) }
     }
     var cloudConnected: Bool { configuration?.cloudSync != nil }
     private func resetCloudService(localConfiguration: StoreConfiguration) {
@@ -2260,8 +2458,9 @@ final class AppModel {
         pendingImportFeedback = nil
         clearCalendarDisplays()
         detailEditingOwners.removeAll()
-        selectedTaskIDBacking = nil; selectedTaskIDs = []
-        calendars = []; showReview = false; projectionPending = false
+        selectedTaskIDs = []
+        calendars = []; reviewPresentationRequest = nil; projectionPending = false
+        pendingNotificationObservation = nil
         detailEditingFeedback = nil
         feedback = nil; problem = nil
         defaults.removeObject(forKey: sessionKey)
