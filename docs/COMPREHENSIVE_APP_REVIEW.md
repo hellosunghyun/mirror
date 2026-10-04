@@ -292,3 +292,7 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 ### 보관함 선택 버튼의 실제 높이
 
 64e Batch Phone run37234885727/a1의 Two 사례는 실제 세 번 저장한 뒤 selectionStarted에서 librarySelectToggle 높이43.66666666666666pt를 관측해 기존44pt assertion에 실패했다. 이 버튼은 toolbar가 아니라 List 첫 Section의 MirrorActionGroup 안에 있고 label과 버튼의 최소44pt가 이미 적용돼 있었다. 압축·픽셀 정렬의 구체적 원인은 확정하지 않는다. iOS에서 해당 label의 contentShape와 버튼 외곽 최소높이를48pt로 맞춰 더 넓은 터치 영역을 확보하고, 폭44pt·Mac 최소44pt·borderless style·문구·선택 동작을 유지한다. 원래 테스트의 실제44pt·typed owner·고유창·전체포함·hittable/enabled·15초/12회 기준은 바꾸지 않는다. 같은 실행의 Twenty는 다섯 번 저장한 뒤 여섯 번째 입력 전 빈 값 대기에서 실패했으며, 원래 값이 관측되지 않아 이 높이 문제와 별개로 남긴다. 최소높이 변경의 실제 수용은 후속 Actions 측정으로 확인한다.
+
+### 관측된 보조 문구의 읽기 대비
+
+64e Mac 원본 PNG07/12의 독립 픽셀·ICC 확인에서 상세 상태의 미완료/완료 문구 표시 대비 상한은2.916/2.772, 계획 제목2.916, 변경 이력 제목2.954, Today 빈 설명3.879였고 ICC 대조 차이는0.00003 미만이었다. 이 수치는 합성 PNG의 실제 표시 픽셀에 대한 값이며, 글꼴 coverage나 안티앨리어싱 전 색을 역추정한 WCAG 판정과 구별한다. 직접 관측한 상세 상태 Label·계획 Label·변경 이력 Text·Today 빈 설명 Text 네 곳만 기존 supportingText로 통일한다. 상위 컨테이너·장식 아이콘·TaskRow 공용색·비활성 스타일·문구·글꼴·상태·동작은 유지한다. 숫자를 복제하는 테스트는 추가하지 않으며 실제 표시와 접근성 수용은 후속 Actions와 새 PNG로 확인한다.

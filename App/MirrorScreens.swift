@@ -161,7 +161,7 @@ struct MirrorTodayView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("today.empty.title")
                         Text(model.pendingTasks.isEmpty ? "직접 날짜를 정한 일만 여기에 보여요." : "정하지 않은 일은 보관함에 있어요.")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                            .font(.subheadline).foregroundStyle(MirrorPalette.supportingText)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("today.empty.description")
                         if model.tasks.isEmpty {
@@ -1821,7 +1821,7 @@ struct MirrorTaskDetail: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     Label(statusLabel, systemImage: statusSymbol)
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        .font(.caption.weight(.medium)).foregroundStyle(MirrorPalette.supportingText)
                     if editing {
                         VStack(alignment: .leading, spacing: 12) {
                             TextField("제목", text: $title, prompt: Text("제목").foregroundColor(MirrorPalette.inputPrompt), axis: .vertical)
@@ -1875,7 +1875,7 @@ struct MirrorTaskDetail: View {
                     }
                     if !editing {
                         VStack(alignment: .leading, spacing: 10) {
-                            Label("계획", systemImage: "calendar").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            Label("계획", systemImage: "calendar").font(.caption.weight(.semibold)).foregroundStyle(MirrorPalette.supportingText)
                             Text(planLabel(task.plan.target)).font(.body).accessibilityIdentifier("detail.plan")
                             if task.status == .open {
                                 MirrorActionGroup {
@@ -1915,6 +1915,7 @@ struct MirrorTaskDetail: View {
                                     Image(systemName: showHistory ? "chevron.down" : "chevron.right")
                                         .font(.caption.weight(.semibold)).accessibilityHidden(true)
                                     Text("변경 이력과 관리")
+                                        .foregroundStyle(MirrorPalette.supportingText)
                                     Spacer(minLength: 0)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
