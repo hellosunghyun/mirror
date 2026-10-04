@@ -517,8 +517,7 @@ struct MirrorCaptureView: View {
             .onChange(of: note) { _, value in if !value.isEmpty { pendingTitleFocus = false; showSavedFeedback = false } }
             .onChange(of: sourceURL) { _, value in if !value.isEmpty { pendingTitleFocus = false; showSavedFeedback = false } }
             .onChange(of: initialPlan) { _, value in
-                if value != nil { pendingTitleFocus = false }
-                showSavedFeedback = false
+                if value != nil { pendingTitleFocus = false; showSavedFeedback = false }
             }
             .onChange(of: more) { _, expanded in
                 if !expanded, focusedField == .note || focusedField == .url { focusedField = .title }
@@ -621,7 +620,7 @@ struct MirrorCaptureView: View {
                 }.accessibilityIdentifier("capture.planOther")
             }.buttonStyle(.bordered).controlSize(.regular)
             if initialPlan != nil {
-                Button("날짜 정하지 않기") { initialPlan = nil; planContext = nil }
+                Button("날짜 정하지 않기") { showSavedFeedback = false; initialPlan = nil; planContext = nil }
                     .frame(minHeight: 44).accessibilityIdentifier("capture.planClear")
             }
         }
