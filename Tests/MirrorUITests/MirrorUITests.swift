@@ -668,10 +668,10 @@ final class MirrorUITests: XCTestCase {
         XCTAssertEqual(previousPlanUndo.count, 1, "이 사례의 이전 계획 변경은 오늘 배치 하나다.")
         let previousPlanUndoID = previousPlanUndo.firstMatch.identifier
         let foldDeadline = try revealHistoryTarget(element("detail.history", in: app, preferButtons: true), in: historyScroll,
-                                                  app: app, scrollUpWhenMissing: true)
+                                                  app: app, scrollTowardStart: true)
         try activate("detail.history", in: app, timeout: max(0, foldDeadline.timeIntervalSinceNow))
         let postponeDeadline = try revealHistoryTarget(app.buttons.matching(identifier: "detail.postponeTomorrow").firstMatch,
-                                                      in: historyScroll, app: app, scrollUpWhenMissing: true)
+                                                      in: historyScroll, app: app, scrollTowardStart: true)
         XCTAssertTrue(try requireElement("detail.postponeTomorrow", in: app, timeout: max(0, postponeDeadline.timeIntervalSinceNow), preferButtons: true).isHittable,
                       "내일로 미루기는 상세에서 바로 누를 수 있어야 한다.")
         try activate("detail.postponeTomorrow", in: app, timeout: max(0, postponeDeadline.timeIntervalSinceNow))
@@ -1858,7 +1858,7 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func revealHistoryTarget(_ target: XCUIElement, in surface: XCUIElement, app: XCUIApplication,
-                                     scrollUpWhenMissing: Bool = false,
+                                     scrollTowardStart: Bool = false,
                                      deadline: Date = Date().addingTimeInterval(15),
                                      file: StaticString = #filePath, line: UInt = #line) throws -> Date {
         // 원래 존재 대기의 15초 안에서 같은 상세만 실제로 스크롤한다. 호출자의 wait도 남은 예산을 쓴다.
@@ -1878,7 +1878,9 @@ final class MirrorUITests: XCTestCase {
                   viewport.width > 0, viewport.height > 0 else {
                 try failHistoryNavigation("이력의 기존 상세 스크롤 소유자가 사라지거나 표시되지 않는다", in: app, file: file, line: line)
             }
-            var scrollUp = scrollUpWhenMissing
+            // 이미 도달한 이력 Undo 위의 접기 버튼과 그 위의 빠른 미루기는 상단 방향으로 찾는다.
+            // 대상의 AX frame이 남아 있어도 이 알려진 순서를 반대 방향으로 덮어쓰지 않는다.
+            var scrollUp = scrollTowardStart
             if target.exists {
                 let frame = target.frame
                 guard surface.descendants(matching: .any).matching(identifier: target.identifier).firstMatch.exists else {
@@ -1899,7 +1901,7 @@ final class MirrorUITests: XCTestCase {
                     RunLoop.current.run(until: min(Date().addingTimeInterval(0.1), deadline))
                     continue
                 }
-                if validFrame { scrollUp = frame.minY < viewport.minY }
+                if validFrame, !scrollTowardStart { scrollUp = frame.minY < viewport.minY }
             }
             guard scrolls < 8 else {
                 try failHistoryNavigation("기존 8회 실제 스크롤 안에 이력 대상에 도달하지 못했다", in: app, file: file, line: line)

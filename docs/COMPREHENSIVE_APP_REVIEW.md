@@ -86,7 +86,9 @@ Native 검사는 같은 동기 구간의 count·value 중복 조회와 스크롤
 
 [Mac 보존 결과 진단](https://github.com/hellosunghyun/mirror/actions/runs/37203073446)은 출처·UI bundle digest·SDK 27 공개 export 옵션을 검증했으나 diagnostics export는 종료 1, attachments export는 종료 64로 실패했다. 형식별 개수는 만들어지지 않아 첨부가 없다고 판단할 수 없다. 원인 메시지와 실제 stack이 없어 SDK 옵션 오류나 bundle 손상을 단정하지 않는다.
 
-`403d9d8`에서는 [SwiftPM](https://github.com/hellosunghyun/mirror/actions/runs/37205178921/job/111445669518) 98+101+54=253개가 통과했고 iPhone·iPad 앱·확장·단위·통합 단계도 성공했다. 설정 소유권과 입력 제출 보호가 포함된 소스의 결과다. 이후의 메뉴 막대 복구·첫 빈 화면 강조·Native AX 조회 재사용은 아직 이 결과에 포함되지 않는다. 실제 Native UI와 배포는 별도 검증 중이다.
+`403d9d8`에서는 [SwiftPM](https://github.com/hellosunghyun/mirror/actions/runs/37205178921/job/111445669518) 98+101+54=253개가 통과했고 iPhone·iPad 앱·확장·단위·통합 단계도 성공했다. 설정 소유권과 입력 제출 보호가 포함된 소스의 결과다. 이후의 메뉴 막대 복구·첫 빈 화면 강조·Native AX 조회 재사용은 아직 이 결과에 포함되지 않는다. 같은 소스의 iPhone·iPad native 단위는 각각 250개가 통과했다. Phone UI는 4개 통과·이력 접기 1개 실패·1개 미종료, iPad는 4개 통과·다음 사례 미종료로 전체 시간 제한에 도달했다.
+
+Phone 이력 실패의 실제 제스처는 위쪽 접기 버튼을 찾으며 아래 콘텐츠 쪽으로 7회 이동했다. 이미 도달한 이전 계획 Undo보다 위의 접기 버튼과 그 위의 빠른 미루기에 한해 탐색 방향을 상단으로 고정한다. 기본 기하 기반 탐색, 실제 스크롤 소유·버튼 중앙·hittable·enabled 검사와 15초·8회 제한은 유지한다. 원격 재검증 전에는 UI 실패 해소로 기록하지 않는다.
 
 같은 소스의 Dynamic Type 회귀는 통과했지만 실제 SDK help 계약은 다시 실패했다. 종료0·stdout0/stderr1,776바이트이며 기존 범위 안의 고정 token 관측은 0개다. 후속 parser는 제목이 열0에 있는 유효한 형식도 지원하고 제목 개수·들여쓰기·전체 고정 token을 별도 기록한다. 실제 help가 그 형식이라는 증거는 아직 없으며, 전체 token 존재를 지원 계약으로 사용하지 않는다.
 
