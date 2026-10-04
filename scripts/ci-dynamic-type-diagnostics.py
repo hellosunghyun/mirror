@@ -406,6 +406,92 @@ def observations(log, mode, terminal):
     return {'maximumProbesVerified': True, 'auditIssueTypes': issues, 'auditOutcome': boundary}
 
 
+def failed_stdout_observations(log, mode):
+    """미완료 stdout의 고정 관측만 읽는다. typed 완료·통과나 누락된 boundary를 추론하지 않는다."""
+    require(mode in MODES and len(log.encode('utf-8')) <= A.MAX_LOG, 'invalidFailureObservation')
+    started, terminal, probes, issues, boundary = False, None, {}, [], None
+    event = re.compile(r"Test Case '-\[" + re.escape(OWNER) + ' ' + CASE
+                       + r"\]' (started|passed|failed)(?: \([0-9]+(?:\.[0-9]+)? seconds\))?\.")
+    swift_sizes = ('xSmall', 'small', 'medium', 'large', 'xLarge', 'xxLarge', 'xxxLarge',
+                   'accessibility1', 'accessibility2', 'accessibility3', 'accessibility4', 'accessibility5')
+    ui_sizes = ('extraSmall', 'small', 'medium', 'large', 'extraLarge', 'extraExtraLarge', 'extraExtraExtraLarge',
+                'accessibilityMedium', 'accessibilityLarge', 'accessibilityExtraLarge',
+                'accessibilityExtraExtraLarge', 'accessibilityExtraExtraExtraLarge', 'unspecified')
+    for line in log.splitlines():
+        if re.search(r'\bTest\s+Case\b', line):
+            found = event.fullmatch(line)
+            require(found is not None, 'invalidFailureObservation')
+            if found[1] == 'started':
+                require(not started and line.endswith("' started."), 'invalidFailureObservation')
+                started = True
+            else:
+                require(started and terminal is None, 'invalidFailureObservation')
+                terminal = found[1]
+        is_boundary = A.AUDIT_BOUNDARY_MARKER in line
+        if not is_boundary and 'UI dynamic type ' not in line:
+            continue
+        require(started and terminal is None and len(line.encode('utf-8')) <= 1024
+                and line.startswith((PROBE, AUDIT, A.AUDIT_BOUNDARY_MARKER)), 'invalidFailureObservation')
+        marker = A.AUDIT_BOUNDARY_MARKER if is_boundary else PROBE if line.startswith(PROBE) else AUDIT
+        value = A.strict_json(line[len(marker):])
+        require(isinstance(value, dict) and type(value.get('schemaVersion')) is int
+                and value['schemaVersion'] == 1, 'invalidFailureObservation')
+        if is_boundary:
+            require(value in ({'schemaVersion': 1, 'case': 'captureValidation', 'auditSequence': 1, 'outcome': outcome}
+                             for outcome in ('returned', 'threw')) and type(value['auditSequence']) is int
+                    and 'capture' in probes and boundary is None, 'invalidFailureObservation')
+            boundary = value['outcome']
+        elif marker == PROBE:
+            require(set(value) == {'schemaVersion', 'requestedMode', 'actualMode', 'scope', 'swiftUI', 'uiKit', 'uiKitSource'}
+                    and value['requestedMode'] in MODES and value['actualMode'] in MODES
+                    and value['scope'] in ('root', 'capture') and value['uiKitSource'] == 'appSystem'
+                    and value['swiftUI'] in swift_sizes and value['uiKit'] in ui_sizes
+                    and value['scope'] not in probes and boundary is None and not issues
+                    and (value['scope'] == 'root' or 'root' in probes), 'invalidFailureObservation')
+            probes[value['scope']] = {
+                'requestedMode': value['requestedMode'], 'actualMode': value['actualMode'],
+                'swiftUI': value['swiftUI'], 'uiKit': value['uiKit'],
+                'modeMismatch': value['requestedMode'] != mode or value['actualMode'] != mode,
+                'maximumMismatch': value['swiftUI'] != 'accessibility5'
+                    or value['uiKit'] != 'accessibilityExtraExtraExtraLarge',
+            }
+        else:
+            require(set(value) == {'schemaVersion', 'requestedMode', 'auditSequence', 'issueSequence', 'types', 'ignored'}
+                    and value['requestedMode'] == mode and type(value['auditSequence']) is int and value['auditSequence'] == 1
+                    and type(value['issueSequence']) is int and value['issueSequence'] == len(issues) + 1
+                    and value['ignored'] is False and isinstance(value['types'], list) and 0 < len(value['types']) <= 4
+                    and all(item in ('dynamicType', 'contrast', 'textClipped', 'other') for item in value['types'])
+                    and len(set(value['types'])) == len(value['types']) and len(issues) < 64
+                    and 'capture' in probes and boundary is None, 'invalidFailureObservation')
+            issues.append(value['types'])
+    return {'caseStarted': started, 'caseTerminal': terminal,
+            'probes': {scope: {'status': 'observed', **probes[scope]} if scope in probes
+                       else {'status': 'unobserved'} for scope in ('root', 'capture')},
+            'auditIssueTypes': issues, 'auditBoundary': boundary}
+
+
+def failed_native_observations(mode, expected, receipt):
+    # 이 보조 관측의 오류는 원래 nativeTestFailed/timeout을 덮지 않는다.
+    result = {'scope': 'diagnosticOnly', 'evidence': 'stdoutOnly', 'status': 'unavailable',
+              'stdoutBytes': None, 'stderrBytes': None}
+    stage = 'receiptVerification'
+    try:
+        require(A.verify_receipt(BUILD, expected) == receipt, 'changedFailureReceipt')
+        stage = 'streamBounds'
+        for stream in ('stdout', 'stderr'):
+            path = DIRECTORY / (mode + '.' + stream)
+            require(path.is_file() and not path.is_symlink() and 0 <= path.stat().st_size <= A.MAX_LOG,
+                    'invalidFailureStream')
+            result[stream + 'Bytes'] = path.stat().st_size
+        stage = 'stdoutRead'
+        log = output(mode)
+        stage = 'stdoutParse'
+        result.update(failed_stdout_observations(log, mode), status='observed')
+    except Exception:
+        result.update(status='rejected' if stage == 'stdoutParse' else 'unavailable', failureStage=stage)
+    return result
+
+
 def execute(action, mode, expected, report):
     if action == 'cleanup':
         for path in DIRECTORY.iterdir():
@@ -498,6 +584,8 @@ def execute(action, mode, expected, report):
                        'MIRROR_UI_DYNAMIC_TYPE_FIXTURE=' + mode, 'CODE_SIGNING_ALLOWED=NO', 'test-without-building'], mode, 420)
         A.write_json(DIRECTORY / (mode + '-exit.json'), {'nativeExitCode': code, 'timedOut': code is None})
         report.update(nativeExitCode=code, timedOut=code is None)
+        if code != 0:
+            report['failureObservation'] = failed_native_observations(mode, expected, saved['receipt'])
         require(code == 0, 'nativeTestFailed')
     else:
         status = A.read_json(DIRECTORY / (mode + '-exit.json'))

@@ -642,6 +642,124 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             with self.subTest(malformed=malformed), self.assertRaises((helper.A.AdaptiveError, ValueError)):
                 helper.observations('\n'.join(bad), 'system', 'failed')
 
+    def test_failed_stdout_retains_partial_owned_observations_without_inventing_completion(self):
+        lines = observed_log(failed=True).splitlines()
+        for length in range(len(lines) + 1):
+            with self.subTest(length=length):
+                value = helper.failed_stdout_observations('\n'.join(lines[:length]), 'system')
+                self.assertEqual(value['caseStarted'], length >= 1)
+                self.assertEqual(value['caseTerminal'], 'failed' if length == len(lines) else None)
+                self.assertEqual(value['probes']['root']['status'], 'observed' if length >= 2 else 'unobserved')
+                self.assertEqual(value['probes']['capture']['status'], 'observed' if length >= 3 else 'unobserved')
+                self.assertEqual(value['auditIssueTypes'], [['dynamicType']] if length >= 4 else [])
+                self.assertEqual(value['auditBoundary'], 'threw' if length >= 5 else None)
+                self.assertNotIn('maximumProbesVerified', value)
+                self.assertNotIn('caseResult', value)
+        # stdout에 passed가 있어도 xcresult typed 완료·native 성공을 대신하지 않는다.
+        value = helper.failed_stdout_observations(observed_log(), 'system')
+        self.assertEqual(value['caseTerminal'], 'passed')
+        self.assertNotIn('caseResult', value)
+
+    def test_failed_stdout_reports_fixed_probe_mismatches_and_never_exposes_sdk_lines(self):
+        lines = [event('started'), helper.PROBE + json.dumps(probe(
+            'root', actualMode='pinned', swiftUI='large', uiKit='large')), PRIVATE]
+        value = helper.failed_stdout_observations('\n'.join(lines), 'system')
+        self.assertTrue(value['probes']['root']['modeMismatch'])
+        self.assertTrue(value['probes']['root']['maximumMismatch'])
+        self.assertEqual(value['probes']['capture'], {'status': 'unobserved'})
+        self.assertNotIn(PRIVATE, json.dumps(value))
+        for changes in ({'actualMode': 'pinned'}, {'requestedMode': 'pinned'}, {'swiftUI': 'large'}, {'uiKit': 'large'}):
+            lines[1] = helper.PROBE + json.dumps(probe('root', **changes))
+            value = helper.failed_stdout_observations('\n'.join(lines), 'system')
+            self.assertEqual(value['probes']['root']['modeMismatch'], bool(set(changes) & {'actualMode', 'requestedMode'}))
+            self.assertEqual(value['probes']['root']['maximumMismatch'], bool(set(changes) & {'swiftUI', 'uiKit'}))
+
+    def test_failed_stdout_rejects_foreign_cases_private_fields_and_invalid_order(self):
+        log = observed_log(failed=True)
+        lines = log.splitlines()
+        invalid = [log.replace(helper.OWNER, 'Foreign.Owner'), log.replace(helper.CASE, 'testForeign'),
+                   '\n'.join(lines[1:]), log + '\n' + lines[1], '\n'.join(lines[:2] + lines[1:]),
+                   '\n'.join((lines[0], lines[2], lines[1])), log + '\n' + event('started'),
+                   log.replace('Test Case ', 'Test  Case '), log.replace(helper.PROBE, 'SDK said ' + helper.PROBE)]
+        for changes in ({'scope': 'review'}, {'actualMode': PRIVATE}, {'swiftUI': PRIVATE}, {'uiKit': PRIVATE},
+                        {'uiKitSource': 'viewTrait'}, {'schemaVersion': True}, {PRIVATE: PRIVATE}):
+            invalid.append('\n'.join([lines[0], helper.PROBE + json.dumps(probe('root', **changes))]))
+        for malformed in ('{', '[]', '{"schemaVersion":1,"schemaVersion":1}', 'NaN'):
+            invalid.append('\n'.join([lines[0], helper.PROBE + malformed]))
+        issue = json.loads(lines[3][len(helper.AUDIT):])
+        for changes in ({'types': [PRIVATE]}, {'types': ['contrast', 'contrast']}, {'ignored': True},
+                        {'auditSequence': True}, {'issueSequence': 2}, {'requestedMode': 'pinned'}, {PRIVATE: PRIVATE}):
+            invalid.append('\n'.join([*lines[:3], helper.AUDIT + json.dumps({**issue, **changes})]))
+        invalid.append('\n'.join([*lines[:3], *(helper.AUDIT + json.dumps({**issue, 'issueSequence': index})
+                                                   for index in range(1, 66))]))
+        for text in invalid:
+            with self.subTest(text=text), self.assertRaises((helper.A.AdaptiveError, ValueError)):
+                helper.failed_stdout_observations(text, 'system')
+
+    def test_failure_summary_distinguishes_empty_stream_from_missing_markers_and_hides_errors(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                mock.patch.object(helper.A, 'verify_receipt', return_value='same') as receipt:
+            (Path(temp) / 'system.stderr').write_text(PRIVATE)
+            for text in ('', PRIVATE, event('started')):
+                (Path(temp) / 'system.stdout').write_text(text)
+                value = helper.failed_native_observations('system', EXPECTED, 'same')
+                self.assertEqual(value['scope'], 'diagnosticOnly')
+                self.assertEqual(value['evidence'], 'stdoutOnly')
+                self.assertEqual(value['status'], 'observed')
+                self.assertEqual(value['stdoutBytes'], len(text.encode()))
+                self.assertEqual(value['stderrBytes'], len(PRIVATE.encode()))
+                self.assertEqual(value['caseStarted'], text == event('started'))
+                self.assertNotIn(PRIVATE, json.dumps(value))
+            (Path(temp) / 'system.stdout').write_text(event('started') + '\n' + helper.PROBE + json.dumps({PRIVATE: PRIVATE}))
+            value = helper.failed_native_observations('system', EXPECTED, 'same')
+            self.assertEqual((value['status'], value['failureStage']), ('rejected', 'stdoutParse'))
+            self.assertNotIn('probes', value)
+            self.assertNotIn(PRIVATE, json.dumps(value))
+            receipt.return_value = 'changed'
+            value = helper.failed_native_observations('system', EXPECTED, 'same')
+            self.assertEqual((value['status'], value['failureStage']), ('unavailable', 'receiptVerification'))
+            self.assertIsNone(value['stdoutBytes'])
+            receipt.side_effect = RuntimeError(PRIVATE)
+            self.assertNotIn(PRIVATE, json.dumps(helper.failed_native_observations('system', EXPECTED, 'same')))
+
+    def test_native_failure_summary_keeps_native_exit_timeout_and_collect_rejection(self):
+        ctx = {'destination': 'fixed', 'scheme': 'fixed', 'sdk': 'fixed'}
+        saved = {'context': ctx, 'before': 'large', 'receipt': 'original'}
+        for code in (None, 65, 0):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as temp, \
+                    mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                    mock.patch.object(helper.A, 'read_json', side_effect=[{'supported': True}, saved]), \
+                    mock.patch.object(helper, 'context', return_value=(ctx, 'fixed-udid')), \
+                    mock.patch.object(helper.A, 'verify_receipt', return_value='original'), \
+                    mock.patch.object(helper, 'command', return_value=helper.CATEGORIES[-1]), \
+                    mock.patch.object(helper, 'native', return_value=code) as native, \
+                    mock.patch.object(helper, 'failed_native_observations', return_value={
+                        'scope': 'diagnosticOnly', 'evidence': 'stdoutOnly', 'status': 'unavailable'}) as diagnostic:
+                report = {}
+                if code == 0:
+                    helper.execute('run', 'pinned', EXPECTED, report)
+                    diagnostic.assert_not_called()
+                else:
+                    with self.assertRaises(helper.Failure) as caught:
+                        helper.execute('run', 'pinned', EXPECTED, report)
+                    self.assertEqual(caught.exception.code, 'nativeTestFailed')
+                    diagnostic.assert_called_once_with('pinned', EXPECTED, 'original')
+                self.assertEqual(native.call_args.args[-1], 420)
+                self.assertEqual(report['nativeExitCode'], code)
+                self.assertEqual(report['timedOut'], code is None)
+                self.assertEqual(json.loads((Path(temp) / 'pinned-exit.json').read_text()),
+                                 {'nativeExitCode': code, 'timedOut': code is None})
+        with mock.patch.object(helper.A, 'read_json', side_effect=[{'supported': True}, saved,
+                {'nativeExitCode': None, 'timedOut': True}]), \
+                mock.patch.object(helper, 'context', return_value=(ctx, 'fixed-udid')), \
+                mock.patch.object(helper.A, 'verify_receipt', return_value='original'), \
+                mock.patch.object(helper, 'command') as command, mock.patch.object(helper, 'observations') as observations:
+            with self.assertRaises(helper.Failure) as caught:
+                helper.execute('collect', 'pinned', EXPECTED, {})
+            self.assertEqual(caught.exception.code, 'testDidNotFinish')
+            command.assert_not_called()
+            observations.assert_not_called()
+
     def test_preboot_requests_only_the_owned_device_without_category_or_build_receipt_changes(self):
         env = {'MIRROR_DYNAMIC_TYPE_PREBOOT': '1', 'GITHUB_WORKFLOW': 'iPad Dynamic Type 설정 원인분리 진단'}
         for state in ('Booted', 'Shutdown'):
