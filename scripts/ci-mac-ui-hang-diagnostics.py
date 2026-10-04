@@ -188,7 +188,7 @@ def main(argv=None):
         summary['status'], exit_code = 'diagnosticUnavailable', 2
     # 이 스키마는 고정 코드·개수·검증 출처만 포함한다. 예외 문자열/SDK 원문을 직렬화하지 않는다.
     text = json.dumps(summary, ensure_ascii=False, sort_keys=True)
-    print('Mac UI preserved diagnostics: ' + text)
+    print('::notice::Mac UI preserved diagnostics: ' + text)
     try:
         if root is not None and not root.is_symlink() and (root / 'public').is_dir() and not (root / 'public').is_symlink():
             (root / 'public/summary.json').write_text(text + '\n')

@@ -52,6 +52,41 @@ def supports_ui(text):
                                 for value in CATEGORIES))
 
 
+def help_metadata(text):
+    safe_lines = []
+    for line in text.splitlines():
+        line = line.strip(' \t')
+        prefix = re.match(r'(?:Usage: *simctl ui|content_size)(?= |$)', line)
+        if not prefix or len(line) > 100:
+            continue
+        tail = line[prefix.end():]
+        if re.fullmatch(r'[A-Za-z <>\[\]|_]*', tail) is None:
+            continue
+        # 문법 placeholder와 고정 operation 단어만 허용하고 임의 설명문은 제외한다.
+        placeholders = re.findall(r'<([A-Za-z_]+)>', tail)
+        if any(value not in ('device', 'option', 'operation', 'arguments', 'argument', 'args',
+                             'value', 'size', 'category', 'command')
+               for value in placeholders):
+            continue
+        words = re.findall(r'[A-Za-z_]+', re.sub(r'<[A-Za-z_]+>', '', tail))
+        if all(word in ('appearance', 'content_size', 'increase_contrast', 'increase', 'decrease') for word in words):
+            if line not in safe_lines and len(safe_lines) < 8:
+                safe_lines.append(line)
+    categories = [value for value in CATEGORIES if re.search(r'(?m)^\s+' + re.escape(value) + r'\s*$', text)]
+    return {'bytes': len(text.encode('utf-8')), 'supported': supports_ui(text), 'safeLines': safe_lines,
+            'knownCategories': categories, 'knownCategoryCount': len(categories)}
+
+
+def help_contract(stdout, stderr):
+    streams = {'stdout': stdout, 'stderr': stderr}
+    metadata = {name: help_metadata(text) for name, text in streams.items()}
+    sources = [name for name in streams if metadata[name]['supported']]
+    unique = sorted({streams[name] for name in sources})
+    report = {'helpStreams': metadata, 'contractFrom': 'both' if len(sources) == 2 else sources[0] if sources else 'none',
+              'uniqueHelpCount': len(unique), 'publicUIContractVerified': bool(sources)}
+    return report, A.digest(json.dumps(unique, ensure_ascii=False).encode()) if unique else None
+
+
 def category(text):
     value = text.strip()
     require(value in CATEGORIES, 'unrecognizedSystemCategory')
@@ -81,8 +116,8 @@ def native(args, name, timeout=15):
     return code
 
 
-def output(name):
-    path = DIRECTORY / (name + '.stdout')
+def output(name, stream='stdout'):
+    path = DIRECTORY / (name + '.' + stream)
     if path.is_file() and not path.is_symlink() and path.stat().st_size == 0:
         return ''
     return A.read_regular(path, A.MAX_LOG).decode('utf-8')
@@ -182,13 +217,13 @@ def execute(action, mode, expected, report):
                 shutil.rmtree(path) if path.is_dir() and not path.is_symlink() else path.unlink()
         return
     if action == 'help':
-        text = command(['xcrun', 'simctl', 'help', 'ui'], 'ui-help')
-        report['listedCategories'] = [value for value in CATEGORIES
-                                      if re.search(r'(?m)^\s+' + re.escape(value) + r'\s*$', text)]
-        report['publicUIContractVerified'] = supports_ui(text)
-        require(supports_ui(text), 'unsupportedPublicUIContract')
-        A.write_json(DIRECTORY / 'contract.json', {'sha256': A.digest(text.encode()), 'supported': True})
-        report['publicUIContractVerified'] = True
+        code = native(['xcrun', 'simctl', 'help', 'ui'], 'ui-help')
+        metadata, digest = help_contract(output('ui-help'), output('ui-help', 'stderr'))
+        report.update(metadata, nativeHelpExitCode=code, nativeHelpTimedOut=code is None)
+        require(code == 0, 'nativeCommandFailed')
+        require(metadata['publicUIContractVerified'], 'unsupportedPublicUIContract')
+        A.write_json(DIRECTORY / 'contract.json', {'sha256': digest, 'supported': True,
+                                                'contractFrom': metadata['contractFrom']})
         return
     require(A.read_json(DIRECTORY / 'contract.json').get('supported') is True, 'missingPublicContract')
     ctx, udid = context(expected)
@@ -280,7 +315,7 @@ def main(argv=None):
             A.write_json(path, report)
     except Exception:
         report['status'], code = 'summaryUnavailable', 2
-    print('Dynamic Type diagnostic: ' + json.dumps(report, sort_keys=True))
+    print('::notice::Dynamic Type diagnostic: ' + json.dumps(report, sort_keys=True))
     return code
 
 

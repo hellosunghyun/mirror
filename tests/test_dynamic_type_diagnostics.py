@@ -54,20 +54,91 @@ def typed(failed=False):
     return summary, tree
 
 
+def public_help():
+    return ('Usage: simctl ui <device> <option> [<arguments>]\nSupported options:\n  content_size\n'
+            + '\n'.join('    ' + value for value in helper.CATEGORIES))
+
+
 class DynamicTypeDiagnosticsTests(unittest.TestCase):
     def test_public_help_requires_usage_standalone_operation_and_every_exact_category(self):
-        text = 'Usage: simctl ui <device> <option> [<arguments>]\nSupported options:\n  content_size\n'
-        text += '\n'.join('    ' + value for value in helper.CATEGORIES)
+        text = public_help()
         self.assertTrue(helper.supports_ui(text))
         for wrong in (text.replace('[<arguments>]', '<arguments>'),
                       text.replace('content_size', 'content_size_extra'),
                       text.replace('  content_size\n', '  content_size\n  another_operation\n'),
                       text.replace(helper.CATEGORIES[-1], helper.CATEGORIES[-1] + '_extra'),
                       'mentions content_size ' + ' '.join(helper.CATEGORIES), '', PRIVATE):
-            with self.subTest(wrong=wrong), mock.patch.object(helper, 'command', return_value=wrong) as command:
+            with self.subTest(wrong=wrong), mock.patch.object(helper, 'native', return_value=0) as native, \
+                    mock.patch.object(helper, 'output', side_effect=[wrong, '']), \
+                    mock.patch.object(helper.A, 'write_json') as write:
                 with self.assertRaises(helper.A.AdaptiveError):
                     helper.execute('help', None, EXPECTED, {})
-                self.assertEqual(command.call_args_list, [mock.call(['xcrun', 'simctl', 'help', 'ui'], 'ui-help')])
+                self.assertEqual(native.call_args_list, [mock.call(['xcrun', 'simctl', 'help', 'ui'], 'ui-help')])
+                write.assert_not_called()
+
+    def test_empty_stdout_and_complete_stderr_verify_the_same_contract_after_one_native_call(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp).resolve()), \
+                mock.patch.object(helper, 'native', return_value=0) as native:
+            (Path(temp) / 'ui-help.stdout').write_bytes(b'')
+            (Path(temp) / 'ui-help.stderr').write_text(public_help())
+            report = {}
+            helper.execute('help', None, EXPECTED, report)
+            self.assertEqual(report['contractFrom'], 'stderr')
+            self.assertEqual(report['helpStreams']['stdout']['bytes'], 0)
+            self.assertEqual(report['helpStreams']['stderr']['bytes'], len(public_help().encode()))
+            self.assertEqual(report['helpStreams']['stderr']['knownCategoryCount'], 12)
+            self.assertTrue(report['publicUIContractVerified'])
+            self.assertEqual(report['nativeHelpExitCode'], 0)
+            self.assertTrue(json.loads((Path(temp) / 'contract.json').read_text())['supported'])
+            native.assert_called_once_with(['xcrun', 'simctl', 'help', 'ui'], 'ui-help')
+
+    def test_identical_help_in_two_streams_counts_once_without_combining_partial_or_conflicting_streams(self):
+        report, digest = helper.help_contract(public_help(), public_help())
+        self.assertEqual(report['contractFrom'], 'both')
+        self.assertEqual(report['uniqueHelpCount'], 1)
+        self.assertEqual(digest, helper.help_contract(public_help(), '')[1])
+        alternate = public_help().replace('<option>', '<operation>')
+        report, _ = helper.help_contract(public_help(), alternate)
+        self.assertEqual(report['contractFrom'], 'both')
+        self.assertEqual(report['uniqueHelpCount'], 2)
+        header, body = public_help().split('\n', 1)
+        report, digest = helper.help_contract(header, body)
+        self.assertEqual(report['contractFrom'], 'none')
+        self.assertFalse(report['publicUIContractVerified'])
+        self.assertIsNone(digest)
+        conflicting = public_help().replace('content_size', 'another_operation')
+        report, digest = helper.help_contract(conflicting, public_help())
+        self.assertEqual(report['contractFrom'], 'stderr')
+        self.assertFalse(report['helpStreams']['stdout']['supported'])
+        self.assertEqual(digest, helper.help_contract('', public_help())[1])
+
+    def test_native_nonzero_cannot_be_overridden_by_valid_help_in_either_stream(self):
+        with mock.patch.object(helper, 'native', return_value=64), \
+                mock.patch.object(helper, 'output', return_value=public_help()), \
+                mock.patch.object(helper.A, 'write_json') as write:
+            report = {}
+            with self.assertRaises(helper.A.AdaptiveError):
+                helper.execute('help', None, EXPECTED, report)
+            self.assertEqual(report['contractFrom'], 'both')
+            self.assertEqual(report['nativeHelpExitCode'], 64)
+            write.assert_not_called()
+
+    def test_help_metadata_exposes_only_bounded_static_usage_and_operation_syntax(self):
+        usage = 'Usage:simctl ui <device> <option> [<arguments>]'
+        operation = 'content_size [<size> | increase | decrease]'
+        invalid = ('content_size ' + PRIVATE, 'Usage: simctl ui ' + PRIVATE,
+                   'content_size <' + PRIVATE + '>', 'Usage: simctl ui <' + PRIVATE + '>',
+                   'content_size /private/' + PRIVATE, 'Usage: simctl ui /Users/' + PRIVATE,
+                   'content_size <sïze>', 'content_size <size> # ' + PRIVATE,
+                   'content_size <' + 'x' * 100 + '>', 'SDK error: ' + PRIVATE)
+        text = '\n'.join((usage, operation, operation, *invalid, '    large', '    made-up-category'))
+        metadata = helper.help_metadata(text)
+        self.assertEqual(metadata['safeLines'], [usage, operation])
+        self.assertEqual(metadata['knownCategories'], ['large'])
+        self.assertEqual(metadata['knownCategoryCount'], 1)
+        self.assertEqual(metadata['bytes'], len(text.encode('utf-8')))
+        self.assertNotIn(PRIVATE, json.dumps(metadata))
+        self.assertFalse(metadata['supported'])
 
     def test_missing_contract_stops_before_boot_query_or_set(self):
         with mock.patch.object(helper.A, 'read_json', return_value={'supported': False}), \
@@ -222,6 +293,7 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             summary = (Path(temp) / 'public/help.json').read_text()
             self.assertNotIn(PRIVATE, output.getvalue() + summary)
             self.assertNotIn(temp, output.getvalue() + summary)
+            self.assertTrue(output.getvalue().startswith('::notice::Dynamic Type diagnostic: '))
             self.assertEqual(json.loads(summary)['scope'], 'diagnosticOnly')
             self.assertEqual(helper.main(['../../' + PRIVATE]), 2)
             self.assertNotIn(PRIVATE, output.getvalue())
