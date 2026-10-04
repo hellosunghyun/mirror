@@ -302,15 +302,36 @@ struct MirrorCaptureView: View {
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
-                    DisclosureGroup("날짜·메모·링크", isExpanded: $more) {
-                        VStack(alignment: .leading, spacing: 14) {
-                            capturePlanChoices
-                            TextField("메모", text: $note, axis: .vertical).lineLimit(1...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
-                            TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
-                            Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(.secondary)
-                        }.textFieldStyle(.roundedBorder).padding(.top, 12)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Button {
+                            if more, focusedField == .note || focusedField == .url { focusedField = .title }
+                            more.toggle()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Text("날짜·메모·링크")
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 8)
+                                Image(systemName: more ? "chevron.up" : "chevron.down")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityHidden(true)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityValue(more ? "펼침" : "접힘")
+                        .accessibilityHint(more ? "추가 입력을 접습니다" : "날짜, 메모와 링크 입력을 펼칩니다")
+                        .accessibilityIdentifier("capture.more")
+                        if more {
+                            VStack(alignment: .leading, spacing: 14) {
+                                capturePlanChoices
+                                TextField("메모", text: $note, axis: .vertical).lineLimit(1...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
+                                TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
+                                Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(.secondary)
+                            }.textFieldStyle(.roundedBorder).padding(.top, 12)
+                        }
                     }
-                    .accessibilityIdentifier("capture.more")
                     .padding(16)
                     .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
                     if !more, let initialPlan {
