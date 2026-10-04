@@ -1138,6 +1138,74 @@ esac
                 helper.case_progress_diagnostics(root, expected)
                 self.assertIn('sourceUnavailable', output.call_args[0][0])
 
+    def capture_save_failure_row(self, case=CASE, **extra):
+        return helper.CAPTURE_SAVE_FAILURE_MARKER + json.dumps({
+            'schemaVersion': 1, 'case': helper.CASE_DIAGNOSTIC_NAMES[case], 'requestSequence': 1,
+            'requestedElement': 'captureSave', 'boundary': 'reveal', 'exists': True,
+            'enabled': True, 'hittable': False, 'windowOwnerCount': 1, 'ownerHasCaptureClose': True,
+            'scrollCandidateCount': 2, 'scrollOwnerCount': 0,
+            'frame': [412, 441, 200, 52], 'viewport': None, **extra})
+
+    def test_capture_save_failure_is_owned_by_failed_case_request_and_preserves_unknown_state(self):
+        source, _ = self.progress_fixture()
+        for platform in ('iphone', 'ipad', 'macos'):
+            entries = helper.source_method_entries(source, platform)
+            expected = {'platform': platform, 'appearance': 'system'}
+            owner = ('MirrorMacAdaptiveUITests' if platform == 'macos' else BUNDLE) + '.MirrorAdaptiveUITests'
+            for fields in ({}, {'boundary': 'assertVisible', 'enabled': False},
+                           {'boundary': 'assertVisible', 'exists': False, 'enabled': None, 'hittable': None,
+                            'windowOwnerCount': 0, 'ownerHasCaptureClose': None, 'frame': None}):
+                rows = [event(owner=owner), self.case_diagnostic_row(), self.progress_row(),
+                        self.case_diagnostic_row(sequence=1, element='captureSave'),
+                        self.capture_save_failure_row(**fields), event(owner=owner, state='failed')]
+                report = helper.xctest_case_diagnostics('\n'.join(rows), expected, entries)[0]
+                observed = report['captureSaveFailure']
+                self.assertEqual(observed, json.loads(rows[-2][len(helper.CAPTURE_SAVE_FAILURE_MARKER):]))
+                self.assertEqual(report['sourceFile'], helper.UI_FAILURE_SOURCE_FILE)
+                self.assertEqual(report['requestSequence'], observed['requestSequence'])
+                self.assertNotIn(PRIVATE, json.dumps(report))
+
+    def test_capture_save_failure_rejects_private_fields_wrong_types_geometry_and_ownership(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row(),
+                  self.case_diagnostic_row(sequence=1, element='captureSave')]
+        invalid = ({'label': PRIVATE}, {'boundary': PRIVATE}, {'case': PRIVATE},
+                   {'requestedElement': 'captureOpen'}, {'requestSequence': 2}, {'requestSequence': True},
+                   {'exists': 1}, {'enabled': PRIVATE}, {'exists': False, 'enabled': False},
+                   {'enabled': None}, {'hittable': None}, {'windowOwnerCount': True},
+                   {'windowOwnerCount': -1}, {'windowOwnerCount': 10_001}, {'ownerHasCaptureClose': None},
+                   {'windowOwnerCount': 0}, {'scrollCandidateCount': 0, 'scrollOwnerCount': 1},
+                   {'scrollOwnerCount': True}, {'scrollCandidateCount': '2'},
+                   {'frame': [0, 0, True, 44]}, {'frame': [0, 0, 100_001, 44]},
+                   {'frame': [0, 0, 10 ** 200, 44]}, {'frame': [0, 0, float('inf'), 44]},
+                   {'viewport': [0, 0, 44]}, {'boundary': 'assertVisible', 'hittable': True})
+        for fields in invalid:
+            with self.subTest(fields=fields):
+                log = '\n'.join(prefix + [self.capture_save_failure_row(**fields), event(state='failed')])
+                self.assertIsNone(helper.xctest_case_diagnostics(log, EXPECTED, entries))
+        duplicate = self.capture_save_failure_row().replace('"exists": true', '"exists": true, "exists": false')
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [duplicate, event(state='failed')]), EXPECTED, entries))
+
+    def test_capture_save_failure_rejects_missing_request_wrong_terminal_and_postfailure_activity(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row()]
+        request = self.case_diagnostic_row(sequence=1, element='captureSave')
+        failure = self.capture_save_failure_row()
+        invalid = [prefix + [failure, event(state='failed')],
+                   prefix + [self.case_diagnostic_row(sequence=1, element='captureTitle'), failure, event(state='failed')],
+                   prefix + [request, failure],
+                   prefix + [request, failure, event(state='passed')],
+                   prefix + [request, failure, event(state='skipped')],
+                   prefix + [request, failure, failure, event(state='failed')],
+                   prefix + [request, failure, self.progress_row(phase='launchComplete', sequence=2), event(state='failed')],
+                   prefix + [request, failure, self.case_diagnostic_row(sequence=2, element='captureTitle'), event(state='failed')],
+                   prefix + [request, event(state='failed'), failure]]
+        for rows in invalid:
+            with self.subTest(rows=rows):
+                self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries))
+
 
 
     def failure_image_fixture(self, directory):

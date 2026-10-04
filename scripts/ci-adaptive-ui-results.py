@@ -44,6 +44,11 @@ STAGE_PATTERN = '|'.join(re.escape(stage) for stages in CASES.values() for stage
 SHOT_PATTERN = re.compile(r'mirror-adaptive-(' + STAGE_PATTERN + r')-([1-9][0-9]{0,5})')
 UUID = r'[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}'
 SDK_SHOT_PATTERN = re.compile(r'(' + SHOT_PATTERN.pattern + r')_[0-9]{1,6}_' + UUID)
+CAPTURE_FAILURE_CASE = 'testMaximumTypeCaptureValidationAndRecovery'
+CAPTURE_FAILURE_SHOT_NAME = 'mirror-adaptive-failure-capture-save'
+CAPTURE_FAILURE_SHOT_MARKER = 'UI adaptive capture save failure screenshot: '
+CAPTURE_FAILURE_SHOT_SIGNAL = re.compile(r'\bUI\s+adaptive\s+capture\s+save\s+failure\s+screenshot\b')
+SDK_CAPTURE_FAILURE_SHOT_PATTERN = re.compile(re.escape(CAPTURE_FAILURE_SHOT_NAME) + r'_[0-9]{1,6}_' + UUID)
 SAFE_PNG = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,239}\.png')
 CASE_EVENT = re.compile(
     r"Test Case '(-\[([A-Za-z_][A-Za-z0-9_.]*) ([A-Za-z_][A-Za-z0-9_]*)\])' "
@@ -484,6 +489,7 @@ def progress_diagnostics(directory, expected):
 
 CASE_DIAGNOSTIC_MARKER = 'UI adaptive case diagnostic: '
 AUDIT_BOUNDARY_MARKER = 'UI adaptive audit boundary: '
+CAPTURE_SAVE_FAILURE_MARKER = 'UI adaptive capture save failure: '
 CASE_DIAGNOSTIC_NAMES = {
     'testMaximumTypeCaptureValidationAndRecovery': 'captureValidation',
     'testMaximumTypeReviewAndWeekPicker': 'reviewWeek',
@@ -508,7 +514,35 @@ CASE_REQUESTED_ELEMENTS = {
     'narrowMac': frozenset(('destinationLibrary', 'todayReview', 'settingsButton', 'taskRow',
                            'detailContentTitle', 'detailClose', 'detailPostponeTomorrow', 'taskComplete')),
 }
-CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary)\b')
+CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary|capture\s+save\s+failure(?!\s+screenshot))\b')
+
+
+def capture_save_failure_fields(value):
+    keys = {'schemaVersion', 'case', 'requestSequence', 'requestedElement', 'boundary', 'exists',
+            'enabled', 'hittable', 'windowOwnerCount', 'ownerHasCaptureClose', 'scrollCandidateCount',
+            'scrollOwnerCount', 'frame', 'viewport'}
+    if not (isinstance(value, dict) and set(value) == keys
+            and value['requestedElement'] == 'captureSave'
+            and value['boundary'] in ('reveal', 'assertVisible') and type(value['exists']) is bool
+            and all(value[key] is None or type(value[key]) is bool
+                    for key in ('enabled', 'hittable', 'ownerHasCaptureClose'))
+            and all(type(value[key]) is int and 0 <= value[key] <= 10_000
+                    for key in ('windowOwnerCount', 'scrollCandidateCount', 'scrollOwnerCount'))
+            and value['scrollOwnerCount'] <= value['scrollCandidateCount']
+            and (value['ownerHasCaptureClose'] is not None) == (value['windowOwnerCount'] == 1)
+            and (value['enabled'] is not None) == value['exists']
+            and (not value['exists'] or type(value['hittable']) is bool)):
+        return False
+    if value['boundary'] == 'assertVisible' and (value['hittable'] is not False if value['exists']
+                                                else value['hittable'] is not None):
+        return False
+    for key in ('frame', 'viewport'):
+        frame = value[key]
+        if frame is not None and not (isinstance(frame, list) and len(frame) == 4
+                and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
+                        for number in frame)):
+            return False
+    return True
 
 
 def case_requested_elements(case, platform):
@@ -533,6 +567,9 @@ def xctest_case_diagnostics(log, expected, entries):
                 return None
             if event[1] != owner or event[2] not in cases:
                 return None
+            if event[3] != 'started' and 'captureSaveFailure' in reports.get(event[2], {}):
+                if event[3] != 'failed':
+                    return None
             active, sequence = (event[2], 0) if event[3] == 'started' else (None, 0)
             continue
         progress_signal = re.search(r'\bUI\s+adaptive\s+progress\b', text)
@@ -540,6 +577,8 @@ def xctest_case_diagnostics(log, expected, entries):
         if not progress_signal and not signal:
             continue
         if len(text.encode('utf-8')) > 2048 or active is None:
+            return None
+        if 'captureSaveFailure' in reports.get(active, {}):
             return None
         if progress_signal:
             if signal or active not in reports:
@@ -556,7 +595,9 @@ def xctest_case_diagnostics(log, expected, entries):
                     return None
             report['lastProgress'] = {key: value[key] for key in ('phase', 'sequence', 'step')}
             continue
-        marker = CASE_DIAGNOSTIC_MARKER if text.startswith(CASE_DIAGNOSTIC_MARKER) else AUDIT_BOUNDARY_MARKER
+        marker = (CASE_DIAGNOSTIC_MARKER if text.startswith(CASE_DIAGNOSTIC_MARKER)
+                  else CAPTURE_SAVE_FAILURE_MARKER if text.startswith(CAPTURE_SAVE_FAILURE_MARKER)
+                  else AUDIT_BOUNDARY_MARKER)
         if not text.startswith(marker) or text.count(marker) != 1:
             return None
         try:
@@ -587,6 +628,15 @@ def xctest_case_diagnostics(log, expected, entries):
                         or (report['auditBoundaries'] and report['auditBoundaries'][-1]['outcome'] == 'threw')):
                     return None
                 report.update({key: value[key] for key in ('requestSequence', 'requestedElement')})
+        elif marker == CAPTURE_SAVE_FAILURE_MARKER:
+            report = reports.get(active)
+            if not (report is not None and sequence > 0 and capture_save_failure_fields(value)
+                    and type(value['requestSequence']) is int and value['requestSequence'] > 0
+                    and value['requestSequence'] == report['requestSequence']
+                    and report['requestedElement'] == 'captureSave'
+                    and (not report['auditBoundaries'] or report['auditBoundaries'][-1]['outcome'] == 'returned')):
+                return None
+            report['captureSaveFailure'] = value
         else:
             if (set(value) != {'schemaVersion', 'case', 'auditSequence', 'outcome'}
                     or type(value['auditSequence']) is not int or not isinstance(value['outcome'], str)
@@ -603,6 +653,8 @@ def xctest_case_diagnostics(log, expected, entries):
                 return None
             audits.append({key: value[key] for key in ('auditSequence', 'outcome')})
     if len(reports) > len(cases):
+        return None
+    if active is not None and 'captureSaveFailure' in reports.get(active, {}):
         return None
     return list(reports.values())
 
@@ -1107,12 +1159,23 @@ def evidence(directory, expected):
 def failure_recorded_screenshots(log, expected, entries, *, require_failure_or_interruption=False):
     # 부분 실행도 원래 고정 phase protocol과 실제 bundle/method 소유를 먼저 검증한다.
     require(xctest_progress_diagnostics(log, expected, entries) is not None, 'invalidFailureScreenshotProgress')
+    accepted_failure = None
+    if CAPTURE_FAILURE_SHOT_SIGNAL.search(log):
+        reports = xctest_case_diagnostics(log, expected, entries)
+        require(isinstance(reports, list), 'invalidCaptureFailureOwner')
+        owned = [report for report in reports if report.get('method') == CAPTURE_FAILURE_CASE
+                 and isinstance(report.get('captureSaveFailure'), dict)]
+        require(len(owned) == 1, 'invalidCaptureFailureOwner')
+        accepted_failure = owned[0]['captureSaveFailure']
     active, configured, selected, failed = None, set(), {}, False
+    last_progress, observed_failure = None, None
     for line in log.splitlines():
         event = UI_CASE_EVENT.match(line)
         if event is not None:
+            require(not CAPTURE_FAILURE_SHOT_SIGNAL.search(line), 'invalidCaptureFailureScreenshot')
             failed = failed or event[3] == 'failed'
             active = event[2] if event[3] == 'started' else None
+            last_progress, observed_failure = None, None
             continue
         if CONFIG_MARKER in line:
             require(active is not None and line.startswith(CONFIG_MARKER)
@@ -1124,12 +1187,34 @@ def failure_recorded_screenshots(log, expected, entries, *, require_failure_or_i
             configured.add(active)
         if line.startswith(PROGRESS_MARKER):
             value = strict_json(line[len(PROGRESS_MARKER):])
+            last_progress = {key: value[key] for key in ('phase', 'sequence', 'step')}
             if value['phase'] == 'recordComplete':
                 require(active in configured and 1 <= value['step'] <= len(CASES[active]),
                         'invalidFailureScreenshotProgress')
                 name = 'mirror-adaptive-' + CASES[active][value['step'] - 1] + '-' + str(value['step'])
                 require(name not in selected, 'duplicateFailureScreenshot')
                 selected[name] = active
+        if accepted_failure is not None and line.startswith(CAPTURE_SAVE_FAILURE_MARKER):
+            observed_failure = strict_json(line[len(CAPTURE_SAVE_FAILURE_MARKER):])
+        if CAPTURE_FAILURE_SHOT_SIGNAL.search(line):
+            require(line.startswith(CAPTURE_FAILURE_SHOT_MARKER)
+                    and line.count(CAPTURE_FAILURE_SHOT_MARKER) == 1 and len(line.encode()) <= 1024,
+                    'invalidCaptureFailureScreenshot')
+            value = strict_json(line[len(CAPTURE_FAILURE_SHOT_MARKER):])
+            require(active == CAPTURE_FAILURE_CASE and active in configured
+                    and last_progress == {'phase': 'captureInputComplete', 'sequence': 6, 'step': 0}
+                    and isinstance(accepted_failure, dict) and observed_failure == accepted_failure
+                    and accepted_failure.get('exists') is True
+                    and accepted_failure.get('windowOwnerCount') == 1
+                    and accepted_failure.get('ownerHasCaptureClose') is True,
+                    'unownedCaptureFailureScreenshot')
+            require(isinstance(value, dict) and set(value) == {'schemaVersion', 'case', 'requestSequence', 'name', 'status'}
+                    and type(value['schemaVersion']) is int and value['schemaVersion'] == 1
+                    and value['case'] == 'captureValidation' and type(value['requestSequence']) is int
+                    and value['requestSequence'] == accepted_failure['requestSequence']
+                    and value['name'] == CAPTURE_FAILURE_SHOT_NAME and value['status'] == 'complete'
+                    and CAPTURE_FAILURE_SHOT_NAME not in selected, 'invalidCaptureFailureScreenshot')
+            selected[CAPTURE_FAILURE_SHOT_NAME] = active
     require(selected, 'noRecordedFailureScreenshots')
     # EXIT trap이 native 상태를 회수하지 못한 중단도, 실제 owned case의 실패나
     # 미종료 실행이 관측된 경우에만 진단한다. 끝난 성공/skip만으로는 추정하지 않는다.
@@ -1155,6 +1240,24 @@ def failure_evidence_context(directory, expected):
         require_failure_or_interruption=outcome['xcodebuildExitCode'] is None)
 
 
+def failure_attachment_name(value):
+    require(isinstance(value, str) and len(value) <= 240, 'invalidAttachmentName')
+    name = value[:-4] if value.endswith('.png') else value
+    if name == CAPTURE_FAILURE_SHOT_NAME:
+        return name
+    if value.endswith('.png') and SDK_CAPTURE_FAILURE_SHOT_PATTERN.fullmatch(name):
+        return CAPTURE_FAILURE_SHOT_NAME
+    return attachment_name(value)
+
+
+def failure_shot_stage(name):
+    if name == CAPTURE_FAILURE_SHOT_NAME:
+        return 'failure-capture-save', 1
+    match = SHOT_PATTERN.fullmatch(name)
+    require(match is not None, 'invalidAttachmentName')
+    return match[1], int(match[2])
+
+
 def failure_export_entries(value, selected):
     # 성공 exporter에서 이미 사용하는 명시 test-record/attachment schema만 허용한다.
     if isinstance(value, list):
@@ -1175,7 +1278,7 @@ def failure_export_entries(value, selected):
             human = attachment.get('suggestedHumanReadableName', attachment.get('name'))
             if not isinstance(human, str) or not human.startswith('mirror-adaptive-'):
                 continue
-            name = attachment_name(human)
+            name = failure_attachment_name(human)
             if name not in selected:
                 continue
             if 'name' in attachment and 'suggestedHumanReadableName' in attachment:
@@ -1184,11 +1287,11 @@ def failure_export_entries(value, selected):
             require(isinstance(basename, str) and SAFE_PNG.fullmatch(basename), 'unsafeAttachmentPath')
             require(attachment.get('uniformTypeIdentifier') in (None, 'public.png'), 'invalidAttachmentType')
             entries.append((selected[name], name, basename))
-            require(len(entries) <= sum(map(len, CASES.values())), 'invalidEvidenceBounds')
+            require(len(entries) <= sum(map(len, CASES.values())) + 1, 'invalidEvidenceBounds')
     require({name for _, name, _ in entries} == set(selected)
             and len(entries) == len(selected) and len({basename for _, _, basename in entries}) == len(entries),
             'failureScreenshotSetMismatch')
-    return sorted(entries, key=lambda item: (tuple(CASES).index(item[0]), int(SHOT_PATTERN.fullmatch(item[1])[2])))
+    return sorted(entries, key=lambda item: (tuple(CASES).index(item[0]), failure_shot_stage(item[1])[1]))
 
 
 def failure_evidence(directory, expected):
@@ -1208,10 +1311,10 @@ def failure_evidence(directory, expected):
         require(len(candidates) == 1, 'missingScreenshot')
         original = read_regular(candidates[0], MAX_PNG)
         cleaned, width, height = clean_png(original)
-        match = SHOT_PATTERN.fullmatch(name)
+        stage, sequence = failure_shot_stage(name)
         filename = 'screenshots/' + name + '.png'
         images[filename] = cleaned
-        screenshots.append({'case': case, 'stage': match[1], 'sequence': int(match[2]), 'file': filename,
+        screenshots.append({'case': case, 'stage': stage, 'sequence': sequence, 'file': filename,
                             'sha256': digest(cleaned), 'exportSHA256': digest(original), 'bytes': len(cleaned),
                             'width': width, 'height': height})
     require(sum(map(len, images.values())) <= 512 * 1024 * 1024, 'invalidEvidenceBounds')

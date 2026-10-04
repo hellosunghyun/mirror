@@ -10,6 +10,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor private var progressSequence = 0
     @MainActor private var diagnosticCase: DiagnosticCase?
     @MainActor private var diagnosticRequestSequence = 0
+    @MainActor private var diagnosticRequestedElement: RequestedElement?
+    @MainActor private var diagnosticProgressPhase: ProgressPhase?
+    @MainActor private var captureFailureScreenshotRecorded = false
     @MainActor private var diagnosticAuditSequence = 0
     @MainActor private var diagnosticAuditIssueSequence = 0
     @MainActor private var dynamicTypeFixtureMode: DynamicTypeFixtureMode?
@@ -663,6 +666,11 @@ final class MirrorAdaptiveUITests: XCTestCase {
                 revealFailureMeasurement(frame: frame, viewport: viewportFrame, type: elementType,
                     hittable: hittable, insideWindow: insideWindow, insideOwner: insideOwner,
                     ownerCount: owners.count, deadlineExceeded: Date() >= deadline)
+                if identifier == "capture.save", elementType == .button {
+                    captureSaveFailureMeasurement(element, in: app, boundary: "reveal",
+                        observedHittable: hittable,
+                        observedGeometry: (frame, viewportFrame, surfaces.count, owners.count))
+                }
                 XCTFail("현재 대상의 실제 스크롤 소유자 안에서 요소에 도달해야 한다.")
                 throw HarnessFailure.unhittable
             }
@@ -708,7 +716,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor
     private func assertVisible(_ element: XCUIElement, in app: XCUIApplication, outsideKeyboard: Bool = false) throws {
         XCTAssertEqual(app.state, .runningForeground)
-        XCTAssertTrue(element.exists && element.isHittable)
+        let exists = element.exists
+        let hittable: Bool? = exists ? element.isHittable : nil
+        if !(exists && hittable == true) {
+            captureSaveFailureMeasurement(element, in: app, boundary: "assertVisible",
+                                          observedExists: exists, observedHittable: hittable)
+        }
+        XCTAssertTrue(exists && hittable == true)
         let frame = element.frame
         XCTAssertTrue(hasArea(frame))
         let owners = app.windows.containing(NSPredicate(format: "identifier == %@", element.identifier)).allElementsBoundByAccessibilityElement
@@ -730,6 +744,77 @@ final class MirrorAdaptiveUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(frame.minY, status.maxY)
         }
         #endif
+    }
+
+    /// 실패 판정 뒤에만 보완 관측한다. 새 조회는 원래 assertion과 조작 조건을 바꾸지 않는다.
+    @MainActor
+    private func captureSaveFailureMeasurement(_ element: XCUIElement, in app: XCUIApplication,
+                                               boundary: String, observedExists: Bool? = nil,
+                                               observedHittable: Bool? = nil,
+                                               observedGeometry: (CGRect, CGRect?, Int, Int)? = nil) {
+        guard let diagnosticCase, diagnosticRequestedElement == .captureSave else { return }
+        let exists = observedExists ?? element.exists
+        if exists {
+            guard element.elementType == .button, element.identifier == "capture.save" else { return }
+        }
+        let enabled: Bool? = exists ? element.isEnabled : nil
+        let hittable: Bool? = observedHittable ?? (exists ? element.isHittable : nil)
+        let frame: CGRect? = observedGeometry?.0 ?? (exists ? element.frame : nil)
+        let windows = app.windows.containing(.button, identifier: "capture.save").allElementsBoundByIndex
+        let ownerHasCaptureClose: Bool? = windows.count == 1
+            ? windows[0].buttons.matching(identifier: "capture.close").firstMatch.exists : nil
+        let geometry: (CGRect?, Int, Int)
+        if let observedGeometry {
+            geometry = (observedGeometry.1, observedGeometry.2, observedGeometry.3)
+        } else {
+            let predicate = NSPredicate(format: "identifier == %@", "capture.save")
+            let surfaces = app.scrollViews.containing(predicate).allElementsBoundByIndex
+                + app.tables.containing(predicate).allElementsBoundByIndex
+                + app.collectionViews.containing(predicate).allElementsBoundByIndex
+            let windowFrames = app.windows.allElementsBoundByIndex.map { $0.frame }
+            let owners: [CGRect] = surfaces.compactMap { surface in
+                let bounds = surface.frame
+                guard let frame, hasArea(bounds) && surface.isHittable
+                    && surface.descendants(matching: .button).matching(predicate).firstMatch.exists
+                    && bounds.minX <= frame.midX && frame.midX <= bounds.maxX
+                    && windowFrames.contains(where: { $0.intersects(bounds) }) else { return nil }
+                return bounds
+            }
+            geometry = (owners.min(by: { $0.width * $0.height < $1.width * $1.height }), surfaces.count, owners.count)
+        }
+        func coordinates(_ value: CGRect?) -> Any {
+            guard let value else { return NSNull() }
+            let values = [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)]
+            guard values.allSatisfy({ $0.isFinite && abs($0) <= 100_000 }) else { return NSNull() }
+            return values
+        }
+        emitMeasurement("UI adaptive capture save failure:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue, "requestSequence": diagnosticRequestSequence,
+            "requestedElement": "captureSave", "boundary": boundary, "exists": exists,
+            "enabled": enabled.map { $0 as Any } ?? NSNull(),
+            "hittable": hittable.map { $0 as Any } ?? NSNull(),
+            "windowOwnerCount": windows.count,
+            "ownerHasCaptureClose": ownerHasCaptureClose.map { $0 as Any } ?? NSNull(),
+            "scrollCandidateCount": geometry.1, "scrollOwnerCount": geometry.2,
+            "frame": coordinates(frame), "viewport": coordinates(geometry.0),
+        ])
+        // 첫 합성 입력의 실패만 보존한다. 성공 stage·촬영 순서·통과 판정으로 취급하지 않는다.
+        guard diagnosticCase == .captureValidation, diagnosticProgressPhase == .captureInputComplete,
+              !captureFailureScreenshotRecorded, exists, windows.count == 1, ownerHasCaptureClose == true,
+              app.state == .runningForeground, app.windows.count == 1 else { return }
+        let window = windows[0]
+        let titleCount = window.textFields.matching(identifier: "capture.title").count
+            + window.textViews.matching(identifier: "capture.title").count
+        guard titleCount == 1, window.buttons.matching(identifier: "capture.close").count == 1 else { return }
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "mirror-adaptive-failure-capture-save"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        captureFailureScreenshotRecorded = true
+        emitMeasurement("UI adaptive capture save failure screenshot:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue, "requestSequence": diagnosticRequestSequence,
+            "name": "mirror-adaptive-failure-capture-save", "status": "complete",
+        ])
     }
 
     @MainActor
@@ -961,6 +1046,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
 
     @MainActor
     private func progress(_ phase: ProgressPhase, method: String = #function, step: Int = 0) {
+        diagnosticProgressPhase = phase
         if phase == .started { progressSequence = 0 }
         progressSequence += 1
         // 고정 사례명과 도달 경계만 기록하며 입력값·AX 요소·검증 결과를 포함하지 않는다.
@@ -1025,6 +1111,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private func beginCaseDiagnostics(_ value: DiagnosticCase) {
         diagnosticCase = value
         diagnosticRequestSequence = 0
+        diagnosticRequestedElement = nil
+        diagnosticProgressPhase = nil
+        captureFailureScreenshotRecorded = false
         diagnosticAuditSequence = 0
         diagnosticAuditIssueSequence = 0
         emitMeasurement("UI adaptive case diagnostic:", fields: [
@@ -1037,6 +1126,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private func recordLookupRequest(_ element: RequestedElement) {
         guard let diagnosticCase else { return }
         diagnosticRequestSequence += 1
+        diagnosticRequestedElement = element
         emitMeasurement("UI adaptive case diagnostic:", fields: [
             "schemaVersion": 1, "case": diagnosticCase.rawValue,
             "requestSequence": diagnosticRequestSequence, "requestedElement": element.rawValue,
