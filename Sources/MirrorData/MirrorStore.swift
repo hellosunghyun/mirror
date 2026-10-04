@@ -84,6 +84,11 @@ public actor MirrorStore {
     private var deleted = false
 
     public init(configuration: StoreConfiguration) async throws {
+        try await self.init(configuration: configuration, beforeInitialProjection: nil)
+    }
+
+    /// 재생과 최종 쓰기 사이의 경합을 실제 초기화 경로에서 재현한다. 제품 진입점은 hook을 사용하지 않는다.
+    init(configuration: StoreConfiguration, beforeInitialProjection: (@Sendable () async throws -> Void)?) async throws {
         guard !configuration.workspaceKey.isEmpty, !configuration.workspaceEpoch.isEmpty,
               UUID(uuidString: configuration.deviceID) != nil,
               configuration.lockTimeout > .zero else { throw StoreError.invalidConfiguration }
@@ -129,12 +134,15 @@ public actor MirrorStore {
         self.pending = report.pending
         self.quarantined = report.quarantined
         if let setting = report.settings { self.policy = setting }
+        if let beforeInitialProjection { try await beforeInitialProjection() }
         let projectionLease = try await gate.acquire()
+        defer { projectionLease.release() }
+        // 재생 중 다른 인스턴스가 세대를 중지하거나 전환했다면 옛 초기화가 투영을 쓰지 않는다.
+        try assertIdentity()
         if try await persistence.historyChanges(after: historyCursor).changed {
             projectionLease.release()
             try await rebuild()
         } else {
-            defer { projectionLease.release() }
             try await persistence.saveProjection(try Self.projectionValues(tasks: self.tasks, policy: self.policy), replacingTasks: true)
         }
     }

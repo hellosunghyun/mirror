@@ -948,6 +948,62 @@ struct StoreIntegrationTests {
         #expect(await reopened.cloudStoreIdentifiers().isEmpty)
     }
 
+    @Test("초기 원본 재생 뒤 세대 중지·전환은 낡은 initializer의 projection 저장을 막는다", arguments: [false, true])
+    func initializationRechecksIdentityBeforeProjection(transitioning: Bool) async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let owner = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        let envelope = try capture(key: "initialization-boundary", context: context)
+        let committed = await owner.execute(envelope, at: context.capturedAt)
+        #expect(committed.state == .locallyCommitted)
+        let original = try await owner.snapshot()
+        let observer = try await CoreDataPersistence.open(configuration: configuration)
+        let projectionMarker = Data("new-owner-projection".utf8)
+        let gate = ProcessWriteGate(url: configuration.directory.appendingPathComponent("Writer.lock"), timeout: configuration.lockTimeout)
+
+        await #expect(throws: StoreError.obsoleteEpoch) {
+            _ = try await MirrorStore(configuration: configuration, beforeInitialProjection: {
+                if transitioning {
+                    let lease = try await gate.acquire()
+                    defer { lease.release() }
+                    let url = configuration.directory.appendingPathComponent("StorageIdentity.json")
+                    var identity = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+                    identity["isTransitioning"] = true
+                    try JSONSerialization.data(withJSONObject: identity).write(to: url, options: .atomic)
+                } else {
+                    // 실제 생산 suspend가 generation을 회전시킨다. canonical history는 바뀌지 않는다.
+                    try await owner.suspend()
+                }
+                // 옛 initializer가 기존 history 분기의 saveProjection을 실행하면 이 값이 덮인다.
+                try await observer.saveProjection(["policy": projectionMarker])
+            })
+        }
+        #expect(try await observer.localValue(key: "policy") == projectionMarker)
+        #expect(try await observer.operations().count == original.records.count)
+
+        // 실패한 initializer는 최종 Writer.lock을 놓아야 하며 원본도 재진입·동일 키 재시도 가능해야 한다.
+        let afterFailure = try await gate.acquire()
+        defer { afterFailure.release() }
+        if transitioning {
+            let url = configuration.directory.appendingPathComponent("StorageIdentity.json")
+            var identity = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            identity["isTransitioning"] = false
+            try JSONSerialization.data(withJSONObject: identity).write(to: url, options: .atomic)
+        }
+        afterFailure.release()
+        try await observer.close()
+        let reopened = try await MirrorStore(configuration: configuration)
+        let restored = try await reopened.snapshot()
+        #expect(restored.tasks == original.tasks)
+        #expect(restored.records == original.records)
+        let retried = await reopened.execute(envelope, at: context.capturedAt)
+        #expect(retried.state == .alreadyApplied)
+        #expect(retried.operationID == committed.operationID)
+        try await reopened.suspend()
+        try await owner.suspend()
+    }
+
     @Test("다른 SQLite store의 원본 알림 뒤 snapshot에 저장한 작업이 나타난다", .timeLimit(.minutes(1)))
     func canonicalChangeObservationAcrossInstances() async throws {
         let configuration = temporaryConfiguration()
