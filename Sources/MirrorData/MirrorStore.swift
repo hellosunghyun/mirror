@@ -433,6 +433,11 @@ public actor MirrorStore {
     }
 
     public func importArchive(_ data: Data, consent: ArchiveImportConsent = .init()) async throws -> ImportReport {
+        try await importArchive(data, consent: consent, failurePoint: .none)
+    }
+
+    func importArchive(_ data: Data, consent: ArchiveImportConsent,
+                       failurePoint: StoreFailurePoint) async throws -> ImportReport {
         try assertIdentity()
         let parsed = try Self.parseArchive(data, configuration: configuration) // 모든 행의 형식을 저장 전에 검증한다.
         let metadata = try Self.archiveMetadata(data)
@@ -447,8 +452,12 @@ public actor MirrorStore {
             counts = Self.importCounts(parsed, existing: existing)
             var seen = Set(existing.map(Self.rowFingerprint))
             let additions = parsed.filter { seen.insert(Self.rowFingerprint($0)).inserted }
-            try await persistence.appendMany(additions)
+            // 원본만 남고 계정 출처가 사라지는 중단 경계를 막는다. 뒤 append가 실패하면
+            // 출처가 보수적으로 넓게 남지만 이후 이관에서 필요한 동의를 생략하지 않는다.
             try preserveOriginScopes(metadata.scopes)
+            if failurePoint == .beforeCanonicalSave { throw StoreError.persistence("복원 원본 저장 전 장애입니다.") }
+            try await persistence.appendMany(additions)
+            if failurePoint == .afterCanonicalSave { throw StoreError.persistence("복원 원본 저장 후 장애입니다.") }
             lease.release()
         } catch { lease.release(); throw error }
         do { try await rebuild(); return counts }

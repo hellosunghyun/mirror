@@ -930,6 +930,70 @@ struct StoreIntegrationTests {
         #expect((metadata["originAccountScopes"] as? [String])?.contains("account-another-nonsensitive-fingerprint") == true)
     }
 
+    @Test("복원 원본 저장 전후 장애에도 재시작 export가 계정 출처와 이관 동의를 보존한다", arguments: [false, true])
+    func importFailurePreservesAccountProvenance(afterCanonicalSave: Bool) async throws {
+        let sourceConfiguration = temporaryConfiguration()
+        let targetConfiguration = temporaryConfiguration()
+        let receiverConfiguration = temporaryConfiguration()
+        defer {
+            for configuration in [sourceConfiguration, targetConfiguration, receiverConfiguration] {
+                try? FileManager.default.removeItem(at: configuration.directory)
+            }
+        }
+        func rawRows(in data: Data) throws -> [Data] {
+            let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let rows = try #require(object["rawOperations"] as? [[String: Any]])
+            return try rows.map { try JSONSerialization.data(withJSONObject: $0, options: .sortedKeys) }
+                .sorted { $0.lexicographicallyPrecedes($1) }
+        }
+        let context = try fixedContext()
+        let source = try await MirrorStore(configuration: sourceConfiguration)
+        let incoming = try capture(key: "foreign-import", title: "이관할 원본", context: context)
+        let incomingResult = await source.execute(incoming, at: context.capturedAt)
+        #expect(incomingResult.state == .locallyCommitted)
+        let original = try await source.exportArchive(exportedAt: context.capturedAt)
+        var object = try #require(try JSONSerialization.jsonObject(with: original) as? [String: Any])
+        let foreignScope = "account-import-fault-fixture"
+        object["sourceAccountScope"] = foreignScope
+        object["originAccountScopes"] = [foreignScope]
+        let archive = try JSONSerialization.data(withJSONObject: object)
+
+        let target = try await MirrorStore(configuration: targetConfiguration)
+        let existing = try capture(key: "existing-local", title: "기존 원본", context: context)
+        let existingResult = await target.execute(existing, at: context.capturedAt)
+        #expect(existingResult.state == .locallyCommitted)
+        let before = try await target.exportArchive(exportedAt: context.capturedAt)
+        do {
+            _ = try await target.importArchive(archive, consent: .init(accountChangeConfirmed: true),
+                failurePoint: afterCanonicalSave ? .afterCanonicalSave : .beforeCanonicalSave)
+            Issue.record("실제 복원 저장 경계에 장애가 적용되어야 합니다.")
+        } catch StoreError.persistence { }
+        try await target.suspend()
+
+        let reopened = try await MirrorStore(configuration: targetConfiguration)
+        let exported = try await reopened.exportArchive(exportedAt: context.capturedAt)
+        let expected = try rawRows(in: before) + (afterCanonicalSave ? rawRows(in: archive) : [])
+        #expect(try rawRows(in: exported) == expected.sorted { $0.lexicographicallyPrecedes($1) })
+        let metadata = try #require(try JSONSerialization.jsonObject(with: exported) as? [String: Any])
+        #expect((metadata["originAccountScopes"] as? [String])?.contains(foreignScope) == true)
+        let receiver = try await MirrorStore(configuration: receiverConfiguration)
+        #expect(try await receiver.previewArchive(exported).requiresAccountConfirmation)
+        await #expect(throws: StoreError.confirmationRequired) { try await receiver.importArchive(exported) }
+
+        let retry = try await reopened.importArchive(archive, consent: .init(accountChangeConfirmed: true))
+        #expect(retry.inserted == (afterCanonicalSave ? 0 : 1))
+        #expect(retry.duplicates == (afterCanonicalSave ? 1 : 0))
+        let final = try await reopened.exportArchive(exportedAt: context.capturedAt)
+        let allRows = try rawRows(in: before) + rawRows(in: archive)
+        #expect(try rawRows(in: final) == allRows.sorted { $0.lexicographicallyPrecedes($1) })
+        let duplicate = await reopened.execute(incoming, at: context.capturedAt)
+        #expect(duplicate.state == .alreadyApplied)
+        #expect(duplicate.operationID == incomingResult.operationID)
+        try await source.suspend()
+        try await receiver.suspend()
+        try await reopened.suspend()
+    }
+
     @Test("계정 경계 suspend는 원본을 유지하고 구 writer를 차단한다")
     func suspendKeepsOriginalRecords() async throws {
         let configuration = temporaryConfiguration()
