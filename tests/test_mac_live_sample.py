@@ -181,6 +181,66 @@ class LiveSampleOwnershipTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             helper.select_process(rows, executable, 100.0, 501, lambda _: None)
 
+    def test_optional_process_counts_follow_the_same_short_circuit_selection(self):
+        executable = Path('/synthetic/' + PRIVATE)
+        rows = [(0, 501, 101.0), (10, 502, 101.0), (11, 501, 100.0),
+                (12, 501, 101.0), (13, 501, 102.0)]
+        paths = {12: None, 13: executable}
+        for collect in (False, True):
+            diagnostic = {} if collect else None
+            reader = mock.Mock(side_effect=paths.get)
+            selected = helper.select_process(rows, executable, 100.0, 501, reader, diagnostic=diagnostic)
+            self.assertEqual(selected, (13, 102.0))
+            self.assertEqual(reader.call_args_list, [mock.call(12), mock.call(13)])
+            if collect:
+                self.assertEqual(diagnostic, {'processFilterCounts': {
+                    'rowCount': 5, 'positivePIDCount': 4, 'sameUIDCount': 3,
+                    'bornAfterStartCount': 2, 'matchingPathCount': 1,
+                    'countsCapped': False, 'scanComplete': True}})
+                self.assertNotIn(PRIVATE, json.dumps(diagnostic))
+        for candidates, expected in (([], [0, 0, 0, 0, 0]), (rows[:1], [1, 0, 0, 0, 0]),
+                (rows[1:2], [1, 1, 0, 0, 0]), (rows[2:3], [1, 1, 1, 0, 0]),
+                (rows[3:4], [1, 1, 1, 1, 0]), (rows[-1:] * 2, [2, 2, 2, 2, 2])):
+            with self.subTest(expected=expected):
+                diagnostic = {}
+                with self.assertRaises(helper.CheckFailure):
+                    helper.select_process(candidates, executable, 100.0, 501, paths.get, diagnostic=diagnostic)
+                counts = diagnostic['processFilterCounts']
+                self.assertEqual([counts[key] for key in helper.PROCESS_COUNTS], expected)
+                self.assertTrue(counts['scanComplete'])
+
+    def test_count_cap_does_not_stop_scanning_or_allow_duplicate_owners(self):
+        executable = Path('/synthetic/' + PRIVATE)
+        for count in (65535, 65536):
+            diagnostic = {}
+            with self.subTest(count=count), self.assertRaises(helper.CheckFailure):
+                helper.select_process(((17, 501, 101.0) for _ in range(count)), executable,
+                                      100.0, 501, lambda _: executable, diagnostic=diagnostic)
+            counts = diagnostic['processFilterCounts']
+            self.assertEqual([counts[key] for key in helper.PROCESS_COUNTS], [65535] * 5)
+            self.assertEqual(counts['countsCapped'], count > 65535)
+            self.assertTrue(counts['scanComplete'])
+        diagnostic = {}
+        rows = [(0, 501, 101.0)] * 65536 + [(17, 501, 101.0)]
+        self.assertEqual(helper.select_process(rows, executable, 100.0, 501, lambda _: executable,
+                                              diagnostic=diagnostic), (17, 101.0))
+        self.assertEqual(diagnostic['processFilterCounts'], {
+            'rowCount': 65535, 'positivePIDCount': 1, 'sameUIDCount': 1,
+            'bornAfterStartCount': 1, 'matchingPathCount': 1, 'countsCapped': True, 'scanComplete': True})
+
+    def test_path_read_exception_exposes_only_partial_filter_counts(self):
+        diagnostic = {}
+        reader = mock.Mock(side_effect=PermissionError(PRIVATE))
+        with self.assertRaises(PermissionError) as failure:
+            helper.select_process([(17, 501, 101.0), (18, 501, 102.0)], Path('/' + PRIVATE),
+                                  100.0, 501, reader, diagnostic=diagnostic)
+        result = helper.failure_details(failure.exception, 'processOwnerBefore', diagnostic['processFilterCounts'])
+        self.assertEqual(result, {'stage': 'processOwnerBefore', 'failureKind': 'permissionDenied',
+            'processFilterCounts': {'rowCount': 1, 'positivePIDCount': 1, 'sameUIDCount': 1,
+                'bornAfterStartCount': 1, 'matchingPathCount': 0, 'countsCapped': False, 'scanComplete': False}})
+        reader.assert_called_once_with(17)
+        self.assertNotIn(PRIVATE, json.dumps(result))
+
     def test_process_list_uses_private_lstart_and_no_command_line_fields(self):
         completed = subprocess.CompletedProcess([], 0,
             stdout=b'  17 501 Sun Oct  4 12:00:00 2026\n', stderr=PRIVATE.encode())
@@ -200,6 +260,20 @@ class LiveSampleOwnershipTests(unittest.TestCase):
 
 
 class LiveSamplePrivacyTests(unittest.TestCase):
+    def test_filter_metadata_rejects_unknown_fields_raw_values_types_and_unbounded_counts(self):
+        counts = {**dict.fromkeys(helper.PROCESS_COUNTS, 0), 'countsCapped': False, 'scanComplete': True}
+        invalid = [{**counts, 'path': PRIVATE}, {**counts, 'rowCount': PRIVATE},
+                   {**counts, 'rowCount': True}, {**counts, 'rowCount': -1},
+                   {**counts, 'rowCount': 65536}, {**counts, 'positivePIDCount': 1},
+                   {**counts, 'countsCapped': 1}, {**counts, 'scanComplete': PRIVATE}]
+        for value in invalid:
+            self.assertEqual(helper.process_filter_details(value), {})
+        # 이전 소유 조회의 집계가 후속 receipt/process-list 오류에 붙으면 안 된다.
+        for stage in ('receiptAfter', 'processListAfter', 'sample', PRIVATE):
+            result = helper.failure_details(ValueError(PRIVATE), stage, counts)
+            self.assertNotIn('processFilterCounts', result)
+            self.assertNotIn(PRIVATE, json.dumps(result))
+
     def test_failure_metadata_uses_types_and_internal_codes_without_copying_exception_content(self):
         failures = [(json.JSONDecodeError(PRIVATE, PRIVATE, 0), 'jsonInvalid'),
                     (UnicodeDecodeError('ascii', b'\xff', 0, 1, PRIVATE), 'textInvalid'),
@@ -335,7 +409,8 @@ class LiveSampleWatchTests(unittest.TestCase):
         with mock.patch.dict(helper.os.environ, environment, clear=True), \
                 mock.patch.object(helper.signal, 'signal'), \
                 mock.patch.object(helper.os, 'getppid', return_value=42), \
-                mock.patch.object(helper.os, 'getuid', return_value=501), \
+                mock.patch.object(helper.os, 'getuid', return_value=501,
+                                  side_effect=[501, PermissionError(PRIVATE)] if mode == 'postUIDRaises' else None), \
                 mock.patch.object(helper.time, 'monotonic', side_effect=[0.0, 0.0, 15.0, 15.0, 15.0, 15.0]), \
                 mock.patch.object(helper.time, 'sleep') as sleep, \
                 mock.patch.object(helper, 'process_rows', side_effect=rows), \
@@ -405,6 +480,12 @@ class LiveSampleWatchTests(unittest.TestCase):
             self.assertEqual(result['status'], status)
             self.assertEqual(result['sampleExit'], code)
             self.assertNotIn('frameCounts', result)
+            if mode == 'pidReused':
+                self.assertEqual(result['processFilterCounts'], {
+                    'rowCount': 1, 'positivePIDCount': 1, 'sameUIDCount': 1,
+                    'bornAfterStartCount': 1, 'matchingPathCount': 1, 'countsCapped': False, 'scanComplete': True})
+            else:
+                self.assertNotIn('processFilterCounts', result)
 
     def test_cleanup_also_runs_when_private_sample_creation_throws(self):
         diagnostic = {}
@@ -416,6 +497,7 @@ class LiveSampleWatchTests(unittest.TestCase):
     def test_post_sample_failures_keep_owner_changed_native_exit_and_cleanup(self):
         for mode, stage, kind in (('postRowsRaises', 'processListAfter', 'processTimeout'),
                                   ('postOwnerMissing', 'processOwnerAfter', 'processOwnerUnavailable'),
+                                  ('postUIDRaises', 'processOwnerAfter', 'permissionDenied'),
                                   ('buildChanged', 'receiptAfter', 'executableMismatch')):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 result = self.run_watch(directory, mode=mode, code=73)
@@ -424,6 +506,11 @@ class LiveSampleWatchTests(unittest.TestCase):
             self.assertEqual(result['stage'], stage)
             self.assertEqual(result['failureKind'], kind)
             self.assertNotIn('frameCounts', result)
+            if mode == 'postOwnerMissing':
+                self.assertEqual(result['processFilterCounts'], {
+                    **dict.fromkeys(helper.PROCESS_COUNTS, 0), 'countsCapped': False, 'scanComplete': True})
+            else:
+                self.assertNotIn('processFilterCounts', result)
 
     def test_main_identifies_pre_sample_boundaries_without_relaxing_sampling_ownership(self):
         for boundary, kind in (('receiptBefore', 'receiptMismatch'),
@@ -460,6 +547,9 @@ class LiveSampleWatchTests(unittest.TestCase):
                         rows.return_value = []
                     helper.main()
                 expected = {'status': 'diagnosticUnavailable', 'stage': boundary, 'failureKind': kind}
+                if boundary == 'processOwnerBefore':
+                    expected['processFilterCounts'] = {
+                        **dict.fromkeys(helper.PROCESS_COUNTS, 0), 'countsCapped': False, 'scanComplete': True}
                 self.assertEqual(output.getvalue(), '::notice::Mac live sample: ' + json.dumps(expected, sort_keys=True) + '\n')
                 self.assertEqual(errors.getvalue(), '')
                 sample.assert_not_called()

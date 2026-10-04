@@ -23,13 +23,23 @@ STAGES = frozenset(('arguments', 'watchSetup', 'logRead', 'receiptBefore', 'proc
 CHECK_FAILURES = frozenset(('duplicateField', 'identityUnavailable', 'receiptUnavailable',
                            'receiptMismatch', 'executableMismatch', 'processListUnavailable',
                            'processOwnerUnavailable', 'startUnavailable', 'logUnavailable'))
+PROCESS_COUNTS = ('rowCount', 'positivePIDCount', 'sameUIDCount', 'bornAfterStartCount', 'matchingPathCount')
 
 
 class CheckFailure(ValueError):
     """이 helper가 직접 판정한 고정 검증 실패. 외부 예외 문자열과 구분한다."""
 
 
-def failure_details(error, stage):
+def process_filter_details(counts):
+    if (type(counts) is not dict or set(counts) != set(PROCESS_COUNTS) | {'countsCapped', 'scanComplete'}
+            or any(type(counts[key]) is not int or not 0 <= counts[key] <= 65535 for key in PROCESS_COUNTS)
+            or any(type(counts[key]) is not bool for key in ('countsCapped', 'scanComplete'))
+            or any(counts[prior] < counts[later] for prior, later in zip(PROCESS_COUNTS, PROCESS_COUNTS[1:]))):
+        return {}
+    return {'processFilterCounts': dict(counts)}
+
+
+def failure_details(error, stage, process_filters=None):
     # stage는 마지막 진입 경계이며 OS 원인 확정값이 아니다. 예외 원문은 읽거나 출력하지 않는다.
     kind = 'unknown'
     if (isinstance(error, CheckFailure) and len(error.args) == 1
@@ -44,7 +54,10 @@ def failure_details(error, stage):
             if isinstance(error, error_type):
                 kind = value
                 break
-    return {'stage': stage if type(stage) is str and stage in STAGES else 'unknown', 'failureKind': kind}
+    result = {'stage': stage if type(stage) is str and stage in STAGES else 'unknown', 'failureKind': kind}
+    if result['stage'] in ('processOwnerBefore', 'processOwnerAfter'):
+        result.update(process_filter_details(process_filters))
+    return result
 
 
 class MarkerState:
@@ -145,9 +158,36 @@ def process_path_reader():
     return path_for
 
 
-def select_process(rows, executable, started, uid, pid_path):
-    candidates = [(pid, birth) for pid, owner, birth in rows
-                  if pid > 0 and owner == uid and birth > started and pid_path(pid) == executable]
+def select_process(rows, executable, started, uid, pid_path, *, diagnostic=None):
+    # 공개 집계만 제한한다. 모든 원본 후보의 필터 순서와 유일성 판정은 그대로 유지한다.
+    counts = {**dict.fromkeys(PROCESS_COUNTS, 0), 'countsCapped': False, 'scanComplete': False}
+    if diagnostic is not None:
+        diagnostic['processFilterCounts'] = counts
+
+    def passed(key):
+        if diagnostic is not None:
+            if counts[key] == 65535:
+                counts['countsCapped'] = True
+            else:
+                counts[key] += 1
+
+    candidates = []
+    for pid, owner, birth in rows:
+        passed('rowCount')
+        if not pid > 0:
+            continue
+        passed('positivePIDCount')
+        if not owner == uid:
+            continue
+        passed('sameUIDCount')
+        if not birth > started:
+            continue
+        passed('bornAfterStartCount')
+        if not pid_path(pid) == executable:
+            continue
+        passed('matchingPathCount')
+        candidates.append((pid, birth))
+    counts['scanComplete'] = True
     if len(candidates) != 1:
         raise CheckFailure('processOwnerUnavailable')
     return candidates[0]
@@ -255,7 +295,8 @@ def watch(directory, parent_pid, diagnostic=None):
             diagnostic['stage'] = 'processListBefore'
             rows = process_rows()
             diagnostic['stage'] = 'processOwnerBefore'
-            owner = select_process(rows, executable, started, os.getuid(), pid_path)
+            diagnostic.pop('processFilterCounts', None)
+            owner = select_process(rows, executable, started, os.getuid(), pid_path, diagnostic=diagnostic)
             diagnostic['stage'] = 'queryBefore'
             refresh()
             if stopped or not state.ready(time.monotonic()):
@@ -275,14 +316,16 @@ def watch(directory, parent_pid, diagnostic=None):
                     diagnostic['stage'] = 'processListAfter'
                     rows = process_rows()
                     diagnostic['stage'] = 'processOwnerAfter'
-                    same_owner = select_process(rows, executable, started, os.getuid(), pid_path) == owner
+                    diagnostic.pop('processFilterCounts', None)
+                    same_owner = select_process(rows, executable, started, os.getuid(), pid_path, diagnostic=diagnostic) == owner
                     diagnostic['stage'] = 'receiptAfter'
                     same_build = verify_receipt(directory, os.environ)[:2] == (executable, digest)
                 except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
                     return {'status': 'ownerChanged', 'sampleExit': code, **identity,
-                            **failure_details(error, diagnostic['stage'])}
+                            **failure_details(error, diagnostic['stage'], diagnostic.get('processFilterCounts'))}
                 if not same_owner or not same_build:
-                    return {'status': 'ownerChanged', 'sampleExit': code, **identity}
+                    return {'status': 'ownerChanged', 'sampleExit': code, **identity,
+                            **(process_filter_details(diagnostic.get('processFilterCounts')) if not same_owner else {})}
                 if code != 0:
                     return {'status': 'sampleUnavailable', 'sampleExit': code, **identity}
                 diagnostic['stage'] = 'sampleRead'
@@ -305,7 +348,8 @@ def main():
         else:
             result = watch(Path(sys.argv[1]).resolve(strict=True), int(sys.argv[2]), diagnostic)
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
-        result = {'status': 'diagnosticUnavailable', **failure_details(error, diagnostic['stage'])}
+        result = {'status': 'diagnosticUnavailable',
+                  **failure_details(error, diagnostic['stage'], diagnostic.get('processFilterCounts'))}
     print('::notice::Mac live sample: ' + json.dumps(result, sort_keys=True), flush=True)
 
 
