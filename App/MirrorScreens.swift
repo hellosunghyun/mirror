@@ -1377,6 +1377,9 @@ struct MirrorPlanPicker: View {
     @State private var showDates = false
     @State private var showTaskTitles = false
     private var usesQuickChoices: Bool { request.review == nil && request.widgetState == nil }
+    private var planChoicesDisabled: Bool {
+        request.widgetState == nil && (model.projectionPending || model.hasPendingPlanPickerDecision(request))
+    }
     @ViewBuilder var body: some View {
         Group {
             if model.completedWidgetPickerID == request.id {
@@ -1404,6 +1407,7 @@ struct MirrorPlanPicker: View {
                         }
                         .buttonStyle(.bordered)
                     }
+                    .disabled(planChoicesDisabled)
                 }
                 Section {
                     if request.taskIDs.count > 1 {
@@ -1427,6 +1431,7 @@ struct MirrorPlanPicker: View {
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("plan.weekOnly")
                     }
+                    .disabled(planChoicesDisabled)
                 } else {
                     Section {
                         DisclosureGroup("다른 날짜", isExpanded: $showDates) {
@@ -1438,9 +1443,22 @@ struct MirrorPlanPicker: View {
                             Text(useWeek ? "날짜를 고르면 그 주만 저장해요. 월요일에 자동 배치하지 않아요." : "날짜 버튼을 누르면 해당 날짜로 저장해요. 달력을 열거나 월을 넘기는 행동은 저장하지 않아요.").font(.caption)
                         }
                     }
+                    .disabled(planChoicesDisabled)
                     Section {
                         Button("당분간 보관") { choose(.parked) }.accessibilityIdentifier("plan.park")
                     }
+                    .disabled(planChoicesDisabled)
+                }
+                if let target = model.pendingPlanPickerTarget(request) {
+                    Text("‘\(planLabel(target))’ 저장 결과를 먼저 확인해 주세요.")
+                        .accessibilityIdentifier("plan.pending")
+                    if model.hasUnconfirmedPlanPickerResult(request) {
+                        Text("닫기는 저장 요청을 취소하지 않아요. 닫은 뒤에도 결과를 다시 확인할 수 있어요.")
+                            .font(.caption).foregroundStyle(MirrorPalette.supportingText)
+                    }
+                    Button("저장 결과 다시 확인") { Task { await model.retryPlanPicker(requestID: request.id) } }
+                        .disabled(!model.canRetryPlanPicker(request))
+                        .frame(minHeight: 44).accessibilityIdentifier("plan.retry")
                 }
                 if let problem = model.problem { Text(problem).foregroundStyle(.red) }
             }
@@ -1448,7 +1466,8 @@ struct MirrorPlanPicker: View {
             #if os(iOS)
             .safeAreaInset(edge: .top, spacing: 0) {
                 MirrorSheetHeader(title: request.taskIDs.count > 1 ? "여러 개 날짜 배치" : "미루기",
-                                  actionTitle: "취소", actionIdentifier: "plan.cancel", isDisabled: model.isSaving) {
+                                  actionTitle: model.hasUnconfirmedPlanPickerResult(request) ? "닫기" : "취소",
+                                  actionIdentifier: "plan.cancel", isDisabled: model.isSaving) {
                     model.closePlanPicker(requestID: request.id)
                 }
             }
@@ -1458,7 +1477,7 @@ struct MirrorPlanPicker: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { model.closePlanPicker(requestID: request.id) } label: {
-                        Text("취소")
+                        Text(model.hasUnconfirmedPlanPickerResult(request) ? "닫기" : "취소")
                     }
                     .accessibilityIdentifier("plan.cancel")
                 }
@@ -1530,7 +1549,7 @@ struct MirrorPlanPicker: View {
         }
     }
 
-    private func choose(_ target: PlanTarget) { Task { await model.choosePlan(request, target: target) } }
+    private func choose(_ target: PlanTarget) { Task { await model.choosePlan(request, target: target, fromPicker: true) } }
 }
 
 @MainActor

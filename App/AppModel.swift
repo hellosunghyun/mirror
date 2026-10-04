@@ -102,12 +102,12 @@ final class AppModel {
     var workspaceChangeBlockedMessage: String? {
         switch WorkspaceChangeBlocker.current(detailEditing: isDetailEditing, capture: showCapture,
                                               projectionPending: projectionPending, saving: isSaving,
-                                              pendingCommand: widgetDecision != nil) {
+                                              pendingCommand: widgetDecision != nil || planPickerDecision != nil) {
         case .detailEditing: "편집 중인 내용을 저장하거나 편집을 취소한 뒤 저장 공간을 바꿀 수 있어요."
         case .capture: "열린 입력을 저장하거나 닫은 뒤 저장 공간을 바꿀 수 있어요."
         case .projectionPending: "저장 결과를 먼저 다시 확인한 뒤 저장 공간을 바꿀 수 있어요."
         case .saving: "현재 저장을 마친 뒤 저장 공간을 바꿀 수 있어요."
-        case .pendingCommand: "위젯의 저장 결과를 다시 확인하거나 마감 확인을 취소한 뒤 저장 공간을 바꿀 수 있어요."
+        case .pendingCommand: "날짜 배치의 저장 결과를 다시 확인하거나 마감 확인을 취소한 뒤 저장 공간을 바꿀 수 있어요."
         case nil: nil
         }
     }
@@ -240,6 +240,14 @@ final class AppModel {
         let configuration: StoreConfiguration
     }
     private var widgetDecision: PendingWidgetDecision?
+    private struct PendingPlanPickerDecision {
+        let request: PlanPickerRequest
+        var ownership: PlanPickerDecisionOwnership
+        var awaitingConfirmation = false
+        let store: MirrorStore
+        let configuration: StoreConfiguration
+    }
+    private var planPickerDecision: PendingPlanPickerDecision?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let systemPreferenceJournal = SystemPreferenceUpdateJournal(defaults: .standard)
     @ObservationIgnored private let preferenceKey = "Mirror.preferences.v1"
@@ -443,6 +451,9 @@ final class AppModel {
             let next = try PlanningContext.capture(at: now, timeZoneID: preferences.timeZoneID,
                                                    policyRevision: preferences.policyRevision)
             if let context, context.planningDay != next.planningDay || context.policyRevision != next.policyRevision {
+                if let decision = planPickerDecision, decision.awaitingConfirmation {
+                    cancelPlanPickerConfirmation(decision.ownership.envelope)
+                }
                 review = nil; picker = nil; confirmation = nil
                 defaults.removeObject(forKey: sessionKey)
                 feedback = "날짜나 계획 시간대가 바뀌었어요. 현재 기준으로 다시 보여드려요."
@@ -866,6 +877,10 @@ final class AppModel {
 
     func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil,
                     reviewSession: AppReviewSession? = nil) {
+        guard planPickerDecision == nil, widgetDecision == nil else {
+            problem = "이전 날짜 배치의 저장 결과를 먼저 다시 확인해 주세요."
+            return
+        }
         guard !isSaving, !projectionPending, !isDetailEditing,
               let context, (1...20).contains(taskIDs.count) else { return }
         if reviewCard != nil {
@@ -888,6 +903,9 @@ final class AppModel {
         guard !isSaving, pickerPresentationState.close(requestID: requestID) else { return false }
         if let decision = widgetDecision, decision.request.id == requestID {
             cancelWidgetConfirmation(decision.ownership.envelope)
+        }
+        if let decision = planPickerDecision, decision.request.id == requestID {
+            cancelPlanPickerConfirmation(decision.ownership.envelope)
         }
         picker = nil
         return true
@@ -959,7 +977,8 @@ final class AppModel {
         await choosePlan(request, target: .day(tomorrow))
     }
 
-    func choosePlan(_ request: PlanPickerRequest, target: PlanTarget) async {
+    func choosePlan(_ request: PlanPickerRequest, target: PlanTarget, fromPicker: Bool = false) async {
+        if fromPicker { guard picker?.id == request.id else { return } }
         if request.widgetState != nil {
             _ = await commitWidget(request, target: target)
             return
@@ -970,11 +989,102 @@ final class AppModel {
         } else { payload = .batchSetPlan(items: request.expected, target: target) }
         let envelope = makeEnvelope(payload, context: request.displayedContext, token: request.token)
         guard let envelope else { return }
+        if fromPicker {
+            if let previous = planPickerDecision {
+                guard previous.ownership.acceptsSubmission(requestID: request.id, envelope: envelope) else {
+                    problem = "이전 날짜 배치의 저장 결과를 먼저 다시 확인해 주세요."
+                    return
+                }
+                await retryPlanPicker(requestID: request.id)
+                return
+            }
+            guard !isSaving, !projectionPending, widgetDecision == nil, let store, let configuration,
+                  let ownership = PlanPickerDecisionOwnership(requestID: request.id, observationID: storeObservationID,
+                      workspaceKey: configuration.workspaceKey, envelope: envelope) else { return }
+            planPickerDecision = PendingPlanPickerDecision(request: request, ownership: ownership,
+                                                           store: store, configuration: configuration)
+            await executePlanPickerDecision(ownership)
+            return
+        }
         if await execute(envelope, success: "\(planLabel(target))로 보냈어요.") {
             if !completeLibraryBatchPicker(envelope), batchPickerOwner?.id != request.id {
                 closePlanPicker(requestID: request.id)
             }
         }
+    }
+
+    func hasPendingPlanPickerDecision(_ request: PlanPickerRequest) -> Bool {
+        planPickerDecision?.request.id == request.id
+    }
+    func hasUnconfirmedPlanPickerResult(_ request: PlanPickerRequest) -> Bool {
+        guard let decision = planPickerDecision, decision.request.id == request.id else { return false }
+        return !decision.awaitingConfirmation
+    }
+    func pendingPlanPickerTarget(_ request: PlanPickerRequest) -> PlanTarget? {
+        guard let decision = planPickerDecision, decision.request.id == request.id else { return nil }
+        switch decision.ownership.envelope.payload {
+        case let .setPlan(_, target, _), let .batchSetPlan(_, target): return target
+        default: return nil
+        }
+    }
+    func canRetryPlanPicker(_ request: PlanPickerRequest) -> Bool {
+        guard let decision = planPickerDecision, decision.request.id == request.id,
+              let store, let configuration else { return false }
+        return decision.ownership.canRetry(whileProjectionPending: projectionPending, pendingEnvelope: retryEnvelope)
+            && decision.ownership.rebindingForRetry(observationID: storeObservationID, originalStore: decision.store,
+                currentStore: store, originalConfiguration: decision.configuration, currentConfiguration: configuration) != nil
+    }
+    func retryPlanPicker(requestID: UUID) async {
+        guard !isSaving, var decision = planPickerDecision, decision.request.id == requestID,
+              decision.ownership.canRetry(whileProjectionPending: projectionPending, pendingEnvelope: retryEnvelope),
+              let store, let configuration,
+              let rebound = decision.ownership.rebindingForRetry(observationID: storeObservationID,
+                  originalStore: decision.store, currentStore: store, originalConfiguration: decision.configuration,
+                  currentConfiguration: configuration) else { return }
+        if let batch = batchPickerOwner, decision.request.review == nil, decision.request.widgetState == nil,
+           decision.ownership.ownsBatchRegistration(requestID: batch.id, token: batch.token, observationID: batch.observationID) {
+            batchPickerOwner = (batch.id, batch.token, rebound.observationID)
+        }
+        decision.ownership = rebound; planPickerDecision = decision
+        if decision.awaitingConfirmation { confirmation = rebound.envelope; return }
+        await executePlanPickerDecision(rebound)
+    }
+    private func ownsPlanPickerDecision(_ ownership: PlanPickerDecisionOwnership) -> Bool {
+        guard let decision = planPickerDecision, let store, let configuration,
+              ownership.isCurrent(decision.ownership, observationID: storeObservationID,
+                  workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch) else { return false }
+        return ownership.rebindingForRetry(observationID: storeObservationID, originalStore: decision.store,
+            currentStore: store, originalConfiguration: decision.configuration, currentConfiguration: configuration) == ownership
+    }
+    private func executePlanPickerDecision(_ ownership: PlanPickerDecisionOwnership) async {
+        guard ownsPlanPickerDecision(ownership) else { return }
+        let target: PlanTarget
+        switch ownership.envelope.payload {
+        case let .setPlan(_, value, _), let .batchSetPlan(_, value): target = value
+        default: return
+        }
+        let saved = await execute(ownership.envelope, success: "\(planLabel(target))로 보냈어요.", expectedPlanPickerOwner: ownership)
+        guard saved, let configuration,
+              ownership.canFinishPresentation(activeRequestID: picker?.id, observationID: storeObservationID,
+                  workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch) else { return }
+        if !completeLibraryBatchPicker(ownership.envelope), batchPickerOwner?.id != ownership.requestID {
+            closePlanPicker(requestID: ownership.requestID)
+        }
+    }
+    private func releasePlanPickerDecision(_ ownership: PlanPickerDecisionOwnership) {
+        guard ownsPlanPickerDecision(ownership) else { return }
+        deadlineConfirmationState.take(ownership.envelope)
+        if retryEnvelope == ownership.envelope { retryEnvelope = nil }
+        planPickerDecision = nil
+    }
+    private func cancelPlanPickerConfirmation(_ displayed: CommandEnvelope) {
+        guard let decision = planPickerDecision, decision.awaitingConfirmation,
+              decision.ownership.envelope == displayed, let store, let configuration,
+              decision.ownership.rebindingForRetry(observationID: storeObservationID, originalStore: decision.store,
+                  currentStore: store, originalConfiguration: decision.configuration, currentConfiguration: configuration) != nil else { return }
+        deadlineConfirmationState.take(displayed)
+        if retryEnvelope == displayed { retryEnvelope = nil }
+        planPickerDecision = nil
     }
 
     func decide(_ target: PlanTarget, card: ReviewCard, session: AppReviewSession) async {
@@ -1061,6 +1171,7 @@ final class AppModel {
     func cancelDeadlineConfirmation(_ displayed: CommandEnvelope) {
         deadlineConfirmationState.take(displayed)
         cancelWidgetConfirmation(displayed)
+        cancelPlanPickerConfirmation(displayed)
     }
     func confirmAfterDeadline(_ displayed: CommandEnvelope) async {
         guard !isSaving, let envelope = deadlineConfirmationState.take(displayed) else { return }
@@ -1095,6 +1206,14 @@ final class AppModel {
         }
         let confirmed = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: envelope.idempotencyKey,
                                         source: .app, context: envelope.context, workspaceEpoch: envelope.workspaceEpoch, payload: payload)
+        if var decision = planPickerDecision, decision.ownership.envelope == envelope {
+            guard decision.awaitingConfirmation, ownsPlanPickerDecision(decision.ownership),
+                  let ownership = PlanPickerDecisionOwnership(requestID: decision.request.id, observationID: storeObservationID,
+                      workspaceKey: decision.ownership.workspaceKey, envelope: confirmed) else { return }
+            decision.ownership = ownership; decision.awaitingConfirmation = false; planPickerDecision = decision
+            await executePlanPickerDecision(ownership)
+            return
+        }
         let pickerID = picker?.id
         if await execute(confirmed, success: "마감은 유지하고 선택한 날짜로 보냈어요.") {
             if !completeLibraryBatchPicker(confirmed), let pickerID, batchPickerOwner?.id != pickerID,
@@ -1260,6 +1379,11 @@ final class AppModel {
     }
 
     func retry() async {
+        if let decision = planPickerDecision,
+           decision.ownership.canRetry(whileProjectionPending: projectionPending, pendingEnvelope: retryEnvelope) {
+            await retryPlanPicker(requestID: decision.request.id)
+            return
+        }
         if var decision = widgetDecision,
            case let .setPlan(item, target, _) = decision.ownership.envelope.payload {
             guard !isSaving, let store, let configuration,
@@ -1294,17 +1418,24 @@ final class AppModel {
 
     @discardableResult
     private func execute(_ envelope: CommandEnvelope, success: String,
-                         expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil) async -> Bool {
+                         expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil,
+                         expectedPlanPickerOwner: PlanPickerDecisionOwnership? = nil) async -> Bool {
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
-        guard let store, !isSaving, !projectionPending || envelope.idempotencyKey == retryEnvelope?.idempotencyKey else { return false }
+        if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
+        if let pending = planPickerDecision, expectedPlanPickerOwner == nil,
+           pending.ownership.envelope.idempotencyKey == envelope.idempotencyKey { return false }
+        guard let store, !isSaving,
+              !projectionPending || retryEnvelope.map({ PendingCommandIdentity.matches($0, envelope) }) == true else { return false }
         isSaving = true; problem = nil
         defer { finishSaving() }
         if configuration?.cloudSync != nil, let cloud, !isUITesting {
             let valid = await cloud.validateLocalIdentity()
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+            if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
             guard valid else {
                 let status = await cloud.status()
                 if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+                if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
                 cloudSyncStatus = status
                 stopCanonicalObservation()
                 problem = "iCloud 계정을 확인하지 못했어요. 이전 계정 공간의 쓰기를 잠시 멈췄어요. 동기화 설정을 확인해 주세요."
@@ -1315,15 +1446,34 @@ final class AppModel {
         do { current = try PlanningContext.capture(at: now, timeZoneID: preferences.timeZoneID, policyRevision: preferences.policyRevision) }
         catch { problem = "계획 시간대를 확인해 주세요."; return false }
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+        if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
         let result = await store.execute(envelope, context: current)
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
-        return await handleResult(envelope, result: result, success: success, expectedDetailOwner: expectedDetailOwner)
+        if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
+        let updated = await handleResult(envelope, result: result, success: success,
+                                         expectedDetailOwner: expectedDetailOwner, expectedPlanPickerOwner: expectedPlanPickerOwner)
+        if let owner = expectedPlanPickerOwner {
+            guard ownsPlanPickerDecision(owner) else { return false }
+            if owner.retainsDecision(after: result, displayUpdated: updated) {
+                planPickerDecision?.awaitingConfirmation = result.state == .requiresConfirmation
+            } else {
+                releasePlanPickerDecision(owner)
+                if !updated, picker?.id == owner.requestID {
+                    problem = result.safeUserMessage + " 날짜 선택창을 닫고 최신 작업에서 다시 열어 주세요."
+                }
+            }
+        } else if updated, planPickerDecision != nil {
+            problem = "이전 날짜 배치의 저장 결과가 남아 있어요. 다시 확인해 주세요."
+        }
+        return updated
     }
     private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String,
                               expectedWidgetOwnership: WidgetDecisionOwnership? = nil,
-                              expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil) async -> Bool {
+                              expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil,
+                              expectedPlanPickerOwner: PlanPickerDecisionOwnership? = nil) async -> Bool {
         if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+        if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
         let feedbackSessionID: String?
         switch envelope.payload {
         case let .setPlan(_, _, decision): feedbackSessionID = decision?.sessionID
@@ -1350,6 +1500,7 @@ final class AppModel {
             }
             let metrics = await services.metrics
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+            if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
             let activeTime: Int?
             if case .reviewClose = envelope.payload, committed {
                 endReviewExposureSegment()
@@ -1360,6 +1511,7 @@ final class AppModel {
                                                   activeReviewMilliseconds: activeTime,
                                                   countBucket: result.affectedTaskIDs.isEmpty ? 0 : result.affectedTaskIDs.count == 1 ? 1 : result.affectedTaskIDs.count <= 5 ? 5 : 20))
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+            if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
         }
         switch result.state {
         case .locallyCommitted, .alreadyApplied:
@@ -1368,6 +1520,7 @@ final class AppModel {
             let refreshed = await refresh()
             if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+            if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
             guard refreshed else {
                 projectionPending = true; retryEnvelope = envelope
                 feedback = "저장했어요. 화면을 갱신하고 있어요."
@@ -1743,6 +1896,10 @@ final class AppModel {
             case let .review(weekly): beginReview(mode: .manualResume, weekly: weekly)
             case let .task(id): selectedTaskID = id
             case let .schedule(id, _, cardID):
+                guard planPickerDecision == nil else {
+                    problem = "이전 날짜 배치의 저장 결과를 먼저 다시 확인해 주세요."
+                    return
+                }
                 if let widgetState, let card = widgetState.card {
                     selectedTaskID = nil
                     picker = PlanPickerRequest(taskIDs: [id], expected: [PlanCommandItem(taskID: id, expected: card.expected)],
@@ -2062,7 +2219,7 @@ final class AppModel {
         completedBatchPickerID = nil; batchPickerOwner = nil
         projectionRecovery = nil; recoveryConfigurationBlocked = false
         lamportByOperationID = [:]
-        retryEnvelope = nil; widgetDecision = nil; archiveData = nil; archiveImportSelection.clear()
+        retryEnvelope = nil; widgetDecision = nil; planPickerDecision = nil; archiveData = nil; archiveImportSelection.clear()
         importObservationID = nil
         pendingImportFeedback = nil
         clearCalendarDisplays()

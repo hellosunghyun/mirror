@@ -242,6 +242,68 @@ public struct PlanPickerPresentationState: Equatable, Sendable {
     }
 }
 
+/// 재호출 ID만 바꿀 수 있다. 확인되지 않은 명령의 목표·승인·표시 기준은 바꾸지 않는다.
+public enum PendingCommandIdentity {
+    public static func matches(_ original: CommandEnvelope, _ retry: CommandEnvelope) -> Bool {
+        original.contractVersion == retry.contractVersion && original.idempotencyKey == retry.idempotencyKey
+            && original.source == retry.source && original.context == retry.context
+            && original.workspaceEpoch == retry.workspaceEpoch && original.payload == retry.payload
+    }
+}
+
+/// 일반 날짜 선택창의 원래 명령은 창을 닫아도 결과를 확인할 때까지 보존한다.
+public struct PlanPickerDecisionOwnership: Equatable, Sendable {
+    public let requestID: UUID
+    public let observationID: UUID
+    public let workspaceKey: String
+    public let envelope: CommandEnvelope
+
+    public init?(requestID: UUID, observationID: UUID, workspaceKey: String, envelope: CommandEnvelope) {
+        guard envelope.source == .app else { return nil }
+        switch envelope.payload {
+        case .setPlan, .batchSetPlan: break
+        default: return nil
+        }
+        self.requestID = requestID; self.observationID = observationID
+        self.workspaceKey = workspaceKey; self.envelope = envelope
+    }
+    public func isCurrent(_ pending: Self?, observationID: UUID, workspaceKey: String, workspaceEpoch: String) -> Bool {
+        self == pending && self.observationID == observationID && self.workspaceKey == workspaceKey
+            && envelope.workspaceEpoch == workspaceEpoch
+    }
+    public func acceptsSubmission(requestID: UUID, envelope: CommandEnvelope) -> Bool {
+        self.requestID == requestID && PendingCommandIdentity.matches(self.envelope, envelope)
+    }
+    public func canRetry(whileProjectionPending: Bool, pendingEnvelope: CommandEnvelope?) -> Bool {
+        !whileProjectionPending || pendingEnvelope.map { PendingCommandIdentity.matches(envelope, $0) } == true
+    }
+    public func ownsBatchRegistration(requestID: UUID, token: String, observationID: UUID) -> Bool {
+        self.requestID == requestID && envelope.idempotencyKey == token && self.observationID == observationID
+    }
+    public func canFinishPresentation(activeRequestID: UUID?, observationID: UUID,
+                                      workspaceKey: String, workspaceEpoch: String) -> Bool {
+        activeRequestID == requestID && self.observationID == observationID && self.workspaceKey == workspaceKey
+            && envelope.workspaceEpoch == workspaceEpoch
+    }
+    public func retainsDecision(after result: CommandResult, displayUpdated: Bool) -> Bool {
+        switch result.state {
+        case .staleContext, .staleSnapshot, .alreadyDecided, .notFound: false
+        case .locallyCommitted, .alreadyApplied: !displayUpdated
+        case .requiresConfirmation, .persistenceFailed, .committedProjectionPending, .unavailable: true
+        }
+    }
+    public func rebindingForRetry(observationID: UUID, originalStore: MirrorStore, currentStore: MirrorStore,
+                                  originalConfiguration: StoreConfiguration, currentConfiguration: StoreConfiguration) -> Self? {
+        guard originalStore === currentStore, workspaceKey == originalConfiguration.workspaceKey,
+              envelope.workspaceEpoch == originalConfiguration.workspaceEpoch,
+              originalConfiguration.workspaceKey == currentConfiguration.workspaceKey,
+              originalConfiguration.workspaceEpoch == currentConfiguration.workspaceEpoch,
+              originalConfiguration.directory.standardizedFileURL == currentConfiguration.directory.standardizedFileURL,
+              originalConfiguration.cloudSync == currentConfiguration.cloudSync else { return nil }
+        return Self(requestID: requestID, observationID: observationID, workspaceKey: workspaceKey, envelope: envelope)
+    }
+}
+
 /// 자동 alert 해제와 버튼 Task의 순서가 달라도 표시했던 요청만 소비한다.
 public struct DeadlineConfirmationState: Equatable, Sendable {
     public private(set) var presented: CommandEnvelope?

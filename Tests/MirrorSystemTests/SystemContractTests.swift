@@ -459,6 +459,175 @@ struct SystemContractTests {
         }
     }
 
+    @Test("날짜 선택창은 저장 장애 뒤 원래 날짜만 재확인하고 단일·일괄 원본을 한 번 남긴다", .timeLimit(.minutes(1)))
+    func planPickerRetryPreservesOriginalCommand() async throws {
+        for batch in [false, true] {
+            for failurePoint in [StoreFailurePoint.beforeCanonicalSave, .afterCanonicalSave] {
+                let h = try await harness(twoTasks: batch)
+                let tasks = try await h.store.snapshot().tasks
+                let items = tasks.map { PlanCommandItem(taskID: $0.taskID, expected: ExpectedVersions($0)) }
+                let target = PlanTarget.day(try h.context.planningDay.addingDays(1))
+                let otherTarget = PlanTarget.day(try h.context.planningDay.addingDays(2))
+                let payload: CommandPayload = batch ? .batchSetPlan(items: items, target: target)
+                    : .setPlan(item: try #require(items.first), target: target, review: nil)
+                let changedPayload: CommandPayload = batch ? .batchSetPlan(items: items, target: otherTarget)
+                    : .setPlan(item: try #require(items.first), target: otherTarget, review: nil)
+                let envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+                    source: .app, context: h.context, workspaceEpoch: "local-v1", payload: payload)
+                let owner = try #require(PlanPickerDecisionOwnership(requestID: UUID(), observationID: UUID(),
+                    workspaceKey: "personal-v1", envelope: envelope))
+                let failed = await h.store.execute(envelope, at: fixedInstant, failurePoint: failurePoint)
+                #expect(failed.state == (failurePoint == .beforeCanonicalSave ? .persistenceFailed : .committedProjectionPending))
+                #expect(owner.retainsDecision(after: failed, displayUpdated: false))
+                let changed = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: envelope.idempotencyKey,
+                    source: .app, context: h.context, workspaceEpoch: "local-v1", payload: changedPayload)
+                #expect(!owner.acceptsSubmission(requestID: owner.requestID, envelope: changed))
+                #expect(!owner.canRetry(whileProjectionPending: true, pendingEnvelope: changed))
+                if failurePoint == .afterCanonicalSave {
+                    // 저장 계층의 거절도 확인한다. UI는 이 다른 제출을 실행 전에 막는다.
+                    let rejected = await h.store.execute(changed, at: fixedInstant)
+                    #expect(rejected.state == .alreadyDecided)
+                }
+                let reissued = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: envelope.idempotencyKey,
+                    source: .app, context: h.context, workspaceEpoch: "local-v1", payload: payload)
+                #expect(owner.acceptsSubmission(requestID: owner.requestID, envelope: reissued))
+                #expect(owner.canRetry(whileProjectionPending: true, pendingEnvelope: reissued))
+                let recovered = await h.store.execute(owner.envelope, at: fixedInstant)
+                #expect(recovered.state == (failurePoint == .beforeCanonicalSave ? .locallyCommitted : .alreadyApplied))
+                #expect(owner.retainsDecision(after: recovered, displayUpdated: false))
+                #expect(!owner.retainsDecision(after: recovered, displayUpdated: true))
+                let snapshot = try await h.store.snapshot()
+                #expect(snapshot.records.filter { $0.idempotencyKey == envelope.idempotencyKey }.count == 1)
+                #expect(snapshot.tasks.allSatisfy { $0.plan.target == target })
+                #expect(owner.envelope == envelope)
+            }
+        }
+    }
+
+    @Test("날짜 선택창 대기는 다른 명령의 투영 복구를 막거나 그 봉투를 소비하지 않는다", .timeLimit(.minutes(1)))
+    func planPickerRetryKeepsForeignPendingCommandSeparate() async throws {
+        let h = try await harness()
+        let tasks = try await h.store.snapshot().tasks
+        let first = try #require(tasks.first { $0.taskID == h.first })
+        let second = try #require(tasks.first { $0.taskID == h.second })
+        let target = PlanTarget.day(h.context.planningDay)
+        let envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: first.taskID, expected: ExpectedVersions(first)), target: target, review: nil))
+        let owner = try #require(PlanPickerDecisionOwnership(requestID: UUID(), observationID: UUID(),
+            workspaceKey: "personal-v1", envelope: envelope))
+        let failed = await h.store.execute(envelope, at: fixedInstant, failurePoint: .beforeCanonicalSave)
+        #expect(failed.state == .persistenceFailed)
+        let other = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .editContent(taskID: second.taskID, content: try TaskContent(title: "별도 편집"),
+                expectedContent: try #require(second.versions[.content]?.headsDigest)))
+        let otherPending = await h.store.execute(other, at: fixedInstant, failurePoint: .afterCanonicalSave)
+        #expect(otherPending.state == .committedProjectionPending)
+        #expect(!owner.canRetry(whileProjectionPending: true, pendingEnvelope: other))
+        #expect(PendingCommandIdentity.matches(other, other))
+        #expect(!PendingCommandIdentity.matches(other, envelope))
+        let otherRecovered = await h.store.execute(other, at: fixedInstant)
+        #expect(otherRecovered.state == .alreadyApplied)
+        #expect(owner.canRetry(whileProjectionPending: false, pendingEnvelope: nil))
+        let recovered = await h.store.execute(owner.envelope, at: fixedInstant)
+        #expect(recovered.state == .locallyCommitted)
+        let snapshot = try await h.store.snapshot()
+        #expect(snapshot.records.filter { $0.idempotencyKey == envelope.idempotencyKey }.count == 1)
+        #expect(snapshot.records.filter { $0.idempotencyKey == other.idempotencyKey }.count == 1)
+        #expect(snapshot.tasks.first { $0.taskID == h.second }?.title == "별도 편집")
+        let rejectedOwner = PlanPickerDecisionOwnership(requestID: owner.requestID, observationID: owner.observationID,
+            workspaceKey: owner.workspaceKey, envelope: other)
+        #expect(rejectedOwner == nil)
+    }
+
+    @Test("닫힌 날짜 선택창과 이전 관측은 새 선택창을 끝내지 않고 같은 actor의 명시 재시도만 연결한다", .timeLimit(.minutes(1)))
+    func planPickerResultPreservesNewPresentationAndWorkspace() async throws {
+        let h = try await harness(twoTasks: false)
+        let configuration = await h.store.configuration
+        let task = try #require(try await h.store.snapshot().tasks.first)
+        let envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .setPlan(item: .init(taskID: task.taskID, expected: ExpectedVersions(task)),
+                target: .day(h.context.planningDay), review: nil))
+        let owner = try #require(PlanPickerDecisionOwnership(requestID: UUID(), observationID: UUID(),
+            workspaceKey: configuration.workspaceKey, envelope: envelope))
+        let pending = await h.store.execute(envelope, at: fixedInstant, failurePoint: .afterCanonicalSave)
+        #expect(owner.retainsDecision(after: pending, displayUpdated: false))
+        var presentation = PlanPickerPresentationState()
+        presentation.replace(with: owner.requestID)
+        let closed = presentation.close(requestID: owner.requestID)
+        #expect(closed)
+        #expect(owner.isCurrent(owner, observationID: owner.observationID,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch))
+        #expect(!owner.canFinishPresentation(activeRequestID: presentation.requestID, observationID: owner.observationID,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch))
+        let recovered = await h.store.execute(owner.envelope, at: fixedInstant)
+        #expect(recovered.state == .alreadyApplied)
+        let newRequestID = UUID()
+        presentation.replace(with: newRequestID)
+        #expect(!owner.canFinishPresentation(activeRequestID: presentation.requestID, observationID: owner.observationID,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch))
+        let repeatedClose = presentation.close(requestID: owner.requestID)
+        #expect(!repeatedClose && presentation.requestID == newRequestID)
+        let observation = UUID()
+        #expect(!owner.isCurrent(owner, observationID: observation,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch))
+        let rebound = try #require(owner.rebindingForRetry(observationID: observation, originalStore: h.store, currentStore: h.store,
+            originalConfiguration: configuration, currentConfiguration: configuration))
+        #expect(rebound.envelope == envelope && rebound.requestID == owner.requestID)
+        #expect(owner.ownsBatchRegistration(requestID: owner.requestID, token: envelope.idempotencyKey, observationID: owner.observationID))
+        #expect(!owner.ownsBatchRegistration(requestID: newRequestID, token: envelope.idempotencyKey, observationID: owner.observationID))
+        #expect(!owner.ownsBatchRegistration(requestID: owner.requestID, token: "another-decision", observationID: owner.observationID))
+        #expect(!owner.ownsBatchRegistration(requestID: owner.requestID, token: envelope.idempotencyKey, observationID: observation))
+        #expect(rebound.ownsBatchRegistration(requestID: owner.requestID, token: envelope.idempotencyKey, observationID: observation))
+        #expect(!owner.isCurrent(rebound, observationID: observation,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch))
+        #expect(!rebound.canFinishPresentation(activeRequestID: owner.requestID, observationID: observation,
+            workspaceKey: "different-workspace", workspaceEpoch: configuration.workspaceEpoch))
+        let reopened = try await MirrorStore(configuration: configuration)
+        #expect(owner.rebindingForRetry(observationID: observation, originalStore: h.store, currentStore: reopened,
+            originalConfiguration: configuration, currentConfiguration: configuration) == nil)
+        let widgetEnvelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: envelope.idempotencyKey,
+            source: .widget, context: h.context, workspaceEpoch: configuration.workspaceEpoch, payload: envelope.payload)
+        #expect(!PendingCommandIdentity.matches(envelope, widgetEnvelope))
+        #expect(PlanPickerDecisionOwnership(requestID: owner.requestID, observationID: owner.observationID,
+            workspaceKey: owner.workspaceKey, envelope: widgetEnvelope) == nil)
+    }
+
+    @Test("정리 선택창의 마감 승인 장애는 승인된 원래 봉투만 재시도한다", .timeLimit(.minutes(1)))
+    func planPickerDeadlineAcknowledgmentIsPartOfRetry() async throws {
+        let h = try await harness(twoTasks: false)
+        try await setWidgetHarnessDeadlines(h)
+        let task = try #require(try await h.store.snapshot().tasks.first)
+        let target = PlanTarget.day(try h.context.planningDay.addingDays(1))
+        let review = ReviewDecisionContext(cycleID: ReviewCycle.id(workspaceEpoch: "local-v1", context: h.context),
+            sessionID: UUID().uuidString, cardID: UUID().uuidString, taskID: task.taskID)
+        let item = PlanCommandItem(taskID: task.taskID, expected: ExpectedVersions(task))
+        let original = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1", payload: .setPlan(item: item, target: target, review: review))
+        let requires = await h.store.execute(original, at: fixedInstant)
+        #expect(requires.state == .requiresConfirmation)
+        let acknowledgment = DeadlineAcknowledgment(taskID: task.taskID.uuidString,
+            deadlineRevision: try #require(task.versions[.deadline]?.headsDigest), target: target)
+        let confirmed = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: original.idempotencyKey,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: task.taskID, expected: item.expected, acknowledgment: acknowledgment),
+                target: target, review: review))
+        #expect(!PendingCommandIdentity.matches(original, confirmed))
+        let owner = try #require(PlanPickerDecisionOwnership(requestID: UUID(), observationID: UUID(),
+            workspaceKey: "personal-v1", envelope: confirmed))
+        let pending = await h.store.execute(confirmed, at: fixedInstant, failurePoint: .afterCanonicalSave)
+        #expect(pending.state == .committedProjectionPending)
+        #expect(owner.retainsDecision(after: pending, displayUpdated: false))
+        #expect(!owner.acceptsSubmission(requestID: owner.requestID, envelope: original))
+        let recovered = await h.store.execute(owner.envelope, at: fixedInstant)
+        #expect(recovered.state == .alreadyApplied)
+        let snapshot = try await h.store.snapshot()
+        #expect(snapshot.records.filter { $0.idempotencyKey == confirmed.idempotencyKey }.count == 1)
+        #expect(snapshot.tasks.first?.plan.target == target)
+    }
+
     @Test("명시적 위젯 재시도는 같은 저장소 actor 재관측만 연결하고 재개설·다른 공간은 거절한다", .timeLimit(.minutes(1)))
     func widgetRetryRebindsOnlySameLiveStore() async throws {
         let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
