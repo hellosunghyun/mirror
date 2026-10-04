@@ -266,6 +266,42 @@ struct MirrorTaskRow: View {
     }
 }
 
+#if os(iOS)
+/// toolbar의 크기 요청과 분리해 실제 조작 영역을 구성한다.
+@MainActor
+private struct MirrorSheetHeader: View {
+    let title: String
+    let actionTitle: String
+    let actionIdentifier: String
+    let isDisabled: Bool
+    let action: @MainActor () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 0)
+            Button { action() } label: {
+                Text(actionTitle)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(MirrorPalette.accent)
+            .disabled(isDisabled)
+            .accessibilityIdentifier(actionIdentifier)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity)
+        .background(MirrorPalette.canvas)
+    }
+}
+#endif
+
 @MainActor
 struct MirrorCaptureView: View {
     let request: CapturePresentationRequest
@@ -351,21 +387,21 @@ struct MirrorCaptureView: View {
             .background(MirrorPalette.canvas)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { captureActions }
-            .navigationTitle("일단 넣기")
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .safeAreaInset(edge: .top, spacing: 0) {
+                MirrorSheetHeader(title: "일단 넣기", actionTitle: "닫기", actionIdentifier: "capture.close",
+                                  isDisabled: model.isSaving, action: closeCapture)
+            }
+            .toolbarVisibility(.hidden, for: .navigationBar)
+            #else
+            .navigationTitle("일단 넣기")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { closeCapture() } label: {
-                        Text("닫기")
-                            #if os(iOS)
-                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                            #endif
-                    }
-                    .disabled(model.isSaving).accessibilityIdentifier("capture.close")
+                    Button("닫기") { closeCapture() }
+                        .disabled(model.isSaving).accessibilityIdentifier("capture.close")
                 }
             }
+            #endif
             .interactiveDismissDisabled(model.isSaving)
             .onAppear { model.clearCaptureInputProblem(); focusedField = .title; startCaptureFlow() }
             .onChange(of: title) { _, value in
@@ -1244,21 +1280,25 @@ struct MirrorPlanPicker: View {
                 if let problem = model.problem { Text(problem).foregroundStyle(.red) }
             }
             .formStyle(.grouped)
-            .navigationTitle(request.taskIDs.count > 1 ? "여러 개 날짜 배치" : "미루기")
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .safeAreaInset(edge: .top, spacing: 0) {
+                MirrorSheetHeader(title: request.taskIDs.count > 1 ? "여러 개 날짜 배치" : "미루기",
+                                  actionTitle: "취소", actionIdentifier: "plan.cancel", isDisabled: model.isSaving) {
+                    dismiss()
+                }
+            }
+            .toolbarVisibility(.hidden, for: .navigationBar)
+            #else
+            .navigationTitle(request.taskIDs.count > 1 ? "여러 개 날짜 배치" : "미루기")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button { dismiss() } label: {
                         Text("취소")
-                            #if os(iOS)
-                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                            #endif
                     }
                     .accessibilityIdentifier("plan.cancel")
                 }
             }
+            #endif
             .disabled(model.isSaving)
             .onAppear {
                 showDates = !usesQuickChoices
