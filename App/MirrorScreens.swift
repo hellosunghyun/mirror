@@ -486,7 +486,6 @@ struct MirrorCaptureView: View {
                 .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
-            .modifier(MirrorScrollDynamicTypeProbe(scope: "capture"))
             .background(MirrorPalette.canvas)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { captureActions }
@@ -590,6 +589,9 @@ struct MirrorCaptureView: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(captureBusy || model.projectionPending)
                 .accessibilityIdentifier("capture.save")
+                #if DEBUG && os(macOS)
+                .modifier(MirrorRootDynamicTypeValue())
+                #endif
                 .keyboardShortcut(.return, modifiers: .command)
                 #if os(macOS)
                 .frame(maxWidth: 200)

@@ -1177,7 +1177,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
 
     @MainActor
     private func assertPresentationDynamicType(_ scope: PresentationScope, in app: XCUIApplication) throws {
+        #if os(macOS)
+        let query = scope == .capture
+            ? app.buttons.matching(identifier: "capture.save")
+            : app.descendants(matching: .any).matching(identifier: "ui.appliedDynamicType." + scope.rawValue)
+        #else
         let query = app.descendants(matching: .any).matching(identifier: "ui.appliedDynamicType." + scope.rawValue)
+        #endif
         guard query.firstMatch.waitForExistence(timeout: 15), query.count == 1 else {
             XCTFail("표시한 시트의 실제 글자 크기 환경을 고유한 요소로 확인해야 한다.")
             throw HarnessFailure.configuration
@@ -1185,7 +1191,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let probe = query.firstMatch
         try recordDynamicTypeFixture(probe, scope: scope.rawValue)
         #if os(macOS)
-        let matches = probe.label == "글자 크기 환경: accessibility5"
+        let matches: Bool
+        if scope == .capture {
+            // 기존 저장 버튼 자체의 환경값을 읽고 label이나 요청값으로 대신하지 않는다.
+            matches = probe.elementType == .button && (probe.value as? String) == "accessibility5"
+        } else {
+            matches = probe.label == "글자 크기 환경: accessibility5"
+        }
         #else
         let matches = probe.value as? String == "accessibility5"
         #endif
