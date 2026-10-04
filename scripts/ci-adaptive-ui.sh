@@ -79,6 +79,11 @@ fi
 
 python3 scripts/ci-adaptive-ui-results.py receipt-verify "${adaptive_args[@]}"
 python3 scripts/ci-adaptive-ui-results.py boot "${adaptive_args[@]}"
+if [[ "$adaptive_platform" != macos ]]; then
+  # 원복은 별도 always step이 맡아 native 실패·step 중단 뒤에도 같은 journal을 사용한다.
+  printf 'adaptive_system_type_setup_started=true\n' >> "${GITHUB_OUTPUT:?}"
+  python3 scripts/ci-adaptive-ui-results.py system-type-setup "${adaptive_args[@]}"
+fi
 [[ ! -e "$adaptive_dir/UI.xcresult" && ! -L "$adaptive_dir/UI.xcresult" ]] || exit 2
 python3 scripts/ci-adaptive-ui-results.py native-test-start "${adaptive_args[@]}"
 set +e

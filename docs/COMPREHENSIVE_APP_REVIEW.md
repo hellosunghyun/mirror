@@ -304,3 +304,9 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 ### iPad 날짜 선택 안내와 오류색의 실제 표시
 
 8b91 Pad 기본 UI 6개 성공 뒤 수집한 원본 PNG에서 오류 문구의 core 색은 새 errorText인 #A8241B와 일치했고, #F3F2EE 배경의 표시 대비는 6.391:1이었다. 같은 실행의 날짜 선택창은 빠른 선택 제목과 마감 설명 모두 #85858B / #F2F2F7, 표시 대비 상한 3.287:1이었다. 두 PNG는 sRGB를 명시하며 별도 ICC는 없다. 해당 header Text와 footer Text 두 곳에만 기존 supportingText를 적용한다. Section 전체나 날짜 버튼 색·동작·글꼴·접근성 식별자는 바꾸지 않는다. 같은 배경에서 색상 산술 대비는 5.881:1이지만 실제 새 렌더링과 최대 글자·다크 수용은 후속 Actions로 확인한다. 이 표시 픽셀 계산을 안티앨리어싱 이전 WCAG 원색 판정이나 SDK 감사 통과로 확대하지 않는다.
+
+### 실제 iOS 시스템 최대 크기로 적응형 화면 검사
+
+5dac의 한 사례 비교는 pinned와 system 모두 기존 420초 제한에 도달했다. pinned에서는 captureTitle/textField의 dynamicType, system에서는 식별자 other인 button의 missingDescription을 관측했지만 감사 완료 경계는 없었다. 따라서 pin이 원인이라거나 system에서 해당 감사가 통과했다고 판정하지 않는다. 이와 별개로 일반 iOS 적응형 검사의 단일 SwiftUI 값 고정을 제거하고 실제 시스템 최대 크기를 검사 환경으로 사용한다. iOS 기본은 명시적인 system이며 UIKit 최대값이나 실제 SwiftUI accessibility5가 없으면 실패한다. pinned는 기존 입력 단일 사례의 원인 분리 진단에서만 허용하고 Mac의 검사 환경은 유지한다.
+
+기존 unsigned build receipt와 같은 Simulator의 원래 category를 변경 전에 보관하고 최대값 설정·readback 뒤 원래 전체 사례를 실행한다. 루트와 실제 표시한 입력·정리·날짜·상세의 기존 probe에서 모드·범위·앱 UIKit 출처·UIKit 최대값·SwiftUI 최대값을 확인하며 원래 AX 값을 재사용한다. 성공·실패·test 단계 중단 뒤 별도 always 복구 단계가 같은 소유 정보로 원래 category를 복원하고 다시 읽는다. 빠진 journal이나 다른 실행의 기록을 성공 no-op로 바꾸지 않는다. 앱의 production 화면·도메인 로직, iOS 4개/Mac 5개 사례, 전체 감사·false handler·실제 조작 assertion·원래 시간 제한과 typed 결과·PNG 게이트는 유지한다. DEBUG probe 그룹의 구조 차이는 남아 있으므로 시스템 설정 전환이 그 차이까지 없앤다고 주장하지 않는다. 실제 네 iOS matrix의 완주·복원·접근성 수용은 다음 Actions 결과가 필요하다.

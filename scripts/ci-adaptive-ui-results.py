@@ -39,6 +39,9 @@ MAX_PNG = 64 * 1024 * 1024
 MAX_PIXELS = 40_000_000
 MAX_RAW = 320 * 1024 * 1024
 MAX_FILES = 10_000
+SYSTEM_TYPE_CATEGORIES = ('extra-small', 'small', 'medium', 'large', 'extra-large',
+    'extra-extra-large', 'extra-extra-extra-large', 'accessibility-medium', 'accessibility-large',
+    'accessibility-extra-large', 'accessibility-extra-extra-large', 'accessibility-extra-extra-extra-large')
 SIGNATURE = b'\x89PNG\r\n\x1a\n'
 STAGE_PATTERN = '|'.join(re.escape(stage) for stages in CASES.values() for stage in stages)
 SHOT_PATTERN = re.compile(r'mirror-adaptive-(' + STAGE_PATTERN + r')-([1-9][0-9]{0,5})')
@@ -204,14 +207,15 @@ def safe_directory(directory):
     require(directory.resolve().is_relative_to((ROOT / '.build/ci-adaptive-ui').resolve()), 'unsafeDirectory')
 
 
-def runtime_and_devices():
+def runtime_and_devices(*, private_timeout=None):
     version = read_json(ROOT / 'development-baseline.json')['observedToolchain']['iOSSimulatorRuntime']
-    runtimes = strict_json(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '--json']))
+    options = {} if private_timeout is None else {'timeout': private_timeout, 'stderr': subprocess.PIPE}
+    runtimes = strict_json(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '--json'], **options))
     matches = [value for value in runtimes['runtimes'] if value.get('version') == version
                and value.get('isAvailable') is True
                and value.get('identifier', '').startswith('com.apple.CoreSimulator.SimRuntime.iOS-')]
     require(len(matches) == 1, 'missingRequiredRuntime')
-    devices = strict_json(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))
+    devices = strict_json(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], **options))
     return devices['devices'].get(matches[0]['identifier'], [])
 
 
@@ -1046,6 +1050,64 @@ def boot(directory, expected):
     subprocess.run(['xcrun', 'simctl', 'bootstatus', udid, '-b'], check=True)
 
 
+def _system_type_owner(directory, expected):
+    require(expected['platform'] in ('iphone', 'ipad'), 'systemTypeRequiresIOS')
+    context = context_for(directory, expected)
+    receipt = verify_receipt(directory, expected)
+    udid = context['destination'].split('id=', 1)[1]
+    matches = [device for device in runtime_and_devices(private_timeout=15) if device.get('udid') == udid]
+    family = 'iPhone' if expected['platform'] == 'iphone' else 'iPad'
+    require(len(matches) == 1 and matches[0].get('state') == 'Booted'
+            and isinstance(matches[0].get('name'), str) and matches[0]['name'].startswith(family),
+            'systemTypeSimulatorMismatch')
+    return context, receipt, udid
+
+
+def _system_type_command(udid, category=None):
+    require(category is None or category in SYSTEM_TYPE_CATEGORIES, 'invalidSystemTypeCategory')
+    command = ['xcrun', 'simctl', 'ui', udid, 'content_size']
+    if category is not None:
+        command.append(category)
+    result = subprocess.run(command, capture_output=True, check=False, timeout=15)
+    require(result.returncode == 0, 'systemTypeCommandFailed')
+    require(len(result.stdout) <= 4096 and len(result.stderr) <= 4096, 'systemTypeOutputBounds')
+    if category is None:
+        value = result.stdout.decode('ascii', errors='strict').strip()
+        require(value in SYSTEM_TYPE_CATEGORIES, 'invalidSystemTypeCategory')
+        return value
+    return None
+
+
+def system_type_setup(directory, expected):
+    context, receipt, udid = _system_type_owner(directory, expected)
+    journal = directory / 'system-type-restore.json'
+    require(not journal.exists() and not journal.is_symlink(), 'staleSystemTypeJournal')
+    before = _system_type_command(udid)
+    # 복구 원본은 실제 변경 전에 한 번만 쓴다. 부분 실패에서도 덮거나 지우지 않는다.
+    write_json(journal, {'schemaVersion': 1, 'context': context,
+                        'buildReceiptSHA256': receipt, 'before': before}, exclusive=True)
+    _system_type_command(udid, SYSTEM_TYPE_CATEGORIES[-1])
+    require(_system_type_command(udid) == SYSTEM_TYPE_CATEGORIES[-1], 'systemTypeMaximumMismatch')
+    print('::notice::Adaptive system Dynamic Type: ' + json.dumps({**expected,
+          'schemaVersion': 1, 'action': 'setup', 'status': 'observed', 'systemMaximumVerified': True}, sort_keys=True))
+
+
+def system_type_restore(directory, expected):
+    context, receipt, udid = _system_type_owner(directory, expected)
+    journal = directory / 'system-type-restore.json'
+    require(not journal.is_symlink(), 'systemTypeUnsafeJournal')
+    saved = read_json(journal)
+    require(isinstance(saved, dict)
+            and set(saved) == {'schemaVersion', 'context', 'buildReceiptSHA256', 'before'}
+            and type(saved['schemaVersion']) is int and saved['schemaVersion'] == 1
+            and saved['context'] == context and saved['buildReceiptSHA256'] == receipt
+            and saved['before'] in SYSTEM_TYPE_CATEGORIES, 'systemTypeRestoreMismatch')
+    _system_type_command(udid, saved['before'])
+    require(_system_type_command(udid) == saved['before'], 'systemTypeRestoreReadbackMismatch')
+    print('::notice::Adaptive system Dynamic Type: ' + json.dumps({**expected,
+          'schemaVersion': 1, 'action': 'restore', 'status': 'observed', 'originalCategoryVerified': True}, sort_keys=True))
+
+
 def validate_summary(summary, platform):
     count = len(required_cases(platform))
     require(isinstance(summary, dict) and all(type(summary.get(key)) is int and summary[key] == value
@@ -1558,7 +1620,7 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'adaptiveRemoteOnly')
     parser = SafeParser()
-    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'native-test-start', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure', 'failure-evidence-prepare', 'failure-evidence'))
+    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'native-test-start', 'boot', 'system-type-setup', 'system-type-restore', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure', 'failure-evidence-prepare', 'failure-evidence'))
     parser.add_argument('--directory', required=True)
     parser.add_argument('--platform', required=True)
     parser.add_argument('--appearance', required=True)
@@ -1585,6 +1647,10 @@ def main():
         native_test_start_record(directory, expected)
     elif args.command == 'boot':
         boot(directory, expected)
+    elif args.command == 'system-type-setup':
+        system_type_setup(directory, expected)
+    elif args.command == 'system-type-restore':
+        system_type_restore(directory, expected)
     elif args.command == 'guard':
         guard(directory, expected)
     elif args.command == 'evidence':

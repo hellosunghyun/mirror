@@ -67,6 +67,13 @@ jobs:
         if: ${{ always() && steps.build.outputs.adaptive_build_ready == 'true' }}
         timeout-minutes: 20
         run: bash scripts/ci-adaptive-ui.sh "$MIRROR_ADAPTIVE_PLATFORM" "$MIRROR_UI_APPEARANCE" test
+      - name: iOS Simulator의 원래 시스템 글자 크기 복구와 확인
+        if: ${{ always() && matrix.platform != 'macos' && steps.test.outputs.adaptive_system_type_setup_started == 'true' }}
+        timeout-minutes: 1
+        run: |
+          python3 scripts/ci-adaptive-ui-results.py system-type-restore \
+            --directory ".build/ci-adaptive-ui/$MIRROR_ADAPTIVE_PLATFORM-$MIRROR_UI_APPEARANCE" \
+            --platform "$MIRROR_ADAPTIVE_PLATFORM" --appearance "$MIRROR_UI_APPEARANCE"
       - name: 관측된 적응형 UI 코드 경계 진단
         if: always()
         continue-on-error: true

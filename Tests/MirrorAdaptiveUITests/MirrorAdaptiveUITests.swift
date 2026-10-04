@@ -419,19 +419,21 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor
     private func requestedDynamicTypeFixture() throws -> DynamicTypeFixtureMode? {
         let raw = ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE_FIXTURE"] ?? ""
-        // 미설정 scheme 변수는 기존 고정 fixture다. 진단 실행은 별도 marker로 명시적 모드 전달을 검증한다.
-        if raw.isEmpty || raw == "$(MIRROR_UI_DYNAMIC_TYPE_FIXTURE)" { return nil }
+        let isUnconfigured = raw.isEmpty || raw == "$(MIRROR_UI_DYNAMIC_TYPE_FIXTURE)"
+        #if os(iOS)
+        // 기본 수용은 실제 시스템 최대 크기를 요구한다. 설정 누락을 override로 대신하지 않는다.
+        if isUnconfigured { return .system }
         guard let mode = DynamicTypeFixtureMode(rawValue: raw) else {
             XCTFail("글자 크기 진단 fixture는 pinned 또는 system이어야 한다.")
             throw HarnessFailure.configuration
         }
-        #if os(iOS)
-        guard diagnosticCase == .captureValidation else {
-            XCTFail("글자 크기 진단 fixture는 iOS의 기존 입력 검증 사례에서만 허용한다.")
+        guard mode != .pinned || diagnosticCase == .captureValidation else {
+            XCTFail("고정 글자 크기 비교 fixture는 iOS의 기존 입력 검증 사례에서만 허용한다.")
             throw HarnessFailure.configuration
         }
         return mode
         #else
+        if isUnconfigured { return nil }
         XCTFail("글자 크기 진단 fixture는 iOS에서만 허용한다.")
         throw HarnessFailure.configuration
         #endif
@@ -456,10 +458,10 @@ final class MirrorAdaptiveUITests: XCTestCase {
         #else
         let applied = try find("ui.appliedDynamicType", requestedElement: .appliedDynamicType, in: app)
         #endif
-        try recordDynamicTypeFixture(applied, scope: "root")
         let appliedValue = applied.value
         let appliedString = appliedValue as? String
         let appliedLabel = applied.label
+        try recordDynamicTypeFixture(label: appliedLabel, value: appliedString, scope: "root")
         configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: appliedLabel)
         XCTAssertEqual(appliedString, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
         XCTAssertEqual(app.state, .runningForeground)
@@ -1233,7 +1235,6 @@ final class MirrorAdaptiveUITests: XCTestCase {
             throw HarnessFailure.configuration
         }
         let probe = query.firstMatch
-        try recordDynamicTypeFixture(probe, scope: scope.rawValue)
         #if os(macOS)
         let matches: Bool
         if scope == .capture {
@@ -1243,7 +1244,10 @@ final class MirrorAdaptiveUITests: XCTestCase {
             matches = probe.label == "글자 크기 환경: accessibility5"
         }
         #else
-        let matches = probe.value as? String == "accessibility5"
+        let appliedString = probe.value as? String
+        let appliedLabel = probe.label
+        try recordDynamicTypeFixture(label: appliedLabel, value: appliedString, scope: scope.rawValue)
+        let matches = appliedString == "accessibility5"
         #endif
         emitMeasurement("UI adaptive presentation configuration:", fields: [
             "scope": scope.rawValue, "maximumTypeApplied": matches,
@@ -1257,10 +1261,20 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private enum PresentationScope: String { case capture, review, plan, detail }
 
     @MainActor
-    private func recordDynamicTypeFixture(_ probe: XCUIElement, scope: String) throws {
+    private func recordDynamicTypeFixture(label: String, value: String?, scope: String) throws {
+        #if os(iOS)
+        guard let mode = dynamicTypeFixtureMode else {
+            XCTFail("iOS 최대 글자 수용에는 실제 시스템 fixture 모드가 필요하다.")
+            throw HarnessFailure.configuration
+        }
+        #else
         guard let mode = dynamicTypeFixtureMode else { return }
-        guard diagnosticCase == .captureValidation, scope == "root" || scope == "capture",
-              let fields = (try? JSONSerialization.jsonObject(with: Data(probe.label.utf8))) as? [String: String],
+        #endif
+        guard let diagnosticCase,
+              [DiagnosticCase.captureValidation, .reviewWeek, .searchDetailUndo, .plannedCapture].contains(diagnosticCase),
+              scope == "root" || PresentationScope(rawValue: scope) != nil,
+              mode != .pinned || (diagnosticCase == .captureValidation && (scope == "root" || scope == "capture")),
+              let fields = (try? JSONSerialization.jsonObject(with: Data(label.utf8))) as? [String: String],
               Set(fields.keys) == ["actualMode", "scope", "swiftUI", "uiKit", "uiKitSource"],
               let actualMode = fields["actualMode"], DynamicTypeFixtureMode(rawValue: actualMode) != nil,
               fields["scope"] == scope, fields["uiKitSource"] == "appSystem",
@@ -1276,8 +1290,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
                 "scope": scope, "swiftUI": swiftUI, "uiKit": uiKit, "uiKitSource": "appSystem",
             ])
         }
-        guard actualMode == mode.rawValue, uiKit == "accessibilityExtraExtraExtraLarge" else {
-            XCTFail("대상 앱에 요청한 진단 모드와 시스템 최대 글자 크기가 적용되어야 한다.")
+        guard actualMode == mode.rawValue, uiKit == "accessibilityExtraExtraExtraLarge",
+              swiftUI == "accessibility5", value == "accessibility5" else {
+            XCTFail("대상 앱에 요청한 모드와 UIKit·SwiftUI의 실제 최대 글자 크기가 적용되어야 한다.")
             throw HarnessFailure.configuration
         }
     }

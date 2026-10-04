@@ -12,6 +12,10 @@
 
 사용자 지정 실행 위치는 **GitHub Actions 러너**다. [Swift workflow](.github/workflows/swift.yml)는 SwiftPM 및 Xcode의 macOS·iPhone·iPad 환경에서 같은 생산 도메인·Core Data 저장·시스템 서비스 소스를 검사하고 iPhone·iPad·Mac에서 실제 XCUITest를 실행한다. 결과 파서는 실제 실행 수가 양수인지, 실패·skip이 없는지 확인하며 현재 실행의 로그·xcresult를 보존한다. 자세한 실행과 결과는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
 
+별도 [Adaptive workflow](.github/workflows/adaptive-ui.yml)의 iPhone·iPad 검사는 실제 Simulator의 시스템 글자 크기를 최대로 설정한다. 같은 빌드 context의 Simulator와 원래 category를 확인·기록한 뒤 설정값을 다시 읽고, 앱의 UIKit 값과 루트·표시한 각 화면의 실제 SwiftUI 최대 크기를 검증한다. 설정이 없거나 값이 다르면 고정 크기로 대체하지 않고 실패한다. 시스템 크기를 바꾸는 접근성 감사가 단일 SwiftUI override에 막히지 않도록 하는 검사 환경 변경이며, 기존 감사 실패의 원인을 확정하거나 통과로 바꾸는 조치가 아니다.
+
+설정 시작을 기록한 iOS 실행은 성공·실패·검사 단계 중단 뒤 별도 `always()` 단계에서 원래 시스템 크기를 복원하고 readback을 확인한다. journal이나 context가 없거나 맞지 않으면 복구 성공으로 기록하지 않는다. iOS 4개·Mac 5개 실제 사례, 전체 `.all` 감사, 모든 issue를 실패로 남기는 처리, 원래 크기·동작 assertion과 시간 제한·typed 결과·PNG 게이트를 유지한다. Mac 경로와 기존 pinned/system 단일 사례 진단은 별도로 유지하며, 새 환경의 실제 수용 결과는 해당 SHA의 Actions 완료로 확인한다.
+
 Swift 테스트는 원본 fixture 36개를 그대로 읽어 날짜 목적지, Today/Review 판정, 마감 확인, 신규 배치, receipt 우선 stale context 판정을 검사한다. 추가 사례는 윤년·연말·Gregorian 역사적 경계·DST·자정·잘못된 입력·주 구조·수동 검토와 마감 확인 바인딩을 검증한다. 원본 파일을 수정하거나 기대값을 생산 구현에서 계산하지 않는다.
 
 준비 검사와 회귀 테스트는 원본 문서의 무결성, 문서 연결, JSON 계약, fixture 기대값, FR / QA 매핑을 검증한다. 기존 검증기는 임시 복사본에서 실행한다. 준비 검사가 통과해도 실제 앱의 QA 상태 87개는 미실행으로 유지한다.

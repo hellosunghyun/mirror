@@ -1,6 +1,7 @@
 """적응형 UI 게이트의 오수용·PNG 경계 회귀. GitHub Actions에서 실행한다."""
 
 import importlib.util
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -61,6 +62,218 @@ def png(*extra, width=1, height=1, raw=b'\0\xff\x00\x00\xff'):
 
 
 class AdaptiveResultGateTests(unittest.TestCase):
+    @contextmanager
+    def system_type_fixture(self, platform='iphone'):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            directory = root / '.build/ci-adaptive-ui' / (platform + '-system')
+            directory.mkdir(parents=True)
+            expected = {'platform': platform, 'appearance': 'system', 'commitSHA': 'a' * 40,
+                        'buildNumber': '23', 'runID': '34', 'runAttempt': '1'}
+            udid = '11111111-1111-1111-1111-111111111111'
+            context = {**helper.base_context(expected), 'destination':
+                       'platform=macOS' if platform == 'macos' else 'platform=iOS Simulator,id=' + udid}
+            (directory / 'context.json').write_text(json.dumps(context))
+            devices = [{'udid': udid, 'name': 'iPad fixture' if platform == 'ipad' else 'iPhone fixture',
+                        'state': 'Booted'}]
+            with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'checkout_matches'), \
+                    mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                    mock.patch.object(helper, 'runtime_and_devices', return_value=devices):
+                yield directory, expected, context, udid, devices
+
+    def test_system_type_setup_and_restore_bind_the_original_category_to_context_and_receipt(self):
+        for platform in ('iphone', 'ipad'):
+            with self.subTest(platform=platform), self.system_type_fixture(platform) as fixture:
+                directory, expected, context, udid, _ = fixture
+                maximum = 'accessibility-extra-extra-extra-large'
+                with mock.patch.object(helper, '_system_type_command',
+                                       side_effect=['large', None, maximum, None, 'large']) as command, \
+                        mock.patch('builtins.print') as printed:
+                    helper.system_type_setup(directory, expected)
+                    journal = directory / 'system-type-restore.json'
+                    original = journal.read_bytes()
+                    self.assertEqual(json.loads(original), {'schemaVersion': 1, 'context': context,
+                                     'buildReceiptSHA256': 'b' * 64, 'before': 'large'})
+                    self.assertEqual(journal.stat().st_mode & 0o777, 0o600)
+                    helper.system_type_restore(directory, expected)
+                self.assertEqual(command.call_args_list, [mock.call(udid), mock.call(udid, maximum),
+                                 mock.call(udid), mock.call(udid, 'large'), mock.call(udid)])
+                self.assertEqual(helper.runtime_and_devices.call_args_list, [mock.call(private_timeout=15)] * 2)
+                self.assertEqual(journal.read_bytes(), original)
+                self.assertFalse((directory / 'safe-outcome.json').exists())
+                notices = [json.loads(call.args[0].split(': ', 1)[1]) for call in printed.call_args_list]
+                self.assertEqual(notices, [{**expected, 'schemaVersion': 1, 'action': 'setup',
+                                           'status': 'observed', 'systemMaximumVerified': True},
+                                          {**expected, 'schemaVersion': 1, 'action': 'restore',
+                                           'status': 'observed', 'originalCategoryVerified': True}])
+                self.assertNotIn(udid, json.dumps(notices))
+                self.assertNotIn(str(directory), json.dumps(notices))
+
+    def test_system_type_failed_set_or_readback_keeps_a_restorable_original_journal(self):
+        for failure in ('set', 'readback'):
+            with self.subTest(failure=failure), self.system_type_fixture() as fixture:
+                directory, expected, _, udid, _ = fixture
+                setup = ['small', helper.AdaptiveError('categorySetFailed')] if failure == 'set' else ['small', None, 'large']
+                with mock.patch.object(helper, '_system_type_command', side_effect=setup) as command, \
+                        self.assertRaises(helper.AdaptiveError):
+                    helper.system_type_setup(directory, expected)
+                self.assertEqual(command.call_count, 2 if failure == 'set' else 3)
+                journal = directory / 'system-type-restore.json'
+                original = journal.read_bytes()
+                self.assertEqual(json.loads(original)['before'], 'small')
+                with mock.patch.object(helper, '_system_type_command', side_effect=[None, 'small']) as command:
+                    helper.system_type_restore(directory, expected)
+                self.assertEqual(command.call_args_list, [mock.call(udid, 'small'), mock.call(udid)])
+                self.assertEqual(journal.read_bytes(), original)
+                with mock.patch.object(helper, '_system_type_command', side_effect=[None, 'large']), \
+                        self.assertRaises(helper.AdaptiveError):
+                    helper.system_type_restore(directory, expected)
+                self.assertEqual(journal.read_bytes(), original)
+
+    def test_system_type_setup_rejects_existing_or_symlink_journals_without_overwriting(self):
+        for kind in ('existing', 'symlink', 'dangling'):
+            with self.subTest(kind=kind), self.system_type_fixture() as fixture:
+                directory, expected, _, _, _ = fixture
+                journal = directory / 'system-type-restore.json'
+                target = directory / 'other.json'
+                if kind == 'existing':
+                    journal.write_text(PRIVATE)
+                else:
+                    if kind == 'symlink':
+                        target.write_text(PRIVATE)
+                    journal.symlink_to(target)
+                with mock.patch.object(helper, '_system_type_command') as command, self.assertRaises(helper.AdaptiveError):
+                    helper.system_type_setup(directory, expected)
+                command.assert_not_called()
+                if kind == 'existing':
+                    self.assertEqual(journal.read_text(), PRIVATE)
+                else:
+                    self.assertTrue(journal.is_symlink())
+                    self.assertEqual(target.read_text() if target.exists() else None,
+                                     PRIVATE if kind == 'symlink' else None)
+        with self.system_type_fixture() as fixture:
+            directory, expected, _, _, _ = fixture
+            journal = directory / 'system-type-restore.json'
+
+            def intervening_writer(_):
+                journal.write_text(PRIVATE)
+                return 'large'
+
+            with mock.patch.object(helper, '_system_type_command', side_effect=intervening_writer) as command, \
+                    self.assertRaises(FileExistsError):
+                helper.system_type_setup(directory, expected)
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(journal.read_text(), PRIVATE)
+
+    def test_system_type_restore_rejects_missing_foreign_stale_and_unsafe_journals(self):
+        changes = ({'schemaVersion': True}, {'schemaVersion': 2}, {'before': PRIVATE}, {'before': None},
+                   {'buildReceiptSHA256': 'c' * 64}, {'context': {}}, {'extra': PRIVATE})
+        for change in (None, *changes):
+            with self.subTest(change=change), self.system_type_fixture() as fixture:
+                directory, expected, context, _, _ = fixture
+                journal = directory / 'system-type-restore.json'
+                if change is not None:
+                    value = {'schemaVersion': 1, 'context': context, 'buildReceiptSHA256': 'b' * 64,
+                             'before': 'large', **change}
+                    journal.write_text(json.dumps(value))
+                before = journal.read_bytes() if journal.exists() else None
+                with mock.patch.object(helper, '_system_type_command') as command, \
+                        self.assertRaises((helper.AdaptiveError, OSError)):
+                    helper.system_type_restore(directory, expected)
+                command.assert_not_called()
+                self.assertEqual(journal.read_bytes() if journal.exists() else None, before)
+        with self.system_type_fixture() as fixture:
+            directory, expected, context, _, _ = fixture
+            target = directory / 'foreign.json'
+            target.write_text(json.dumps({'schemaVersion': 1, 'context': context,
+                                         'buildReceiptSHA256': 'b' * 64, 'before': 'large'}))
+            (directory / 'system-type-restore.json').symlink_to(target)
+            with mock.patch.object(helper, '_system_type_command') as command, self.assertRaises(helper.AdaptiveError):
+                helper.system_type_restore(directory, expected)
+            command.assert_not_called()
+
+        for key, value in (('runID', '35'), ('runAttempt', '2'), ('commitSHA', 'c' * 40),
+                           ('destination', 'platform=iOS Simulator,id=22222222-2222-2222-2222-222222222222')):
+            with self.subTest(stale=key), self.system_type_fixture() as fixture:
+                directory, expected, context, _, _ = fixture
+                (directory / 'system-type-restore.json').write_text(json.dumps({
+                    'schemaVersion': 1, 'context': {**context, key: value},
+                    'buildReceiptSHA256': 'b' * 64, 'before': 'large'}))
+                with mock.patch.object(helper, '_system_type_command') as command, self.assertRaises(helper.AdaptiveError):
+                    helper.system_type_restore(directory, expected)
+                command.assert_not_called()
+
+    def test_system_type_requires_the_exact_booted_simulator_context_and_receipt_before_category_access(self):
+        for change in ('foreign', 'duplicate', 'shutdown', 'family', 'context', 'receipt'):
+            for action in ('system_type_setup', 'system_type_restore'):
+                with self.subTest(change=change, action=action), self.system_type_fixture() as fixture:
+                    directory, expected, context, _, devices = fixture
+                    if change == 'foreign':
+                        devices[0]['udid'] = '22222222-2222-2222-2222-222222222222'
+                    elif change == 'duplicate':
+                        devices.append(dict(devices[0]))
+                    elif change == 'shutdown':
+                        devices[0]['state'] = 'Shutdown'
+                    elif change == 'family':
+                        devices[0]['name'] = 'iPad fixture'
+                    elif change == 'context':
+                        (directory / 'context.json').write_text(json.dumps({**context, 'commitSHA': 'c' * 40}))
+                    with mock.patch.object(helper, '_system_type_command') as command, \
+                            mock.patch.object(helper, 'verify_receipt',
+                                              side_effect=helper.AdaptiveError('buildReceiptMismatch')
+                                              if change == 'receipt' else None, return_value='b' * 64), \
+                            self.assertRaises(helper.AdaptiveError):
+                        getattr(helper, action)(directory, expected)
+                    command.assert_not_called()
+        with self.system_type_fixture('macos') as fixture:
+            directory, expected, _, _, _ = fixture
+            for action in (helper.system_type_setup, helper.system_type_restore):
+                with mock.patch.object(helper, '_system_type_command') as command, self.assertRaises(helper.AdaptiveError):
+                    action(directory, expected)
+                command.assert_not_called()
+
+    def test_system_type_command_uses_exact_bounded_captured_commands_without_private_output(self):
+        udid = '11111111-1111-1111-1111-111111111111'
+        arguments = ['xcrun', 'simctl', 'ui', udid, 'content_size']
+        for category in helper.SYSTEM_TYPE_CATEGORIES:
+            with mock.patch.object(helper.subprocess, 'run',
+                                   return_value=subprocess.CompletedProcess([], 0, (category + '\n').encode(), b'')) as run:
+                self.assertEqual(helper._system_type_command(udid), category)
+            run.assert_called_once_with(arguments, capture_output=True, check=False, timeout=15)
+        maximum = 'accessibility-extra-extra-extra-large'
+        with mock.patch.object(helper.subprocess, 'run',
+                               return_value=subprocess.CompletedProcess([], 0, b'', b'')) as run:
+            self.assertIsNone(helper._system_type_command(udid, maximum))
+        run.assert_called_once_with(arguments + [maximum], capture_output=True, check=False, timeout=15)
+        failures = ((1, PRIVATE.encode(), PRIVATE.encode()), (0, PRIVATE.encode(), b''),
+                    (0, b'large\nsmall\n', b''), (0, b'large', b'x' * 4097),
+                    (0, b'x' * 4097, b''), (0, b'\xff', b''))
+        for code, stdout, stderr in failures:
+            with self.subTest(code=code, byte_count=len(stdout)), \
+                    mock.patch.object(helper.subprocess, 'run',
+                                      return_value=subprocess.CompletedProcess([], code, stdout, stderr)), \
+                    mock.patch('builtins.print') as printed, self.assertRaises((helper.AdaptiveError, UnicodeError)):
+                helper._system_type_command(udid)
+            printed.assert_not_called()
+        with mock.patch.object(helper.subprocess, 'run') as run, self.assertRaises(helper.AdaptiveError):
+            helper._system_type_command(udid, PRIVATE)
+        run.assert_not_called()
+
+    def test_system_type_runtime_inventory_timeout_and_private_stderr_do_not_change_default_calls(self):
+        runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'
+        device = {'udid': '11111111-1111-1111-1111-111111111111', 'name': 'iPhone fixture', 'state': 'Booted'}
+        results = [json.dumps({'runtimes': [{'version': '27.0', 'isAvailable': True, 'identifier': runtime}]}).encode(),
+                   json.dumps({'devices': {runtime: [device]}}).encode()]
+        for timeout in (None, 15):
+            with self.subTest(timeout=timeout), \
+                    mock.patch.object(helper, 'read_json', return_value={'observedToolchain': {'iOSSimulatorRuntime': '27.0'}}), \
+                    mock.patch.object(helper.subprocess, 'check_output', side_effect=results) as command:
+                self.assertEqual(helper.runtime_and_devices(private_timeout=timeout), [device])
+            options = {} if timeout is None else {'timeout': 15, 'stderr': subprocess.PIPE}
+            self.assertEqual(command.call_args_list, [
+                mock.call(['xcrun', 'simctl', 'list', 'runtimes', '--json'], **options),
+                mock.call(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], **options)])
+
     def test_checkout_checks_remain_ordered_and_each_git_call_is_bounded(self):
         expected = {'commitSHA': 'a' * 40}
         with mock.patch.object(helper.subprocess, 'check_output', side_effect=['a' * 40 + '\n', b'']) as output, \
@@ -881,6 +1094,13 @@ class AdaptiveResultGateTests(unittest.TestCase):
         self.run_stubbed_shell('test', native=65, receipt=0, expected_exit=65, expected_diagnostics=False,
                                expected_test_diagnostics=True)
 
+    def test_shell_system_type_setup_precedes_native_test_and_failure_preserves_no_native_result(self):
+        for platform in ('iphone', 'ipad', 'macos'):
+            self.run_stubbed_shell('test', native=65, receipt=0, expected_exit=65, expected_diagnostics=False,
+                                   expected_test_diagnostics=True, platform=platform)
+        self.run_stubbed_shell('test', native=65, receipt=0, expected_exit=77, expected_diagnostics=False,
+                               system_type_exit=77, expected_native_called=False)
+
     def test_dynamic_preboot_hook_precedes_build_and_preserves_native_or_preboot_failure(self):
         self.run_stubbed_shell('build', native=65, receipt=0, expected_exit=65, expected_diagnostics=True,
                                platform='ipad', preboot='1', expected_preboot=True)
@@ -892,7 +1112,7 @@ class AdaptiveResultGateTests(unittest.TestCase):
 
     def run_stubbed_shell(self, mode, native, receipt, expected_exit, expected_diagnostics,
                           expected_test_diagnostics=False, platform='iphone', preboot='', preboot_exit=0,
-                          expected_preboot=False, expected_native_called=True):
+                          expected_preboot=False, expected_native_called=True, system_type_exit=0):
         # 실제 shell을 격리된 복사본에서 실행하고 모든 Python/Xcode 경계를 stub한다.
         # SDK·앱·네트워크를 실행하지 않고 EXIT trap의 원래 종료 코드 보존을 검증한다.
         with tempfile.TemporaryDirectory() as directory:
@@ -910,6 +1130,7 @@ case "$2" in
   diagnostics) exit 73 ;;
   test-diagnostics) exit 75 ;;
   preboot) exit "$ADAPTIVE_STUB_PREBOOT" ;;
+  system-type-setup) exit "$ADAPTIVE_STUB_SYSTEM_TYPE" ;;
   receipt-record) exit "$ADAPTIVE_STUB_RECEIPT" ;;
   failure) printf '%s\\n' "$*" >> "$ADAPTIVE_STUB_FAILURE"; exit 74 ;;
 esac
@@ -922,6 +1143,7 @@ esac
                            'GITHUB_OUTPUT': str(root / 'output'), 'PATH': str(root / 'bin') + os.pathsep + os.environ['PATH'],
                            'ADAPTIVE_STUB_EVENTS': str(root / 'events'), 'ADAPTIVE_STUB_FAILURE': str(root / 'failure'),
                            'ADAPTIVE_STUB_NATIVE': str(native), 'ADAPTIVE_STUB_RECEIPT': str(receipt),
+                           'ADAPTIVE_STUB_SYSTEM_TYPE': str(system_type_exit),
                            'MIRROR_DYNAMIC_TYPE_PREBOOT': preboot, 'ADAPTIVE_STUB_PREBOOT': str(preboot_exit)}
             result = subprocess.run(['bash', str(script), platform, 'system', mode], env=environment,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
@@ -931,6 +1153,19 @@ esac
             self.assertEqual(events.count('test-diagnostics'), int(expected_test_diagnostics))
             self.assertEqual(events.count('preboot'), int(expected_preboot))
             self.assertEqual(events.count('xcodebuild'), int(expected_native_called))
+            expected_setup = mode == 'test' and platform != 'macos'
+            self.assertEqual(events.count('system-type-setup'), int(expected_setup))
+            self.assertNotIn('system-type-restore', events)
+            output = (root / 'output').read_text() if (root / 'output').exists() else ''
+            self.assertEqual(output.count('adaptive_system_type_setup_started=true\n'), int(expected_setup))
+            if expected_setup:
+                self.assertLess(events.index('receipt-verify'), events.index('boot'))
+                self.assertLess(events.index('boot'), events.index('system-type-setup'))
+                if expected_native_called:
+                    self.assertLess(events.index('system-type-setup'), events.index('native-test-start'))
+                    self.assertLess(events.index('native-test-start'), events.index('xcodebuild'))
+                else:
+                    self.assertNotIn('native-test-start', events)
             if expected_preboot:
                 self.assertLess(events.index('context'), events.index('preboot'))
                 if expected_native_called:
