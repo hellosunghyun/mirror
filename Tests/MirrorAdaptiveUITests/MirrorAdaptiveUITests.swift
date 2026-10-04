@@ -664,6 +664,11 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) throws {
         let deadline = Date().addingTimeInterval(15)
+        var firstObservation: RevealFrameObservation?
+        var previousObservation: RevealFrameObservation?
+        var lastObservation: RevealFrameObservation?
+        var observationCount = 0
+        var swipeDirections: [String] = []
         for _ in 0..<8 {
             let frame = element.frame
             let identifier = element.identifier
@@ -690,6 +695,12 @@ final class MirrorAdaptiveUITests: XCTestCase {
             }
             let viewport = owners.min(by: { $0.area < $1.area })
             let viewportFrame = viewport?.bounds
+            // 기존 조회값만 보관한다. 마지막 값은 마지막 스와이프 뒤 다음 반복의 관측이다.
+            let observation = RevealFrameObservation(target: frame, owner: viewportFrame)
+            if firstObservation == nil { firstObservation = observation }
+            previousObservation = lastObservation
+            lastObservation = observation
+            observationCount += 1
             let isScrollableInput = elementType == .textField || elementType == .textView
             let oversizedInput = viewportFrame.map { isScrollableInput && frame.height > $0.height } ?? false
             // 긴 입력란은 내용 자체를 스크롤할 수 있다. 동작/오류 버튼에는 항상 전체 표시를 요구한다.
@@ -703,6 +714,11 @@ final class MirrorAdaptiveUITests: XCTestCase {
                     ownerCount: owners.count, deadlineExceeded: Date() >= deadline)
                 revealOwnerFailureMeasurement(element, in: app, counts: [surfaces.count, areaCount, hittableCount,
                                                                typedTargetCount, columnCount, owners.count])
+                if let firstObservation, let lastObservation {
+                    phoneRevealObstructionMeasurement(element, identifier: identifier, in: app,
+                        first: firstObservation, previous: previousObservation, last: lastObservation,
+                        observationCount: observationCount, swipeDirections: swipeDirections)
+                }
                 if identifier == "capture.save", elementType == .button {
                     captureSaveFailureMeasurement(element, in: app, boundary: "reveal",
                         observedHittable: hittable,
@@ -723,9 +739,74 @@ final class MirrorAdaptiveUITests: XCTestCase {
             #else
             if towardTop { surface.swipeDown() } else { surface.swipeUp() }
             #endif
+            swipeDirections.append(towardTop ? "down" : "up")
         }
         XCTFail("8회 이내 실제 스크롤로 추가검증 요소에 도달해야 한다.")
         throw HarnessFailure.unhittable
+    }
+
+    private struct RevealFrameObservation {
+        let target: CGRect
+        let owner: CGRect?
+    }
+
+    /// Phone의 알려진 실패 분기에서만 읽는다. 개별 안내 요소와의 기하 교차는 가림 원인의 확정이 아니다.
+    @MainActor
+    private func phoneRevealObstructionMeasurement(_ element: XCUIElement, identifier: String,
+                                                   in app: XCUIApplication,
+                                                   first: RevealFrameObservation, previous: RevealFrameObservation?,
+                                                   last: RevealFrameObservation, observationCount: Int,
+                                                   swipeDirections: [String]) {
+        #if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone,
+              diagnosticCase == .searchDetailUndo, diagnosticProgressPhase == .postponeStarted,
+              diagnosticRequestedElement == .taskPostpone, element === diagnosticRequestedObject,
+              (1...8).contains(observationCount), swipeDirections.count == observationCount - 1,
+              app.state == .runningForeground else { return }
+        let windows = app.windows.allElementsBoundByIndex
+        guard windows.count == 1, let window = windows.first,
+              window.buttons.matching(identifier: identifier).count == 1 else { return }
+        func coordinates(_ frame: CGRect?) -> [Double]? {
+            guard let frame else { return nil }
+            let values = [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]
+            guard values.allSatisfy({ $0.isFinite && abs($0) <= 100_000 }),
+                  frame.width >= 0, frame.height >= 0 else { return nil }
+            return values
+        }
+        let windowBounds = window.frame
+        guard hasArea(windowBounds), let windowFrame = coordinates(windowBounds) else { return }
+        func observation(_ value: RevealFrameObservation) -> [String: Any] {
+            ["target": coordinates(value.target).map { $0 as Any } ?? NSNull(),
+             "owner": coordinates(value.owner).map { $0 as Any } ?? NSNull()]
+        }
+        func measurement(_ query: XCUIElementQuery) -> [String: Any]? {
+            let elements = query.allElementsBoundByIndex
+            guard elements.count <= 10_000 else { return nil }
+            let frame = elements.count == 1 ? elements[0].frame : nil
+            let boundedFrame = coordinates(frame)
+            let intersects = boundedFrame != nil && coordinates(last.target) != nil
+                ? frame.map { hasArea($0.intersection(last.target)) } : nil
+            return ["count": elements.count, "frame": boundedFrame.map { $0 as Any } ?? NSNull(),
+                    "intersectsTarget": intersects.map { $0 as Any } ?? NSNull()]
+        }
+        guard let feedback = measurement(window.staticTexts.matching(identifier: "state.feedback")),
+              let dismissFeedback = measurement(window.buttons.matching(identifier: "state.dismissFeedback")),
+              let undo = measurement(window.buttons.matching(identifier: "task.undo")),
+              let retry = measurement(window.buttons.matching(identifier: "state.retry")),
+              let tabBar = measurement(window.tabBars), app.state == .runningForeground else { return }
+        let fields: [String: Any] = [
+            "schemaVersion": 1, "case": "searchDetailUndo", "requestSequence": diagnosticRequestSequence,
+            "requestedElement": "taskPostpone", "observationCount": observationCount,
+            "swipeDirections": swipeDirections, "first": observation(first),
+            "previous": previous.map { observation($0) as Any } ?? NSNull(), "last": observation(last),
+            "windowFrame": windowFrame,
+            "elements": ["feedback": feedback, "dismissFeedback": dismissFeedback, "undo": undo,
+                         "retry": retry, "tabBar": tabBar],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+              data.count <= 1_900 else { return }
+        print("UI adaptive phone reveal obstruction diagnostic: \(String(decoding: data, as: UTF8.self))")
+        #endif
     }
 
     /// 이미 평가한 필터 개수와 실패 후 키보드 기하만 기록하며 원문 AX 값은 보존하지 않는다.

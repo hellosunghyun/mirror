@@ -1344,6 +1344,127 @@ esac
                          if row.startswith(helper.AUDIT_BOUNDARY_MARKER) else row for row in good_audit]
         self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(changed_audit), EXPECTED, entries))
 
+    def phone_reveal_obstruction_row(self, **extra):
+        return helper.PHONE_REVEAL_OBSTRUCTION_MARKER + json.dumps({
+            'schemaVersion': 1, 'case': 'searchDetailUndo', 'requestSequence': 1,
+            'requestedElement': 'taskPostpone', 'observationCount': 3, 'swipeDirections': ['up', 'up'],
+            'first': {'target': [16, 880, 152, 61], 'owner': [0, 62, 402, 760]},
+            'previous': {'target': [16, 820, 152, 61], 'owner': [0, 62, 402, 760]},
+            'last': {'target': [16, 760, 152, 61], 'owner': [0, 62, 402, 760]},
+            'windowFrame': [0, 0, 402, 874],
+            'elements': {
+                'feedback': {'count': 1, 'frame': [0, 740, 402, 75], 'intersectsTarget': True},
+                'dismissFeedback': {'count': 1, 'frame': [340, 742, 44, 44], 'intersectsTarget': False},
+                'undo': {'count': 1, 'frame': [16, 744, 140, 44], 'intersectsTarget': True},
+                'retry': {'count': 0, 'frame': None, 'intersectsTarget': None},
+                'tabBar': {'count': 1, 'frame': [0, 821, 402, 53], 'intersectsTarget': False},
+            }, **extra})
+
+    def phone_reveal_obstruction_prefix(self):
+        case = 'testMaximumTypeSearchDetailCompletionAndUndo'
+        rows = [event(case=case), self.case_diagnostic_row(case=case)]
+        for sequence, (phase, step) in enumerate(helper.PROGRESS_PROTOCOL[case], 1):
+            rows.append(self.progress_row(case, phase, sequence, step))
+            if phase == 'postponeStarted':
+                break
+        rows.extend((self.case_diagnostic_row(case=case, sequence=1, element='taskPostpone'),
+            self.reveal_owner_row(schemaVersion=2, case='searchDetailUndo', requestedElement='taskPostpone',
+                candidateCount=1, areaCount=1, hittableCount=0, typedTargetCount=1, columnCount=1,
+                intersectCount=1, keyboardCount=0, keyboardFrame=None)))
+        return case, rows
+
+    def test_phone_obstruction_preserves_owned_failure_geometry_and_positive_area_intersection(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        base = json.loads(self.phone_reveal_obstruction_row()[len(helper.PHONE_REVEAL_OBSTRUCTION_MARKER):])
+        unknown = {name: {**value, 'intersectsTarget': None} for name, value in base['elements'].items()}
+        unknown['undo'] = {'count': 2, 'frame': None, 'intersectsTarget': None}
+        unknown['feedback'] = {'count': 1, 'frame': None, 'intersectsTarget': None}
+        variants = ({}, {'observationCount': 1, 'swipeDirections': [], 'first': base['last'], 'previous': None},
+                    {'observationCount': 2, 'swipeDirections': ['down'], 'previous': base['first']},
+                    {'observationCount': 8, 'swipeDirections': ['up'] * 7},
+                    {'last': {'target': None, 'owner': None}, 'elements': unknown})
+        for fields in variants:
+            with self.subTest(fields=fields):
+                row = self.phone_reveal_obstruction_row(**fields)
+                result = helper.xctest_case_diagnostics('\n'.join(prefix + [row, event(case=case, state='failed')]),
+                                                       EXPECTED, entries)[0]
+                self.assertEqual(result['phoneRevealObstruction'],
+                                 json.loads(row[len(helper.PHONE_REVEAL_OBSTRUCTION_MARKER):]))
+                self.assertEqual(result['lastProgress']['phase'], 'postponeStarted')
+                self.assertIn('revealOwnerFailure', result)
+                for forbidden in (PRIVATE, 'passedTests', 'failedTests', 'xcodebuildExitCode'):
+                    self.assertNotIn(forbidden, json.dumps(result))
+
+    def test_phone_obstruction_rejects_private_fields_types_bounds_and_contradictory_geometry(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        base = json.loads(self.phone_reveal_obstruction_row()[len(helper.PHONE_REVEAL_OBSTRUCTION_MARKER):])
+        bad = [{'label': PRIVATE}, {'schemaVersion': True}, {'schemaVersion': 2}, {'case': PRIVATE},
+               {'case': 'captureValidation'},
+               {'requestedElement': PRIVATE}, {'requestSequence': True}, {'requestSequence': 2},
+               {'observationCount': True}, {'observationCount': 0}, {'observationCount': 9},
+               {'swipeDirections': ['up']}, {'swipeDirections': ['up', PRIVATE]},
+               {'swipeDirections': ['up', True]}, {'previous': None},
+               {'observationCount': 1, 'swipeDirections': [], 'previous': None},
+               {'observationCount': 2, 'swipeDirections': ['up']},
+               {'first': {**base['first'], 'title': PRIVATE}},
+               {'windowFrame': None}, {'windowFrame': [0, 0, 0, 874]},
+               {'windowFrame': [0, 0, 402, -1]}, {'windowFrame': [0, 0, True, 874]},
+               {'windowFrame': [0, 0, 402, float('inf')]},
+               {'elements': {**base['elements'], 'privateElement': base['elements']['undo']}},
+               {'elements': {name: value for name, value in base['elements'].items() if name != 'retry'}}]
+        for frame in ([0, 0, -1, 10], [0, 0, 10, -1], [0, 0, True, 10], [0, 0, 10],
+                      [0, 0, 10 ** 1000, 10], [0, 0, float('nan'), 10]):
+            bad.append({'last': {'target': frame, 'owner': base['last']['owner']}})
+        for element in ({'count': True, 'frame': None, 'intersectsTarget': None},
+                        {'count': -1, 'frame': None, 'intersectsTarget': None},
+                        {'count': 10_001, 'frame': None, 'intersectsTarget': None},
+                        {'count': 2, 'frame': [0, 740, 402, 75], 'intersectsTarget': True},
+                        {'count': 1, 'frame': None, 'intersectsTarget': False},
+                        {**base['elements']['feedback'], 'intersectsTarget': False},
+                        {**base['elements']['feedback'], 'intersectsTarget': None},
+                        {**base['elements']['feedback'], 'intersectsTarget': 1},
+                        {**base['elements']['feedback'], 'label': PRIVATE}):
+            bad.append({'elements': {**base['elements'], 'feedback': element}})
+        bad.append({'elements': {**base['elements'], 'tabBar': {**base['elements']['tabBar'], 'intersectsTarget': True}}})
+        for fields in bad:
+            with self.subTest(fields=fields):
+                self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(
+                    prefix + [self.phone_reveal_obstruction_row(**fields), event(case=case, state='failed')]), EXPECTED, entries))
+
+    def test_phone_obstruction_requires_phone_current_request_postpone_boundary_and_failed_terminal(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        row = self.phone_reveal_obstruction_row()
+        failed = event(case=case, state='failed')
+        for suffix in ([], [event(case=case, state='passed')], [event(case=case, state='skipped')],
+                       [row, failed], [self.progress_row(case, 'postponeComplete', 6), failed],
+                       [self.case_diagnostic_row(case, 2, 'librarySearch'), failed],
+                       [prefix[-1], failed]):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row] + suffix), EXPECTED, entries))
+        wrong_phase = [text for text in prefix if '"phase": "postponeStarted"' not in text]
+        wrong_request = [text.replace('"taskPostpone"', '"librarySearch"') for text in prefix]
+        invalid = (prefix[:-1] + [row, failed], prefix[:-1] + [row, prefix[-1], failed],
+                   wrong_phase + [row, failed], wrong_request + [row, failed],
+                   prefix + [failed, row], [row] + prefix + [failed],
+                   prefix + ['quoted ' + row, failed], prefix + [row + PRIVATE, failed],
+                   prefix + [row.replace('"observationCount": 3', '"observationCount": 3, "observationCount": 3'), failed])
+        for rows in invalid:
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries))
+        for platform in ('ipad', 'macos'):
+            rows = prefix + [row, failed]
+            if platform == 'macos':
+                rows = [text.replace(BUNDLE, 'MirrorMacAdaptiveUITests') for text in rows]
+                rows[-3] = self.reveal_owner_row(schemaVersion=2, case='searchDetailUndo', requestedElement='taskPostpone',
+                    candidateCount=1, areaCount=1, hittableCount=0, typedTargetCount=1, columnCount=1,
+                    intersectCount=1, keyboardCount=None, keyboardFrame=None)
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), {**EXPECTED, 'platform': platform},
+                                                           helper.source_method_entries(source, platform)))
+
     def failure_image_fixture(self, directory):
         root = Path(directory).resolve()
         source, _ = self.progress_fixture()

@@ -491,6 +491,7 @@ CASE_DIAGNOSTIC_MARKER = 'UI adaptive case diagnostic: '
 AUDIT_BOUNDARY_MARKER = 'UI adaptive audit boundary: '
 CAPTURE_SAVE_FAILURE_MARKER = 'UI adaptive capture save failure: '
 REVEAL_OWNER_MARKER = 'UI adaptive reveal owner diagnostic: '
+PHONE_REVEAL_OBSTRUCTION_MARKER = 'UI adaptive phone reveal obstruction diagnostic: '
 CASE_DIAGNOSTIC_NAMES = {
     'testMaximumTypeCaptureValidationAndRecovery': 'captureValidation',
     'testMaximumTypeReviewAndWeekPicker': 'reviewWeek',
@@ -515,7 +516,7 @@ CASE_REQUESTED_ELEMENTS = {
     'narrowMac': frozenset(('destinationLibrary', 'todayReview', 'settingsButton', 'taskRow',
                            'detailContentTitle', 'detailClose', 'detailPostponeTomorrow', 'taskComplete')),
 }
-CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary|reveal\s+owner\s+diagnostic|capture\s+save\s+failure(?!\s+screenshot))\b')
+CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary|reveal\s+owner\s+diagnostic|phone\s+reveal\s+obstruction\s+diagnostic|capture\s+save\s+failure(?!\s+screenshot))\b')
 
 
 def reveal_owner_fields(value, platform):
@@ -537,6 +538,57 @@ def reveal_owner_fields(value, platform):
             and (frame is None or count == 1 and isinstance(frame, list) and len(frame) == 4
                  and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
                          for number in frame) and frame[2] >= 0 and frame[3] >= 0))
+
+
+def phone_reveal_obstruction_fields(value):
+    keys = {'schemaVersion', 'case', 'requestSequence', 'requestedElement', 'observationCount',
+            'swipeDirections', 'first', 'previous', 'last', 'windowFrame', 'elements'}
+    if not (isinstance(value, dict) and set(value) == keys and value['case'] == 'searchDetailUndo'
+            and value['requestedElement'] == 'taskPostpone'
+            and type(value['observationCount']) is int and 1 <= value['observationCount'] <= 8
+            and isinstance(value['swipeDirections'], list)
+            and len(value['swipeDirections']) == value['observationCount'] - 1
+            and all(type(direction) is str and direction in ('up', 'down') for direction in value['swipeDirections'])):
+        return False
+
+    def frame_valid(frame):
+        return (isinstance(frame, list) and len(frame) == 4
+                and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
+                        for number in frame) and frame[2] >= 0 and frame[3] >= 0)
+
+    def observation_valid(observation):
+        return (isinstance(observation, dict) and set(observation) == {'target', 'owner'}
+                and all(frame is None or frame_valid(frame) for frame in observation.values()))
+
+    if not (observation_valid(value['first']) and observation_valid(value['last'])
+            and frame_valid(value['windowFrame']) and all(number > 0 for number in value['windowFrame'][2:])):
+        return False
+    count = value['observationCount']
+    if count == 1:
+        if value['previous'] is not None or value['first'] != value['last']:
+            return False
+    elif not observation_valid(value['previous']) or count == 2 and value['previous'] != value['first']:
+        return False
+    elements = value['elements']
+    if not (isinstance(elements, dict) and set(elements) == {'feedback', 'dismissFeedback', 'undo', 'retry', 'tabBar'}):
+        return False
+    target = value['last']['target']
+    for element in elements.values():
+        if not (isinstance(element, dict) and set(element) == {'count', 'frame', 'intersectsTarget'}
+                and type(element['count']) is int and 0 <= element['count'] <= 10_000
+                and (element['frame'] is None or element['count'] == 1 and frame_valid(element['frame']))):
+            return False
+        frame, intersects = element['frame'], element['intersectsTarget']
+        if frame is None or target is None:
+            if intersects is not None:
+                return False
+        else:
+            # 부분 요소의 양수 면적 교차만 표현한다. 전체 안내 영역이나 실제 hit-test 결과가 아니다.
+            overlap = (min(frame[0] + frame[2], target[0] + target[2]) > max(frame[0], target[0])
+                       and min(frame[1] + frame[3], target[1] + target[3]) > max(frame[1], target[1]))
+            if type(intersects) is not bool or intersects != overlap:
+                return False
+    return True
 
 
 def capture_save_failure_fields(value):
@@ -590,7 +642,7 @@ def xctest_case_diagnostics(log, expected, entries):
             if event[1] != owner or event[2] not in cases:
                 return None
             if event[3] != 'started' and any(key in reports.get(event[2], {})
-                                            for key in ('captureSaveFailure', 'revealOwnerFailure')):
+                                            for key in ('captureSaveFailure', 'revealOwnerFailure', 'phoneRevealObstruction')):
                 if event[3] != 'failed':
                     return None
             active, sequence = (event[2], 0) if event[3] == 'started' else (None, 0)
@@ -601,9 +653,10 @@ def xctest_case_diagnostics(log, expected, entries):
             continue
         if len(text.encode('utf-8')) > 2048 or active is None:
             return None
-        if 'captureSaveFailure' in reports.get(active, {}):
+        if any(key in reports.get(active, {}) for key in ('captureSaveFailure', 'phoneRevealObstruction')):
             return None
-        if 'revealOwnerFailure' in reports.get(active, {}) and not text.startswith(CAPTURE_SAVE_FAILURE_MARKER):
+        if ('revealOwnerFailure' in reports.get(active, {})
+                and not text.startswith((CAPTURE_SAVE_FAILURE_MARKER, PHONE_REVEAL_OBSTRUCTION_MARKER))):
             return None
         if progress_signal:
             if signal or active not in reports:
@@ -623,6 +676,7 @@ def xctest_case_diagnostics(log, expected, entries):
         marker = (CASE_DIAGNOSTIC_MARKER if text.startswith(CASE_DIAGNOSTIC_MARKER)
                   else CAPTURE_SAVE_FAILURE_MARKER if text.startswith(CAPTURE_SAVE_FAILURE_MARKER)
                   else REVEAL_OWNER_MARKER if text.startswith(REVEAL_OWNER_MARKER)
+                  else PHONE_REVEAL_OBSTRUCTION_MARKER if text.startswith(PHONE_REVEAL_OBSTRUCTION_MARKER)
                   else AUDIT_BOUNDARY_MARKER)
         if not text.startswith(marker) or text.count(marker) != 1:
             return None
@@ -666,6 +720,17 @@ def xctest_case_diagnostics(log, expected, entries):
                     and (not report['auditBoundaries'] or report['auditBoundaries'][-1]['outcome'] == 'returned')):
                 return None
             report['revealOwnerFailure'] = value
+        elif marker == PHONE_REVEAL_OBSTRUCTION_MARKER:
+            report = reports.get(active)
+            if not (expected['platform'] == 'iphone' and report is not None
+                    and phone_reveal_obstruction_fields(value)
+                    and type(value['requestSequence']) is int and value['requestSequence'] > 0
+                    and value['requestSequence'] == report['requestSequence']
+                    and report['requestedElement'] == 'taskPostpone'
+                    and report['lastProgress'] is not None and report['lastProgress']['phase'] == 'postponeStarted'
+                    and 'revealOwnerFailure' in report):
+                return None
+            report['phoneRevealObstruction'] = value
         elif marker == CAPTURE_SAVE_FAILURE_MARKER:
             report = reports.get(active)
             if not (report is not None and sequence > 0 and capture_save_failure_fields(value)
@@ -692,7 +757,8 @@ def xctest_case_diagnostics(log, expected, entries):
             audits.append({key: value[key] for key in ('auditSequence', 'outcome')})
     if len(reports) > len(cases):
         return None
-    if active is not None and any(key in reports.get(active, {}) for key in ('captureSaveFailure', 'revealOwnerFailure')):
+    if active is not None and any(key in reports.get(active, {})
+                                  for key in ('captureSaveFailure', 'revealOwnerFailure', 'phoneRevealObstruction')):
         return None
     return list(reports.values())
 
