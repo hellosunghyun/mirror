@@ -77,15 +77,11 @@ struct MirrorTodayView: View {
                             .font(.subheadline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                     }
                     MirrorActionGroup {
-                        Button { model.beginReview(mode: .manualResume) } label: {
-                            Text(reviewButtonTitle)
-                                .foregroundStyle(MirrorPalette.onAccent)
+                        if model.tasks.isEmpty {
+                            reviewButton.buttonStyle(.bordered)
+                        } else {
+                            reviewButton.buttonStyle(.borderedProminent)
                         }
-                            .buttonStyle(.borderedProminent).controlSize(.regular)
-                            .frame(minHeight: 44)
-                            .accessibilityLabel(reviewButtonAccessibilityLabel)
-                            .accessibilityIdentifier("today.review")
-                            .disabled(model.isDetailEditing)
                         Menu {
                             if let review = model.review, !review.cards.isEmpty {
                                 Button("이어서 정리") { model.beginReview(mode: .manualResume) }
@@ -136,9 +132,11 @@ struct MirrorTodayView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("today.empty.description")
-                        Button("일단 넣기") { openCapture?.callAsFunction() }
-                            .disabled(openCapture == nil)
-                            .buttonStyle(.borderless).frame(minHeight: 44)
+                        if model.tasks.isEmpty {
+                            emptyCaptureButton.buttonStyle(.borderedProminent)
+                        } else {
+                            emptyCaptureButton.buttonStyle(.borderless)
+                        }
                     }
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
@@ -178,6 +176,25 @@ struct MirrorTodayView: View {
         Button { if let selectTask { selectTask(task.taskID) } else { model.selectedTaskID = task.taskID } } label: {
             Label { VStack(alignment: .leading) { Text(task.title).lineLimit(3).accessibilityLabel(task.title); Text(deadlineLabel(task.deadline, context: model.context)).font(.caption) } } icon: { Image(systemName: "flag") }
         }.buttonStyle(.plain).padding(.vertical, 4)
+    }
+    private var reviewButton: some View {
+        Button { model.beginReview(mode: .manualResume) } label: {
+            Text(reviewButtonTitle)
+                .foregroundStyle(model.tasks.isEmpty ? MirrorPalette.accent : MirrorPalette.onAccent)
+        }
+        .controlSize(.regular).frame(minHeight: 44)
+        .accessibilityLabel(reviewButtonAccessibilityLabel)
+        .accessibilityIdentifier("today.review")
+        .disabled(model.isDetailEditing)
+    }
+    private var emptyCaptureButton: some View {
+        Button { openCapture?.callAsFunction() } label: {
+            Text("일단 넣기")
+                .foregroundStyle(model.tasks.isEmpty ? MirrorPalette.onAccent : MirrorPalette.accent)
+                .frame(minHeight: 44)
+        }
+        .disabled(openCapture == nil)
+        .accessibilityIdentifier("today.empty.capture")
     }
     private var reviewButtonTitle: String {
         if let session = model.review, !session.cards.isEmpty {
