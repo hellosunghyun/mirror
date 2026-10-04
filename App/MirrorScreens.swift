@@ -533,6 +533,8 @@ struct MirrorCaptureView: View {
             }
         }
         .disabled(model.isSaving || model.projectionPending)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("날짜 선택")
         .accessibilityIdentifier("capture.planChoices")
     }
     private func selectInitialPlan(offset: Int, context: PlanningContext?) {

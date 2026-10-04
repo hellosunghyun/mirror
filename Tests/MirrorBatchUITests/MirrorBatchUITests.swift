@@ -37,7 +37,8 @@ final class MirrorBatchUITests: XCTestCase {
         XCTAssertEqual(try reachableBatchFooter(in: app).label, "선택한 2개 날짜 배치",
                        "같은 창의 화면을 다시 구성해도 일괄 대상을 유지한다.")
         try verifyPicker(selected, in: app)
-        try activate("plan.cancel", surface: .planner, in: app)
+        // 취소는 iOS 고정 헤더와 Mac 툴바에 있으므로 실제 앱 창을 기준으로 도달 가능성을 확인한다.
+        try activate("plan.cancel", in: app)
         try gone("plan.cancel", in: app)
         try verifyRows(selected, plan: unassigned, selection: "선택됨", in: app)
         try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)

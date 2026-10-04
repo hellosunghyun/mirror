@@ -280,6 +280,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
         try tap("capture.open", requestedElement: .captureOpen, in: app)
         try replaceText(find("capture.title", requestedElement: .captureTitle, in: app), with: planned, in: app)
         try tap("capture.more", requestedElement: .captureMoreButton, in: app)
+        let planChoices = try find("capture.planChoices", requestedElement: .capturePlanChoices, in: app)
+        _ = try unique(planChoices.buttons.matching(identifier: "capture.planToday"), requestedElement: .capturePlanToday)
         try tap("capture.planToday", requestedElement: .capturePlanToday, in: app)
         let summary = try find("capture.planSummary", requestedElement: .capturePlanSummary, in: app)
         XCTAssertTrue(text(summary).contains("9월 30일"))
@@ -1095,6 +1097,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         case captureMoreDisclosure
         case captureNote
         case captureOpen
+        case capturePlanChoices
         case capturePlanSummary
         case capturePlanToday
         case captureSave

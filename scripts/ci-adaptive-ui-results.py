@@ -504,7 +504,7 @@ CASE_REQUESTED_ELEMENTS = {
                                   'planTomorrow', 'librarySearch', 'settingsButton', 'detailContentTitle',
                                   'detailPlan', 'taskComplete', 'taskUndo')),
     'plannedCapture': frozenset(('destinationLibrary', 'destinationToday', 'taskRow', 'captureMoreButton',
-                                 'captureMoreDisclosure', 'capturePlanToday', 'capturePlanSummary')),
+                                 'captureMoreDisclosure', 'capturePlanChoices', 'capturePlanToday', 'capturePlanSummary')),
     'narrowMac': frozenset(('destinationLibrary', 'todayReview', 'settingsButton', 'taskRow',
                            'detailContentTitle', 'detailClose', 'detailPostponeTomorrow', 'taskComplete')),
 }
