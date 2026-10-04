@@ -580,7 +580,32 @@ final class MirrorAdaptiveUITests: XCTestCase {
             let tab = try unique(tabs, requestedElement: requestedElement)
             try assertVisible(tab, in: app)
             performActivation(tab)
-        } else { try tap("destination.\(identifier)", requestedElement: requestedElement, in: app) }
+            return
+        }
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .pad,
+           !app.buttons.matching(identifier: "destination.\(identifier)").firstMatch.exists,
+           (identifier == "library" && title == "보관함" && requestedElement == .destinationLibrary)
+            || (identifier == "today" && title == "오늘" && requestedElement == .destinationToday) {
+            // iPad 적응형 탭은 tabBar 밖의 실제 Button으로 노출될 수 있다.
+            // 두 기존 typed 경로가 없는 경우에만 고정 label의 고유한 앱 버튼을 누른다.
+            let label = NSPredicate(format: "label == %@", title)
+            let tab = try unique(app.buttons.matching(label), requestedElement: requestedElement)
+            XCTAssertEqual(tab.elementType, .button)
+            XCTAssertEqual(app.state, .runningForeground)
+            let windows = app.windows.allElementsBoundByIndex
+            XCTAssertEqual(windows.count, 1)
+            let window = try XCTUnwrap(windows.first)
+            XCTAssertEqual(window.buttons.matching(label).count, 1, "목적지 버튼은 현재 앱의 단일 창에 속해야 한다.")
+            let frame = tab.frame
+            XCTAssertTrue(hasArea(frame) && hasArea(window.frame) && window.frame.contains(frame))
+            try assertMobileTarget(tab)
+            XCTAssertTrue(tab.exists && tab.isHittable && tab.isEnabled)
+            performActivation(tab)
+            return
+        }
+        #endif
+        try tap("destination.\(identifier)", requestedElement: requestedElement, in: app)
     }
 
     @MainActor
