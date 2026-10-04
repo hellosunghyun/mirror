@@ -12,6 +12,11 @@ final class MirrorBatchUITests: XCTestCase {
         var uuid: String { String(identifier.dropFirst("task.row.".count)) }
     }
     private enum Surface: Equatable { case library, planner, none }
+    private enum ReachableTarget: String {
+        case unknown, captureOpen, captureSave, captureClose, destinationToday, destinationLibrary
+        case librarySearch, librarySelectToggle, librarySelectAll, taskRow, taskSelection
+        case planToday, planTomorrow, planCancel, planDisclosure, planTask
+    }
     private enum HarnessFailure: Error { case missing, ambiguous, unreachable, wrongValue }
     private enum ProgressCase: String {
         case two = "testTwoTaskBatchKeepsUnselectedTaskAndOriginalContent"
@@ -251,7 +256,7 @@ final class MirrorBatchUITests: XCTestCase {
     private func showLibrary(search: String, in app: XCUIApplication) throws {
         try selectDestination("보관함", identifier: "destination.library", in: app)
         let field = try reachable(app.textFields.matching(identifier: "library.search"), surface: .library,
-                                  missingTowardTop: true, in: app)
+                                  missingTowardTop: true, target: .librarySearch, in: app)
         XCTAssertTrue(textValue(field).isEmpty)
         performActivation(field)
         #if os(iOS)
@@ -267,19 +272,20 @@ final class MirrorBatchUITests: XCTestCase {
         #endif
     }
 
-    private func selectDestination(_ title: String, identifier: String, in app: XCUIApplication) throws {
+    private func selectDestination(_ title: String, identifier: String, in app: XCUIApplication,
+                                   file: StaticString = #filePath, line: UInt = #line) throws {
         let tabs = app.tabBars.buttons.matching(NSPredicate(format: "label == %@", title))
         if tabs.firstMatch.exists {
             let tab = try unique(tabs)
             try assertReachable(tab, in: app)
             performActivation(tab)
-        } else { try activate(identifier, in: app) }
+        } else { try activate(identifier, in: app, file: file, line: line) }
     }
 
     private func originalTasks(_ titles: [String], in app: XCUIApplication) throws -> [OriginalTask] {
         let tasks = try titles.map { title in
             let query = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "task.row.", title))
-            let row = try reachable(query, surface: .library, in: app)
+            let row = try reachable(query, surface: .library, target: .taskRow, in: app)
             let identifier = row.identifier
             let uuid = String(identifier.dropFirst("task.row.".count))
             XCTAssertNotNil(UUID(uuidString: uuid))
@@ -294,7 +300,7 @@ final class MirrorBatchUITests: XCTestCase {
                             in app: XCUIApplication) throws {
         let expectedValue = selection.map { plan + ", " + $0 } ?? plan
         for task in tasks {
-            let row = try reachable(app.buttons.matching(identifier: task.identifier), surface: .library, in: app)
+            let row = try reachable(app.buttons.matching(identifier: task.identifier), surface: .library, target: .taskRow, in: app)
             XCTAssertEqual(row.identifier, task.identifier)
             XCTAssertEqual(row.label, task.title, "원문 제목을 보존한다.")
             try waitValue(expectedValue, element: row)
@@ -307,7 +313,7 @@ final class MirrorBatchUITests: XCTestCase {
         XCTAssertFalse(app.buttons.matching(identifier: "library.selectAll").firstMatch.exists)
         try activate("library.selectToggle", surface: .library, in: app)
         let bulk = try reachable(app.buttons.matching(identifier: "library.selectAll"), surface: .library,
-                                 missingTowardTop: true, in: app)
+                                 missingTowardTop: true, target: .librarySelectAll, in: app)
         XCTAssertEqual(bulk.label, "모두 선택, 현재 목록")
         XCTAssertEqual(textValue(bulk), "선택한 0개, 대상 20개")
         try assertMobileTarget(bulk)
@@ -321,7 +327,7 @@ final class MirrorBatchUITests: XCTestCase {
         try verifyRows(originals, plan: unassigned, selection: "선택됨", in: app)
 
         let clear = try reachable(app.buttons.matching(identifier: "library.selectAll"), surface: .library,
-                                  missingTowardTop: true, in: app)
+                                  missingTowardTop: true, target: .librarySelectAll, in: app)
         XCTAssertEqual(clear.label, "선택 해제, 현재 목록")
         try assertMobileTarget(clear)
         performActivation(clear)
@@ -340,7 +346,7 @@ final class MirrorBatchUITests: XCTestCase {
     private func verifySelectionState(_ originals: [OriginalTask], value: String, in app: XCUIApplication) throws {
         for task in originals {
             let identifier = "task.select.\(task.uuid)"
-            let choice = try reachable(app.buttons.matching(identifier: identifier), surface: .library, in: app)
+            let choice = try reachable(app.buttons.matching(identifier: identifier), surface: .library, target: .taskSelection, in: app)
             XCTAssertEqual(choice.identifier, identifier)
             XCTAssertEqual(choice.label, "\(task.title), 배치 대상 선택")
             try waitValue(value, element: choice)
@@ -353,7 +359,7 @@ final class MirrorBatchUITests: XCTestCase {
         try activate("library.selectToggle", surface: .library, in: app)
         for task in selected {
             let id = "task.select.\(task.uuid)"
-            let choice = try reachable(app.buttons.matching(identifier: id), surface: .library, in: app)
+            let choice = try reachable(app.buttons.matching(identifier: id), surface: .library, target: .taskSelection, in: app)
             XCTAssertEqual(choice.label, "\(task.title), 배치 대상 선택")
             XCTAssertEqual(textValue(choice), "선택 안 됨")
             try assertMobileTarget(choice)
@@ -361,7 +367,7 @@ final class MirrorBatchUITests: XCTestCase {
             try waitValue("선택됨", element: choice)
         }
         if let control {
-            let choice = try reachable(app.buttons.matching(identifier: "task.select.\(control.uuid)"), surface: .library, in: app)
+            let choice = try reachable(app.buttons.matching(identifier: "task.select.\(control.uuid)"), surface: .library, target: .taskSelection, in: app)
             XCTAssertEqual(choice.label, "\(control.title), 배치 대상 선택")
             XCTAssertEqual(textValue(choice), "선택 안 됨")
         }
@@ -384,7 +390,8 @@ final class MirrorBatchUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists)
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "plan.task.")).count, 0)
         for id in ["plan.today", "plan.tomorrow"] {
-            let quick = try reachable(app.buttons.matching(identifier: id), surface: .planner, in: app)
+            let quick = try reachable(app.buttons.matching(identifier: id), surface: .planner,
+                                      target: id == "plan.today" ? .planToday : .planTomorrow, in: app)
             try assertMobileTarget(quick)
             XCTAssertTrue(quick.isEnabled)
         }
@@ -392,7 +399,7 @@ final class MirrorBatchUITests: XCTestCase {
         performActivation(disclosure)
         try waitValue("펼쳐짐", element: disclosure)
         for task in selected {
-            let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\(task.uuid)"), surface: .planner, in: app)
+            let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\(task.uuid)"), surface: .planner, target: .planTask, in: app)
             XCTAssertEqual(title.label, task.title)
         }
         let folded = try plannerDisclosure(in: app)
@@ -407,11 +414,11 @@ final class MirrorBatchUITests: XCTestCase {
         #if os(macOS)
         let triangles = app.descendants(matching: .disclosureTriangle).matching(identifier: "plan.tasksDisclosure")
         if triangles.firstMatch.exists {
-            return try reachable(triangles, surface: .planner, missingTowardTop: true, in: app)
+            return try reachable(triangles, surface: .planner, missingTowardTop: true, target: .planDisclosure, in: app)
         }
         #endif
         return try reachable(app.buttons.matching(identifier: "plan.tasksDisclosure"), surface: .planner,
-                             missingTowardTop: true, in: app)
+                             missingTowardTop: true, target: .planDisclosure, in: app)
     }
 
     private func reachableBatchFooter(in app: XCUIApplication) throws -> XCUIElement {
@@ -450,9 +457,25 @@ final class MirrorBatchUITests: XCTestCase {
         throw HarnessFailure.unreachable
     }
 
-    private func activate(_ identifier: String, surface: Surface = .none, in app: XCUIApplication) throws {
+    private func activate(_ identifier: String, surface: Surface = .none, in app: XCUIApplication,
+                          file: StaticString = #filePath, line: UInt = #line) throws {
+        let target: ReachableTarget
+        switch identifier {
+        case "capture.open": target = .captureOpen
+        case "capture.save": target = .captureSave
+        case "capture.close": target = .captureClose
+        case "destination.today": target = .destinationToday
+        case "destination.library": target = .destinationLibrary
+        case "library.selectToggle": target = .librarySelectToggle
+        case "library.selectAll": target = .librarySelectAll
+        case "plan.today": target = .planToday
+        case "plan.tomorrow": target = .planTomorrow
+        case "plan.cancel": target = .planCancel
+        default: target = .unknown
+        }
         let control = try reachable(app.buttons.matching(identifier: identifier), surface: surface,
-                                    missingTowardTop: identifier.hasPrefix("library."), in: app)
+                                    missingTowardTop: identifier.hasPrefix("library."), target: target,
+                                    in: app, file: file, line: line)
         try assertMobileTarget(control)
         performActivation(control)
     }
@@ -474,13 +497,14 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func reachable(_ query: XCUIElementQuery, surface: Surface, missingTowardTop: Bool = false,
-                           in app: XCUIApplication) throws -> XCUIElement {
+                           target: ReachableTarget = .unknown, in app: XCUIApplication,
+                           file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
         let deadline = Date().addingTimeInterval(15)
         if surface == .none {
             _ = try unique(query, timeout: max(0, deadline.timeIntervalSinceNow))
         }
         for _ in 0..<12 {
-            XCTAssertEqual(app.state, .runningForeground)
+            XCTAssertEqual(app.state, .runningForeground, file: file, line: line)
             if query.firstMatch.exists {
                 let element = try unique(query, timeout: 0)
                 let frame = element.frame
@@ -488,12 +512,12 @@ final class MirrorBatchUITests: XCTestCase {
                     .allElementsBoundByAccessibilityElement.filter { $0.exists && hasArea($0.frame) && $0.frame.contains(frame) }
                 if hasArea(frame), windows.count == 1, element.isHittable, element.isEnabled {
                     if surface == .none { return element }
-                    let owner = try scrollOwner(surface, in: app)
+                    let owner = try scrollOwner(surface, in: app, target: target, file: file, line: line)
                     if owner.frame.contains(frame) { return element }
                 }
             }
             guard Date() < deadline, surface != .none else { break }
-            let owner = try scrollOwner(surface, in: app)
+            let owner = try scrollOwner(surface, in: app, target: target, file: file, line: line)
             let towardTop: Bool
             if query.firstMatch.exists, hasArea(query.firstMatch.frame) {
                 towardTop = query.firstMatch.frame.minY < owner.frame.minY
@@ -504,11 +528,13 @@ final class MirrorBatchUITests: XCTestCase {
             if towardTop { owner.swipeDown() } else { owner.swipeUp() }
             #endif
         }
-        XCTFail("batchTargetIsNotReachableWithin15SecondsAnd12Scrolls")
+        // 대상은 호출부의 고정 enum이다. 실제 identifier·제목·AX 값은 기록하지 않는다.
+        XCTFail("batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=\(target.rawValue)", file: file, line: line)
         throw HarnessFailure.unreachable
     }
 
-    private func scrollOwner(_ surface: Surface, in app: XCUIApplication) throws -> XCUIElement {
+    private func scrollOwner(_ surface: Surface, in app: XCUIApplication, target: ReachableTarget,
+                             file: StaticString, line: UInt) throws -> XCUIElement {
         let surfaces = app.scrollViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex
             + app.collectionViews.allElementsBoundByIndex
         let predicate: NSPredicate
@@ -518,7 +544,7 @@ final class MirrorBatchUITests: XCTestCase {
         case .planner:
             predicate = NSPredicate(format: "identifier == %@ OR identifier BEGINSWITH %@", "plan.tasksDisclosure", "plan.task.")
         case .none:
-            XCTFail("batchScrollOwnerRequiresActualSurface")
+            XCTFail("batchScrollOwnerRequiresActualSurface target=\(target.rawValue)", file: file, line: line)
             throw HarnessFailure.missing
         }
         let owners = surfaces.filter { owner in
@@ -526,14 +552,14 @@ final class MirrorBatchUITests: XCTestCase {
                 && owner.descendants(matching: .any).matching(predicate).firstMatch.exists
         }.sorted { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
         guard let owner = owners.first else {
-            XCTFail("batchActualScrollOwnerMissing")
+            XCTFail("batchActualScrollOwnerMissing target=\(target.rawValue)", file: file, line: line)
             throw HarnessFailure.missing
         }
         if owners.count > 1 {
             let firstArea = owner.frame.width * owner.frame.height
             let secondArea = owners[1].frame.width * owners[1].frame.height
             guard firstArea < secondArea else {
-                XCTFail("batchActualScrollOwnerAmbiguous")
+                XCTFail("batchActualScrollOwnerAmbiguous target=\(target.rawValue)", file: file, line: line)
                 throw HarnessFailure.ambiguous
             }
         }
@@ -592,24 +618,28 @@ final class MirrorBatchUITests: XCTestCase {
         return value == element.placeholderValue ? "" : value
     }
 
-    private func waitValue(_ value: String, element: XCUIElement) throws {
+    private func waitValue(_ value: String, element: XCUIElement,
+                           file: StaticString = #filePath, line: UInt = #line) throws {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { object, _ in
             guard let element = object as? XCUIElement else { return false }
             let actual = element.value as? String ?? ""
             let normalized = actual == element.placeholderValue ? "" : actual
             return normalized == value
         }, object: element)
-        try requireCompleted(expectation)
+        try requireCompleted(expectation, file: file, line: line)
     }
 
-    private func gone(_ identifier: String, in app: XCUIApplication) throws {
+    private func gone(_ identifier: String, in app: XCUIApplication,
+                      file: StaticString = #filePath, line: UInt = #line) throws {
         let element = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
-        try requireCompleted(XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element))
+        try requireCompleted(XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element),
+                             file: file, line: line)
     }
 
-    private func requireCompleted(_ expectation: XCTestExpectation) throws {
+    private func requireCompleted(_ expectation: XCTestExpectation,
+                                  file: StaticString = #filePath, line: UInt = #line) throws {
         guard XCTWaiter.wait(for: [expectation], timeout: 15) == .completed else {
-            XCTFail("batchExpectedUIStateDidNotCompleteWithin15Seconds")
+            XCTFail("batchExpectedUIStateDidNotCompleteWithin15Seconds", file: file, line: line)
             throw HarnessFailure.wrongValue
         }
     }
