@@ -835,6 +835,42 @@ def verify_receipt(directory, expected):
     return digest(read_regular(directory / 'build-receipt.json', MAX_JSON))
 
 
+def native_test_start_record(directory, expected):
+    receipt_hash = verify_receipt(directory, expected)
+    outcome = read_json(directory / 'safe-outcome.json')
+    validate_outcome(outcome, expected)
+    require(outcome['status'] == 'buildComplete', 'nativeTestStartRequiresBuild')
+    for name in ('test.log', 'UI.xcresult', 'native-test-start.json'):
+        path = directory / name
+        require(not path.exists() and not path.is_symlink(), 'staleNativeTestStart')
+    # native 명령 직전 도달한 경계다. 실제 실행·완료·실패 상태를 대신하지 않는다.
+    write_json(directory / 'native-test-start.json', {
+        **expected, 'formatVersion': 1, 'kind': 'adaptive-native-test-start',
+        'buildReceiptSHA256': receipt_hash,
+    }, exclusive=True)
+
+
+def verify_native_test_start(directory, expected, receipt_hash):
+    require(isinstance(receipt_hash, str) and re.fullmatch(r'[0-9a-f]{64}', receipt_hash) is not None,
+            'invalidNativeTestStartReceipt')
+    path = directory / 'native-test-start.json'
+    require(not path.is_symlink() and path.is_file(), 'invalidNativeTestStartReceipt')
+    value = read_json(path)
+    required = {**expected, 'formatVersion': 1, 'kind': 'adaptive-native-test-start',
+                'buildReceiptSHA256': receipt_hash}
+    require(isinstance(value, dict) and type(value.get('formatVersion')) is int
+            and value == required, 'invalidNativeTestStartReceipt')
+
+
+def outcome_verify(directory, expected):
+    safe_directory(directory)
+    validate_outcome(read_json(directory / 'safe-outcome.json'), expected)
+    start = directory / 'native-test-start.json'
+    if start.exists() or start.is_symlink():
+        # 이 step 뒤 공개하는 선택적 시작 영수증도 현재 실제 build까지 검증한다.
+        verify_native_test_start(directory, expected, verify_receipt(directory, expected))
+
+
 def boot(directory, expected):
     context = context_for(directory, expected)
     if expected['platform'] == 'macos':
@@ -1227,7 +1263,12 @@ def failure_evidence_context(directory, expected):
     receipt_hash = verify_receipt(directory, expected)
     outcome = read_json(directory / 'safe-outcome.json')
     validate_outcome(outcome, expected)
-    require(outcome['status'] == 'failed' and outcome['phase'] == 'test'
+    retained_build = outcome['status'] == 'buildComplete'
+    if retained_build:
+        # step 중단으로 EXIT trap이 실행되지 않아도 이전 성공을 실패로 덮어쓰지 않는다.
+        # 검증된 시작 영수증과 실제 owned 실패/중단 로그가 함께 있어야 진단만 보존한다.
+        verify_native_test_start(directory, expected, receipt_hash)
+    require(retained_build or outcome['status'] == 'failed' and outcome['phase'] == 'test'
             and (outcome['xcodebuildExitCode'] is None
                  or type(outcome['xcodebuildExitCode']) is int and 1 <= outcome['xcodebuildExitCode'] <= 255),
             'notNativeUIFailure')
@@ -1237,7 +1278,7 @@ def failure_evidence_context(directory, expected):
     require(entries is not None, 'invalidSourceEntries')
     log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8')
     return receipt_hash, failure_recorded_screenshots(log, expected, entries,
-        require_failure_or_interruption=outcome['xcodebuildExitCode'] is None)
+        require_failure_or_interruption=retained_build or outcome['xcodebuildExitCode'] is None)
 
 
 def failure_attachment_name(value):
@@ -1354,7 +1395,7 @@ class SafeParser(argparse.ArgumentParser):
 def main():
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'adaptiveRemoteOnly')
     parser = SafeParser()
-    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure', 'failure-evidence-prepare', 'failure-evidence'))
+    parser.add_argument('command', choices=('prepare', 'context', 'receipt-record', 'receipt-verify', 'native-test-start', 'boot', 'guard', 'evidence', 'outcome-verify', 'diagnostics', 'test-diagnostics', 'progress', 'measurements', 'failure', 'failure-evidence-prepare', 'failure-evidence'))
     parser.add_argument('--directory', required=True)
     parser.add_argument('--platform', required=True)
     parser.add_argument('--appearance', required=True)
@@ -1377,6 +1418,8 @@ def main():
                    'commandExitCode': 0, 'xcodebuildExitCode': 0})
     elif args.command == 'receipt-verify':
         verify_receipt(directory, expected)
+    elif args.command == 'native-test-start':
+        native_test_start_record(directory, expected)
     elif args.command == 'boot':
         boot(directory, expected)
     elif args.command == 'guard':
@@ -1388,8 +1431,7 @@ def main():
     elif args.command == 'failure-evidence':
         failure_evidence(directory, expected)
     elif args.command == 'outcome-verify':
-        safe_directory(directory)
-        validate_outcome(read_json(directory / 'safe-outcome.json'), expected)
+        outcome_verify(directory, expected)
     elif args.command == 'diagnostics':
         require(1 <= args.native_exit_code <= 255, 'invalidArguments')
         diagnostics(directory, expected)

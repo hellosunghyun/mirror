@@ -75,6 +75,7 @@ fi
 python3 scripts/ci-adaptive-ui-results.py receipt-verify "${adaptive_args[@]}"
 python3 scripts/ci-adaptive-ui-results.py boot "${adaptive_args[@]}"
 [[ ! -e "$adaptive_dir/UI.xcresult" && ! -L "$adaptive_dir/UI.xcresult" ]] || exit 2
+python3 scripts/ci-adaptive-ui-results.py native-test-start "${adaptive_args[@]}"
 set +e
 xcodebuild -project Mirror.xcodeproj -scheme "$adaptive_scheme" -configuration Debug \
   -sdk "$adaptive_sdk" -destination "$adaptive_destination" -jobs 2 \
