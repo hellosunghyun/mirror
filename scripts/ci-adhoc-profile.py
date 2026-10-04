@@ -20,6 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+PROFILE_INPUTS = (
+    ('MirrorIOS', 'app', 'IOS_ADHOC_APP_PROFILE_BASE64'),
+    ('MirrorWidgetsIOS', 'widgets', 'IOS_ADHOC_WIDGET_PROFILE_BASE64'),
+    ('MirrorShareIOS', 'share', 'IOS_ADHOC_SHARE_PROFILE_BASE64'),
+)
+IDENTITY_KEYS = ('teamID', 'profileUUID', 'profileName', 'identitySHA1', 'applicationIdentifierPrefix', 'profileExpiresAtUTC')
+
+
 class ValidationError(ValueError):
     """private 입력값을 포함하지 않는 고정 오류 코드만 외부로 전달한다."""
 
@@ -27,6 +35,99 @@ class ValidationError(ValueError):
 def require(condition, code):
     if not condition:
         raise ValidationError(code)
+
+
+def profile_inputs(environment):
+    """새 입력이 일부만 있으면 기존 프로파일로 돌아가지 않는다."""
+    present = [bool(environment.get(secret)) for _, _, secret in PROFILE_INPUTS]
+    require(not any(present) or all(present), 'PROFILE_INPUTS_PARTIAL')
+    if all(present):
+        return [(target, stem, secret) for target, stem, secret in PROFILE_INPUTS]
+    require(bool(environment.get('IOS_ADHOC_PROFILE_BASE64')), 'PROFILE_INPUT_MISSING')
+    return [(None, 'profile', 'IOS_ADHOC_PROFILE_BASE64')]
+
+
+def check_inputs(environment):
+    require(bool(environment.get('IOS_DISTRIBUTION_P12_BASE64')), 'P12_INPUT_MISSING')
+    require(bool(environment.get('IOS_DISTRIBUTION_P12_PASSWORD')), 'P12_PASSWORD_MISSING')
+    return profile_inputs(environment)
+
+
+def decode_inputs(environment, directory):
+    selected = profile_inputs(environment)
+    directory = Path(directory)
+    files = [('distribution.p12', 'IOS_DISTRIBUTION_P12_BASE64')]
+    files += [(stem + '.mobileprovision', secret) for _, stem, secret in selected]
+    decoded = []
+    for filename, secret in files:
+        try:
+            raw = base64.b64decode(''.join(environment.get(secret, '').split()), validate=True)
+        except (ValueError, TypeError):
+            raise ValidationError('SIGNING_BASE64') from None
+        require(bool(raw), 'SIGNING_BASE64')
+        decoded.append((filename, raw))
+    for filename, raw in decoded:
+        atomic_write(directory / filename, raw, private=True)
+    inputs = {'mode': 'explicit' if len(selected) == 3 else 'single',
+              'profiles': [{'target': target, 'stem': stem} for target, stem, _ in selected]}
+    atomic_write(directory / 'profile-inputs.json', json.dumps(inputs).encode(), private=True)
+    return inputs
+
+
+def decoded_profiles(directory):
+    directory = Path(directory)
+    inputs = load_json(directory / 'profile-inputs.json')
+    if inputs.get('mode') == 'single':
+        expected = [{'target': None, 'stem': 'profile'}]
+    else:
+        require(inputs.get('mode') == 'explicit', 'PROFILE_INPUT_FORMAT')
+        expected = [{'target': target, 'stem': stem} for target, stem, _ in PROFILE_INPUTS]
+    require(inputs == {'mode': inputs['mode'], 'profiles': expected}, 'PROFILE_INPUT_FORMAT')
+    return [(item, load_plist(directory / (item['stem'] + '.plist'))) for item in expected]
+
+
+def common_certificates(profiles, identities):
+    common = None
+    certificates = {}
+    for profile in profiles:
+        values = profile.get('DeveloperCertificates')
+        require(isinstance(values, list) and bool(values) and all(isinstance(value, bytes) and value for value in values), 'PROFILE_CERTIFICATES')
+        permitted = {hashlib.sha1(value).hexdigest().upper(): value for value in values}
+        certificates.update(permitted)
+        common = set(permitted) if common is None else common & set(permitted)
+    require(common is not None, 'PROFILE_CERTIFICATES')
+    return [certificates[value] for value in sorted(common & set(identities))]
+
+
+def select_certificate(directory, certificate_query_succeeded):
+    directory = Path(directory)
+    profiles = [profile for _, profile in decoded_profiles(directory)]
+    def identities(filename):
+        return {value.upper() for value in re.findall(r'^\s*\d+\)\s+([0-9A-Fa-f]{40})\b',
+                read_file(directory / filename).decode(), re.MULTILINE)}
+    all_identities, valid_identities = identities('all-identities.txt'), identities('identities.txt')
+    matching = common_certificates(profiles, valid_identities)
+    matching_any = common_certificates(profiles, all_identities)
+    imported = set()
+    if certificate_query_succeeded:
+        for value in re.findall(r'-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----',
+                                read_file(directory / 'imported-certificates.pem').decode(), re.DOTALL):
+            imported.add(hashlib.sha1(base64.b64decode(''.join(value.split()), validate=True)).hexdigest().upper())
+    matching_imported = len(common_certificates(profiles, imported))
+    print('::notice::Signing identity diagnostics: ' + json.dumps({
+        'profileCount': len(profiles), 'profileCertificateCount': sum(len(profile['DeveloperCertificates']) for profile in profiles),
+        'allIdentityCount': len(all_identities), 'validIdentityCount': len(valid_identities),
+        'matchingAllIdentityCount': len(matching_any), 'matchingValidIdentityCount': len(matching),
+        'certificateQuerySucceeded': certificate_query_succeeded,
+        'matchingImportedCertificateCount': matching_imported if certificate_query_succeeded else None,
+    }), flush=True)
+    if not matching:
+        require(not matching_any, 'SIGNING_IDENTITY_INVALID')
+        if certificate_query_succeeded:
+            require(bool(matching_imported), 'COMMON_CERTIFICATE_NOT_IMPORTED')
+            require(bool(matching_any), 'SIGNING_PRIVATE_KEY_MISSING')
+    require(len(matching) == 1, 'COMMON_SIGNING_IDENTITY')
+    atomic_write(directory / 'certificate.der', matching[0], private=True)
 
 
 def read_file(path, limit=4 * 1024 * 1024):
@@ -231,49 +332,98 @@ def project_digest(project):
     return hashlib.sha256(json.dumps(project, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
-def prepare(profile, certificate, project, root, names, metadata=None, now=None):
+def prepare(profile, certificate, project, root, names, metadata=None, now=None, *, target_profiles=None):
     root = Path(root).resolve()
     targets = target_configurations(project, names)
-    identity = profile_identity(profile, certificate, [target['bundleIdentifier'] for target in targets], now)
+    if target_profiles is None:
+        identity = profile_identity(profile, certificate, [target['bundleIdentifier'] for target in targets], now)
+        profiles = {target['name']: profile for target in targets}
+        identities = {target['name']: identity for target in targets}
+    else:
+        require(isinstance(target_profiles, dict) and set(target_profiles) == {item[0] for item in PROFILE_INPUTS}
+                and set(names) == set(target_profiles), 'PROFILE_TARGETS')
+        profiles = target_profiles
+        identities = {}
+        for target in targets:
+            selected = profiles[target['name']]
+            require(isinstance(selected, dict), 'PROFILE_FORMAT')
+            selected_identity = profile_identity(selected, certificate, [target['bundleIdentifier']], now)
+            require(selected['Entitlements']['application-identifier'] ==
+                    selected_identity['applicationIdentifierPrefix'] + '.' + target['bundleIdentifier'], 'PROFILE_EXPLICIT_REQUIRED')
+            identities[target['name']] = selected_identity | {
+                'profileSHA256': hashlib.sha256(plistlib.dumps(selected, sort_keys=True)).hexdigest()}
+        identity = identities['MirrorIOS']
+        require(len({value['teamID'] for value in identities.values()}) == 1, 'PROFILE_TEAM_MISMATCH')
+        require(len({value['profileUUID'].lower() for value in identities.values()}) == 3, 'PROFILE_UUID_COLLISION')
+        require(len({value['profileName'].casefold() for value in identities.values()}) == 3, 'PROFILE_NAME_COLLISION')
+        devices = set(profiles['MirrorIOS']['ProvisionedDevices'])
+        require(all(devices <= set(value['ProvisionedDevices']) for value in profiles.values()), 'PROFILE_DEVICE_COVERAGE')
     requested = []
     stored_targets = []
     for target in targets:
+        selected_profile = profiles[target['name']]
+        selected_identity = identities[target['name']]
         configurations = []
         for configuration_id, configuration, settings in target['configurations']:
             path = entitlement_path(root, settings)
             entitlements = load_plist(path) if path else {}
-            requested.append(validate_entitlements(entitlements, profile['Entitlements'], target['bundleIdentifier'], identity))
+            requested.append(validate_entitlements(entitlements, selected_profile['Entitlements'], target['bundleIdentifier'], selected_identity))
             configurations.append({'id': configuration_id, 'name': configuration['name'],
                                    'entitlementsPath': str(path) if path else None,
                                    'entitlementsSHA256': hashlib.sha256(read_file(path)).hexdigest() if path else None})
         stored_targets.append({key: target[key] for key in ('id', 'name', 'productType', 'bundleIdentifier')} | {'configurations': configurations})
-    context = {'schemaVersion': 1, 'distribution': 'ad-hoc', **identity, 'sourceProjectSHA256': project_digest(project),
+    context = {'schemaVersion': 1, 'distribution': 'ad-hoc', **{key: identity[key] for key in IDENTITY_KEYS}, 'sourceProjectSHA256': project_digest(project),
                'projectRoot': str(root), 'targets': stored_targets}
-    permitted = profile['Entitlements']
+    if target_profiles is not None:
+        context.update(schemaVersion=2, targetProfiles=identities)
+    permitted = [value['Entitlements'] for value in profiles.values()]
     group_keys = ('com.apple.security.application-groups',)
     cloud_keys = ('com.apple.developer.icloud-container-identifiers', 'com.apple.developer.ubiquity-container-identifiers')
+    main_name = next(target['name'] for target in targets if target['productType'] == 'com.apple.product-type.application')
     manifest = {'result': 'pass', 'distribution': 'ad-hoc', 'exportMethod': 'release-testing', 'platform': 'iOS',
-                'expiresAtUTC': identity['profileExpiresAtUTC'], 'deviceCount': len(profile['ProvisionedDevices']),
-                'certificateCount': len(profile['DeveloperCertificates']), 'certificateMatchesProfile': True,
+                'expiresAtUTC': min(value['profileExpiresAtUTC'] for value in identities.values()),
+                'deviceCount': len(profiles[main_name]['ProvisionedDevices']),
+                'certificateCount': (len(profile['DeveloperCertificates']) if target_profiles is None else
+                                     len(set.intersection(*[set(value['DeveloperCertificates']) for value in profiles.values()]))),
+                'certificateMatchesProfile': True,
                 'requestedEntitlementsValidated': True,
                 'targets': [{key: target[key] for key in ('name', 'bundleIdentifier')} for target in targets],
-                'capabilities': {'appGroupsAllowed': any(permitted.get(key) for key in group_keys),
-                                 'cloudContainersAllowed': any(permitted.get(key) for key in cloud_keys),
+                'capabilities': {'appGroupsAllowed': all(any(value.get(key) for key in group_keys) for value in permitted),
+                                 'cloudContainersAllowed': all(any(value.get(key) for key in cloud_keys) for value in permitted),
                                  'appGroupsRequested': any(value.get(key) for value in requested for key in group_keys),
                                  'cloudContainersRequested': any(value.get(key) for value in requested for key in cloud_keys)},
                 **public_metadata(metadata or {})}
     export_options = {'method': 'release-testing', 'signingStyle': 'manual', 'teamID': identity['teamID'],
                       'signingCertificate': identity['identitySHA1'], 'stripSwiftSymbols': True,
-                      'provisioningProfiles': {target['bundleIdentifier']: identity['profileUUID'] for target in targets}}
+                      'provisioningProfiles': {target['bundleIdentifier']: identities[target['name']]['profileUUID'] for target in targets}}
     return context, manifest, export_options
 
 
+def target_identity(context, name):
+    require(type(context.get('schemaVersion')) is int and context['schemaVersion'] in (1, 2)
+            and context.get('distribution') == 'ad-hoc', 'CONTEXT_SCHEMA')
+    identity = context
+    if context['schemaVersion'] == 2:
+        profiles = context.get('targetProfiles')
+        require(isinstance(profiles, dict) and set(profiles) == {item[0] for item in PROFILE_INPUTS}, 'CONTEXT_PROFILES')
+        require(all(isinstance(value, dict) and isinstance(value.get('profileUUID'), str)
+                    and isinstance(value.get('profileName'), str) for value in profiles.values()), 'CONTEXT_PROFILES')
+        require(len({value['profileUUID'].lower() for value in profiles.values()}) == 3, 'CONTEXT_PROFILE_COLLISION')
+        require(len({value['profileName'].casefold() for value in profiles.values()}) == 3, 'CONTEXT_PROFILE_COLLISION')
+        identity = profiles.get(name)
+        require(isinstance(identity, dict), 'CONTEXT_PROFILES')
+        require(identity.get('teamID') == context.get('teamID') and identity.get('identitySHA1') == context.get('identitySHA1'), 'CONTEXT_PROFILE_IDENTITY')
+        require(re.fullmatch(r'[a-f0-9]{64}', str(identity.get('profileSHA256', ''))) is not None, 'CONTEXT_PROFILE_DIGEST')
+    require(re.fullmatch(r'[A-Z0-9]{10}', str(identity.get('teamID', ''))) is not None, 'CONTEXT_TEAM')
+    require(re.fullmatch(r'[A-F0-9]{40}', str(identity.get('identitySHA1', ''))) is not None, 'CONTEXT_IDENTITY')
+    require(isinstance(identity.get('profileUUID'), str) and re.fullmatch(r'[A-Fa-f0-9-]{36}', identity['profileUUID']) is not None, 'CONTEXT_PROFILE')
+    require(isinstance(identity.get('profileName'), str) and 0 < len(identity['profileName']) <= 256 and identity['profileName'].isprintable(), 'CONTEXT_PROFILE_NAME')
+    require(re.fullmatch(r'[A-Z0-9]{10}', str(identity.get('applicationIdentifierPrefix', ''))) is not None, 'CONTEXT_PREFIX')
+    return identity
+
+
 def patch(project, context):
-    require(type(context.get('schemaVersion')) is int and context['schemaVersion'] == 1 and context.get('distribution') == 'ad-hoc', 'CONTEXT_SCHEMA')
-    require(re.fullmatch(r'[A-Z0-9]{10}', str(context.get('teamID', ''))) is not None, 'CONTEXT_TEAM')
-    require(re.fullmatch(r'[A-F0-9]{40}', str(context.get('identitySHA1', ''))) is not None, 'CONTEXT_IDENTITY')
-    require(isinstance(context.get('profileUUID'), str) and re.fullmatch(r'[A-Fa-f0-9-]{36}', context['profileUUID']) is not None, 'CONTEXT_PROFILE')
-    require(isinstance(context.get('profileName'), str) and 0 < len(context['profileName']) <= 256 and context['profileName'].isprintable(), 'CONTEXT_PROFILE_NAME')
+    target_identity(context, 'MirrorIOS')
     require(context.get('sourceProjectSHA256') == project_digest(project), 'CONTEXT_PROJECT_CHANGED')
     stored = context.get('targets')
     require(isinstance(stored, list) and all(isinstance(target, dict) and isinstance(target.get('name'), str) for target in stored), 'CONTEXT_TARGETS')
@@ -281,6 +431,7 @@ def patch(project, context):
     require({target['id'] for target in actual} == {target.get('id') for target in stored}, 'CONTEXT_TARGETS')
     result = copy.deepcopy(project)
     for target in actual:
+        identity = target_identity(context, target['name'])
         expected = next(item for item in stored if item['id'] == target['id'])
         require(expected.get('bundleIdentifier') == target['bundleIdentifier'] and expected.get('productType') == target['productType'], 'CONTEXT_TARGETS')
         configuration_ids = {identifier for identifier, _, _ in target['configurations']}
@@ -291,14 +442,38 @@ def patch(project, context):
             require(configuration.get('entitlementsPath') == (str(path) if path else None), 'CONTEXT_ENTITLEMENTS_CHANGED')
             require(configuration.get('entitlementsSHA256') == (hashlib.sha256(read_file(path)).hexdigest() if path else None), 'CONTEXT_ENTITLEMENTS_CHANGED')
             settings = result['objects'][identifier]['buildSettings']
-            settings.update(CODE_SIGN_STYLE='Manual', PROVISIONING_PROFILE=context['profileUUID'],
-                            DEVELOPMENT_TEAM=context['teamID'], CODE_SIGN_IDENTITY=context['identitySHA1'])
+            settings.update(CODE_SIGN_STYLE='Manual', PROVISIONING_PROFILE=identity['profileUUID'],
+                            DEVELOPMENT_TEAM=identity['teamID'], CODE_SIGN_IDENTITY=identity['identitySHA1'])
             for key in list(settings):
                 if key.startswith('PROVISIONING_PROFILE_SPECIFIER') or key.startswith('PROVISIONING_PROFILE[') or key.startswith('CODE_SIGN_IDENTITY['):
                     settings.pop(key)
             # 현대 Xcode는 검증한 실제 이름으로 선택하고 기존 UUID도 같은 프로파일로 고정한다.
-            settings['PROVISIONING_PROFILE_SPECIFIER'] = context['profileName']
+            settings['PROVISIONING_PROFILE_SPECIFIER'] = identity['profileName']
     return result
+
+
+def verify_embedded(context, bundle_id, profile, signed_entitlements, certificate, now=None):
+    targets = [target for target in context['targets'] if target['bundleIdentifier'] == bundle_id]
+    require(len(targets) == 1, 'EXPORTED_TARGET')
+    target = targets[0]
+    identity = target_identity(context, target['name'])
+    require(hashlib.sha1(certificate).hexdigest().upper() == identity['identitySHA1'], 'EXPORTED_CERTIFICATE')
+    verified = profile_identity(profile, certificate, [bundle_id], now)
+    require(verified['profileUUID'].lower() == identity['profileUUID'].lower(), 'EXPORTED_PROFILE')
+    require(all(verified[key] == identity[key] for key in ('teamID', 'applicationIdentifierPrefix')), 'EXPORTED_PROFILE_IDENTITY')
+    if context['schemaVersion'] == 2:
+        require(hashlib.sha256(plistlib.dumps(profile, sort_keys=True)).hexdigest() == identity['profileSHA256'], 'EXPORTED_PROFILE_CONTENT')
+    require(signed_entitlements.get('get-task-allow') is False, 'EXPORTED_DEBUGGING')
+    require(signed_entitlements.get('application-identifier') == identity['applicationIdentifierPrefix'] + '.' + bundle_id
+            and signed_entitlements.get('com.apple.developer.team-identifier') == identity['teamID'], 'EXPORTED_IDENTITY')
+    validate_entitlements(signed_entitlements, profile['Entitlements'], bundle_id, identity)
+    release = [value for value in target['configurations'] if value['name'] == 'Release']
+    require(len(release) == 1, 'CONTEXT_CONFIGURATIONS')
+    path = release[0]['entitlementsPath']
+    if path:
+        require(hashlib.sha256(read_file(path)).hexdigest() == release[0]['entitlementsSHA256'], 'CONTEXT_ENTITLEMENTS_CHANGED')
+        requested = expand_entitlement(load_plist(path), identity['teamID'], identity['applicationIdentifierPrefix'], bundle_id)
+        require(allowed_value(requested, signed_entitlements), 'EXPORTED_ENTITLEMENTS_MISSING')
 
 
 def atomic_write(path, raw, private):
@@ -319,29 +494,55 @@ def atomic_write(path, raw, private):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('check-inputs')
+    decode_parser = commands.add_parser('decode-inputs')
+    decode_parser.add_argument('--output-directory', required=True, type=Path)
+    certificate_parser = commands.add_parser('select-certificate')
+    certificate_parser.add_argument('--directory', required=True, type=Path)
+    certificate_parser.add_argument('--certificate-query-succeeded', choices=('0', '1'), required=True)
     prepare_parser = commands.add_parser('prepare')
-    for name in ('profile-plist', 'certificate', 'project-json', 'project-root', 'context-out', 'manifest-out', 'export-options-out'):
+    profile_arguments = prepare_parser.add_mutually_exclusive_group(required=True)
+    profile_arguments.add_argument('--profile-plist', type=Path)
+    profile_arguments.add_argument('--target-profiles-dir', type=Path)
+    for name in ('certificate', 'project-json', 'project-root', 'context-out', 'manifest-out', 'export-options-out'):
         prepare_parser.add_argument('--' + name, required=True, type=Path)
     prepare_parser.add_argument('--targets', nargs='+', required=True)
     prepare_parser.add_argument('--metadata', type=Path)
     patch_parser = commands.add_parser('patch')
     for name in ('project-json', 'context', 'output'):
         patch_parser.add_argument('--' + name, required=True, type=Path)
+    verify_parser = commands.add_parser('verify-embedded')
+    for name in ('context', 'profile-plist', 'entitlements', 'certificate'):
+        verify_parser.add_argument('--' + name, required=True, type=Path)
+    verify_parser.add_argument('--bundle-id', required=True)
     arguments = parser.parse_args(argv)
     try:
-        if arguments.command == 'prepare':
-            context, manifest, export_options = prepare(load_plist(arguments.profile_plist), read_certificate(arguments.certificate),
+        if arguments.command == 'check-inputs':
+            selected = check_inputs(os.environ)
+            print(json.dumps({'result': 'pass', 'profileMode': 'explicit' if len(selected) == 3 else 'single'}))
+        elif arguments.command == 'decode-inputs':
+            decode_inputs(os.environ, arguments.output_directory)
+        elif arguments.command == 'select-certificate':
+            select_certificate(arguments.directory, arguments.certificate_query_succeeded == '1')
+        elif arguments.command == 'prepare':
+            profiles = ({target: load_plist(arguments.target_profiles_dir / (stem + '.plist')) for target, stem, _ in PROFILE_INPUTS}
+                        if arguments.target_profiles_dir else None)
+            context, manifest, export_options = prepare(load_plist(arguments.profile_plist) if arguments.profile_plist else None, read_certificate(arguments.certificate),
                 load_json(arguments.project_json), arguments.project_root, arguments.targets,
-                load_json(arguments.metadata) if arguments.metadata else {})
+                load_json(arguments.metadata) if arguments.metadata else {}, target_profiles=profiles)
             atomic_write(arguments.context_out, json.dumps(context).encode(), private=True)
             atomic_write(arguments.export_options_out, plistlib.dumps(export_options), private=True)
             atomic_write(arguments.manifest_out, json.dumps(manifest, ensure_ascii=False).encode(), private=False)
             print(json.dumps(manifest, ensure_ascii=False))
-        else:
+        elif arguments.command == 'patch':
             context = load_json(arguments.context)
             patched = patch(load_json(arguments.project_json), context)
             atomic_write(arguments.output, json.dumps(patched).encode(), private=True)
             print(json.dumps({'result': 'pass', 'patchedApplicationTargets': len(context['targets'])}))
+        else:
+            verify_embedded(load_json(arguments.context), arguments.bundle_id, load_plist(arguments.profile_plist),
+                            load_plist(arguments.entitlements), read_certificate(arguments.certificate))
+            print(json.dumps({'result': 'pass', 'embeddedProfile': True}))
         return 0
     except ValidationError as error:
         print(json.dumps({'result': 'fail', 'code': str(error)}), file=sys.stderr)

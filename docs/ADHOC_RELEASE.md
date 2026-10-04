@@ -16,7 +16,7 @@ macOS용 Developer ID 서명·공증 DMG도 같은 릴리스에 추가한다. �
 
 ## 서명 자료 등록
 
-[GitHub Actions Secrets](https://github.com/hellosunghyun/mirror/settings/secrets/actions)에 다음 세 값을 등록한다. 프로파일·인증서·비밀번호를 공개 저장소나 채팅 본문에 넣지 않는다. 연결 앱의 Secret 쓰기 HTTP 403은 과거 기록이며 이후 사용자가 등록한 세 Secret의 존재는 최신 배포 실행에서 확인했다. 실제 서명 자료의 일치와 P12 암호는 별도 archive 검증이 필요하다.
+[GitHub Actions Secrets](https://github.com/hellosunghyun/mirror/settings/secrets/actions)의 기존 단일 프로파일 경로는 다음 세 값을 사용한다. 프로파일·인증서·비밀번호를 공개 저장소나 채팅 본문에 넣지 않는다. 연결 앱의 Secret 쓰기 HTTP 403은 과거 기록이며 이후 사용자가 등록한 세 Secret의 존재는 최신 배포 실행에서 확인했다. 실제 서명 자료의 일치와 P12 암호는 별도 archive 검증이 필요하다.
 
 | Secret | 값 |
 |---|---|
@@ -59,9 +59,27 @@ gh secret list --repo hellosunghyun/mirror
 
 제공된 프로파일은 iOS를 포함하는 Ad Hoc 배포용, 와일드카드 Bundle ID, 등록 기기 1대, 배포 인증서 1개다. 앱·Widget·Share 세 Bundle ID의 일치를 각각 검증한다. 현재 프로파일에는 App Group과 iCloud 권한이 없다. 이 권한을 임의로 추가하지 않으며, 실제 공유 저장·CloudKit 연결에는 별도 등록과 해당 권한을 포함한 프로파일이 필요하다.
 
+### 선택적 타깃별 explicit 프로파일
+
+앱·Widget·Share의 explicit App ID별 프로파일을 사용할 때는 아래 세 Secret을 모두 등록한다. 기존 P12와 비밀번호 Secret은 함께 사용한다. 새 세 값이 모두 없으면 기존 `IOS_ADHOC_PROFILE_BASE64` 경로를 그대로 사용한다. 모두 있으면 기존 Secret이 남아 있어도 타깃별 경로를 선택하며, 하나나 두 개만 있으면 사전 검사에서 실패한다. 일부 입력을 wildcard 프로파일로 대신하지 않는다.
+
+| Secret | 타깃과 Bundle ID |
+|---|---|
+| IOS_ADHOC_APP_PROFILE_BASE64 | MirrorIOS · `com.baserize.mirror` |
+| IOS_ADHOC_WIDGET_PROFILE_BASE64 | MirrorWidgetsIOS · `com.baserize.mirror.widgets` |
+| IOS_ADHOC_SHARE_PROFILE_BASE64 | MirrorShareIOS · `com.baserize.mirror.share` |
+
+각 값은 해당 Ad Hoc 프로파일의 Base64다. 프로파일 세 개는 서로 다른 UUID와 이름을 사용하고 같은 개발팀과 하나의 공통 유효 서명 identity를 허용해야 한다. 메인 앱의 등록 기기가 두 확장 프로파일에도 모두 포함되어야 한다. 각 explicit App ID·기간·배포 종류·서명 인증서·요청 entitlement를 해당 타깃별로 확인한다. App Identifier Prefix는 Team과 같다고 가정하지 않고 프로파일별로 보존한다.
+
+preflight·실제 archive·별도 진단은 같은 선택 규칙을 사용한다. 타깃별 `PROVISIONING_PROFILE`/`PROVISIONING_PROFILE_SPECIFIER`, ExportOptions의 Bundle ID → UUID와 export된 각 앱·확장의 embedded profile·실제 entitlement를 함께 검증한다. 설치 도중 실패해도 이미 설치한 파일과 기존 프로파일 백업, 프로젝트·키체인 목록을 정리·복원한다. 정리 실패 시 공개 자산 게시를 중단한다.
+
+공개 manifest 키는 기존 형식을 유지한다. 타깃별 경로에서 `expiresAtUTC`는 가장 빠른 만료, `deviceCount`는 세 타깃에 공통으로 허용된 메인 앱의 기기 수, `certificateCount`는 공통 허용 인증서 수다. capability의 `Allowed`는 모든 타깃이 허용할 때만 true이고 `Requested`는 해당 권한을 요청한 타깃이 있는지를 나타낸다. UUID·이름·기기 식별자·팀·인증서 식별값과 원문 로그는 공개 manifest에 추가하지 않는다.
+
+이 변경은 프로파일 입력과 검증 경로의 구현이다. 실제 새 프로파일의 등록·서명 성공은 Actions의 별도 증거가 필요하다. Bundle ID·App Group·iCloud entitlement와 앱 저장 위치는 활성화하지 않으며, macOS Developer ID 프로파일 지원은 별도 범위다. 기존 `prepare --profile-plist` CLI와 단일 프로파일의 context schema 1은 유지하고, 타깃별 프로파일은 비공개 context schema 2를 사용한다.
+
 ## 선택적 Release 게시 토큰
 
-`MIRROR_RELEASE_TOKEN`은 선택적 게시용 Secret이다. 등록하면 IPA·DMG와 기본·다크 UI 검토 prerelease의 게시 단계에서 이 값을 `GITHUB_TOKEN`으로 사용한다. 없으면 기존 `secrets.GITHUB_TOKEN`을 사용한다. iOS 서명 세 개와 Mac 서명·공증 네 개의 입력 조건, 실제 검증·서명·공증 및 자산·태그 검증은 유지한다.
+`MIRROR_RELEASE_TOKEN`은 선택적 게시용 Secret이다. 등록하면 IPA·DMG와 기본·다크 UI 검토 prerelease의 게시 단계에서 이 값을 `GITHUB_TOKEN`으로 사용한다. 없으면 기존 `secrets.GITHUB_TOKEN`을 사용한다. iOS의 선택한 프로파일 경로와 P12 입력, Mac 서명·공증 네 개의 입력 조건, 실제 검증·서명·공증 및 자산·태그 검증은 유지한다.
 
 GitHub의 fine-grained personal access token을 만들 때 Resource owner는 `hellosunghyun`, Repository access는 **Only select repositories**에서 `hellosunghyun/mirror`만 선택한다. Repository permissions의 **Contents**를 **Read and write**로 지정한다.
 

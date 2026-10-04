@@ -6,10 +6,12 @@ import copy
 import hashlib
 import importlib.util
 import io
+import itertools
 import json
 import plistlib
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +36,16 @@ def profile_fixture():
             'ProvisionedDevices': ['private synthetic device'], 'DeveloperCertificates': [CERTIFICATE],
             'Entitlements': {'application-identifier': TEAM + '.*', 'get-task-allow': False,
                              'com.apple.developer.team-identifier': TEAM, 'keychain-access-groups': [TEAM + '.*']}}
+
+
+def explicit_profile_fixtures():
+    profiles = {}
+    for index, (name, suffix) in enumerate(zip(NAMES, ('', '.widgets', '.share')), start=1):
+        profile = profile_fixture()
+        profile.update(UUID=f'abcdef0{index}-2345-6789-abcd-ef0123456789', Name=f'private synthetic profile {index}')
+        profile['Entitlements']['application-identifier'] = TEAM + '.com.baserize.mirror' + suffix
+        profiles[name] = profile
+    return profiles
 
 
 def project_fixture():
@@ -281,6 +293,242 @@ class AdHocProfileTests(unittest.TestCase):
         for value in ({'teamID': TEAM}, {'sdkVersion': TEAM}, {'commitSHA': 'not a hash'}, {'runID': 'private runner'}):
             with self.subTest(keys=list(value)), self.assertRaisesRegex(helper.ValidationError, '^BUILD_METADATA$'):
                 helper.public_metadata(value)
+
+    def prepare_explicit(self, profiles=None):
+        return helper.prepare(None, CERTIFICATE, self.project, self.root, NAMES, now=NOW,
+                              target_profiles=profiles if profiles is not None else explicit_profile_fixtures())
+
+    def test_profile_input_selection_rejects_partial_even_with_legacy_and_prefers_complete_explicit(self):
+        for legacy, present in itertools.product((False, True), itertools.product((False, True), repeat=3)):
+            environment = {'IOS_ADHOC_PROFILE_BASE64': 'legacy-private'} if legacy else {}
+            environment.update({secret: 'explicit-private' for (_, _, secret), enabled in zip(helper.PROFILE_INPUTS, present) if enabled})
+            with self.subTest(legacy=legacy, present=present):
+                if any(present) and not all(present):
+                    with self.assertRaisesRegex(helper.ValidationError, '^PROFILE_INPUTS_PARTIAL$'):
+                        helper.profile_inputs(environment)
+                elif not any(present) and not legacy:
+                    with self.assertRaisesRegex(helper.ValidationError, '^PROFILE_INPUT_MISSING$'):
+                        helper.profile_inputs(environment)
+                else:
+                    selected = helper.profile_inputs(environment)
+                    self.assertEqual(len(selected), 3 if all(present) else 1)
+                    if all(present):
+                        self.assertEqual([value[0] for value in selected], NAMES)
+                        self.assertNotIn('IOS_ADHOC_PROFILE_BASE64', [value[2] for value in selected])
+
+    def test_input_cli_and_decode_keep_values_private_and_validate_before_writing(self):
+        environment = {'IOS_DISTRIBUTION_P12_BASE64': base64.b64encode(b'private synthetic p12').decode(),
+                       'IOS_DISTRIBUTION_P12_PASSWORD': 'private synthetic password',
+                       'IOS_ADHOC_PROFILE_BASE64': 'ignored invalid legacy value'}
+        environment.update({secret: base64.b64encode(('private synthetic ' + name).encode()).decode()
+                            for name, _, secret in helper.PROFILE_INPUTS})
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.dict('os.environ', environment, clear=True), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(helper.main(['check-inputs']), 0)
+        self.assertEqual(json.loads(stdout.getvalue()), {'result': 'pass', 'profileMode': 'explicit'})
+        self.assertEqual(stderr.getvalue(), '')
+        directory = self.root / 'decoded'
+        inputs = helper.decode_inputs(environment, directory)
+        self.assertEqual(inputs['mode'], 'explicit')
+        for path in directory.iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual({path.name for path in directory.iterdir()},
+                         {'distribution.p12', 'app.mobileprovision', 'widgets.mobileprovision', 'share.mobileprovision', 'profile-inputs.json'})
+        for secret in ('IOS_ADHOC_WIDGET_PROFILE_BASE64', 'IOS_DISTRIBUTION_P12_BASE64'):
+            invalid = dict(environment, **{secret: '!invalid-private-value!'})
+            with self.assertRaisesRegex(helper.ValidationError, '^SIGNING_BASE64$'):
+                helper.decode_inputs(invalid, self.root / 'invalid')
+            self.assertFalse((self.root / 'invalid').exists())
+        for secret, code in (('IOS_DISTRIBUTION_P12_BASE64', 'P12_INPUT_MISSING'),
+                             ('IOS_DISTRIBUTION_P12_PASSWORD', 'P12_PASSWORD_MISSING')):
+            with self.assertRaisesRegex(helper.ValidationError, '^' + code + '$'):
+                helper.check_inputs(dict(environment, **{secret: ''}))
+
+    def test_explicit_profiles_map_each_target_and_preserve_legacy_context(self):
+        profiles = explicit_profile_fixtures()
+        profiles[NAMES[1]]['UUID'] = profiles[NAMES[1]]['UUID'].upper()
+        profiles[NAMES[1]]['ApplicationIdentifierPrefix'] = ['LEGACY0001']
+        profiles[NAMES[1]]['Entitlements']['application-identifier'] = 'LEGACY0001.com.baserize.mirror.widgets'
+        profiles[NAMES[1]]['Entitlements']['keychain-access-groups'] = ['LEGACY0001.*']
+        profiles[NAMES[1]]['ProvisionedDevices'].append('extra extension device')
+        profiles[NAMES[2]]['ExpirationDate'] = datetime(2098, 1, 1)
+        context, manifest, options = self.prepare_explicit(profiles)
+        patched = helper.patch(self.project, context)
+        self.assertEqual(context['schemaVersion'], 2)
+        self.assertEqual(manifest['expiresAtUTC'], '2098-01-01T00:00:00Z')
+        self.assertEqual(manifest['deviceCount'], 1)
+        self.assertEqual(manifest['certificateCount'], 1)
+        for identifier, name in zip(('app', 'widgets', 'share'), NAMES):
+            for configuration in ('Debug', 'Release'):
+                settings = patched['objects'][identifier + configuration]['buildSettings']
+                self.assertEqual(settings['PROVISIONING_PROFILE'], profiles[name]['UUID'])
+                self.assertEqual(settings['PROVISIONING_PROFILE_SPECIFIER'], profiles[name]['Name'])
+                self.assertEqual(options['provisioningProfiles'][settings['PRODUCT_BUNDLE_IDENTIFIER']], profiles[name]['UUID'])
+            identity = helper.target_identity(context, name)
+            self.assertEqual(identity['applicationIdentifierPrefix'], profiles[name]['ApplicationIdentifierPrefix'][0])
+        for identifier in ('frameworkDebug', 'frameworkRelease', 'macDebug', 'macRelease'):
+            self.assertEqual(patched['objects'][identifier], self.project['objects'][identifier])
+        public = json.dumps(manifest)
+        for profile in profiles.values():
+            for value in (profile['UUID'], profile['Name'], *profile['ProvisionedDevices']):
+                self.assertNotIn(value, public)
+        legacy, _, _ = self.prepare()
+        self.assertEqual(legacy['schemaVersion'], 1)
+        self.assertNotIn('targetProfiles', legacy)
+
+    def test_explicit_profile_set_rejects_missing_swapped_wildcard_and_conflicting_identity(self):
+        cases = []
+        profiles = explicit_profile_fixtures(); profiles.pop(NAMES[2])
+        cases.append((profiles, 'PROFILE_TARGETS'))
+        profiles = explicit_profile_fixtures(); profiles[NAMES[1]], profiles[NAMES[2]] = profiles[NAMES[2]], profiles[NAMES[1]]
+        cases.append((profiles, 'BUNDLE_MISMATCH'))
+        profiles = explicit_profile_fixtures(); profiles[NAMES[1]]['Entitlements']['application-identifier'] = TEAM + '.*'
+        cases.append((profiles, 'PROFILE_EXPLICIT_REQUIRED'))
+        profiles = explicit_profile_fixtures(); profiles[NAMES[1]]['TeamIdentifier'] = ['OTHERTEAM1']
+        profiles[NAMES[1]]['Entitlements']['com.apple.developer.team-identifier'] = 'OTHERTEAM1'
+        cases.append((profiles, 'PROFILE_TEAM_MISMATCH'))
+        for key, value, code in [('UUID', explicit_profile_fixtures()[NAMES[0]]['UUID'].upper(), 'PROFILE_UUID_COLLISION'),
+                                  ('Name', explicit_profile_fixtures()[NAMES[0]]['Name'].upper(), 'PROFILE_NAME_COLLISION'),
+                                  ('DeveloperCertificates', [OTHER_CERTIFICATE], 'CERTIFICATE_MISMATCH'),
+                                  ('ProvisionedDevices', ['different device'], 'PROFILE_DEVICE_COVERAGE'),
+                                  ('ExpirationDate', NOW, 'PROFILE_EXPIRED'),
+                                  ('Platform', ['macOS'], 'PROFILE_PLATFORM')]:
+            profiles = explicit_profile_fixtures(); profiles[NAMES[2]][key] = value
+            cases.append((profiles, code))
+        for profiles, code in cases:
+            with self.subTest(code=code), self.assertRaisesRegex(helper.ValidationError, '^' + code + '$'):
+                self.prepare_explicit(profiles)
+
+    def test_each_requested_capability_uses_its_target_profile(self):
+        profiles = explicit_profile_fixtures()
+        requested = {'com.apple.security.application-groups': ['group.synthetic'],
+                     'com.apple.developer.icloud-container-identifiers': ['iCloud.synthetic']}
+        for profile in profiles.values():
+            profile['Entitlements'].update(copy.deepcopy(requested))
+        (self.root / 'Entitlements/widgets.plist').write_bytes(plistlib.dumps(requested))
+        _, manifest, _ = self.prepare_explicit(profiles)
+        self.assertTrue(all(manifest['capabilities'].values()))
+        del profiles[NAMES[0]]['Entitlements']['com.apple.developer.icloud-container-identifiers']
+        _, manifest, _ = self.prepare_explicit(profiles)
+        self.assertFalse(manifest['capabilities']['cloudContainersAllowed'])
+        del profiles[NAMES[1]]['Entitlements']['com.apple.security.application-groups']
+        with self.assertRaisesRegex(helper.ValidationError, '^ENTITLEMENT_NOT_ALLOWED$'):
+            self.prepare_explicit(profiles)
+
+    def test_certificate_selection_requires_one_common_valid_private_key_identity(self):
+        profiles = explicit_profile_fixtures()
+        fingerprint = hashlib.sha1(CERTIFICATE).hexdigest().upper()
+        other = hashlib.sha1(OTHER_CERTIFICATE).hexdigest().upper()
+        profiles[NAMES[0]]['DeveloperCertificates'].append(OTHER_CERTIFICATE)
+        self.assertEqual(helper.common_certificates(list(profiles.values()), {fingerprint, other}), [CERTIFICATE])
+        profiles[NAMES[2]]['DeveloperCertificates'] = [OTHER_CERTIFICATE]
+        self.assertEqual(helper.common_certificates(list(profiles.values()), {fingerprint, other}), [])
+        for profile in profiles.values():
+            profile['DeveloperCertificates'] = [CERTIFICATE, OTHER_CERTIFICATE]
+        directory = self.root / 'identity-selection'; directory.mkdir()
+        helper.decode_inputs({'IOS_DISTRIBUTION_P12_BASE64': 'YQ==',
+                              **{secret: 'YQ==' for _, _, secret in helper.PROFILE_INPUTS}}, directory)
+        for name, stem, _ in helper.PROFILE_INPUTS:
+            (directory / (stem + '.plist')).write_bytes(plistlib.dumps(profiles[name]))
+        (directory / 'all-identities.txt').write_text(f'  1) {fingerprint} private\n  2) {other} private\n')
+        (directory / 'identities.txt').write_text(f'  1) {fingerprint} private\n  2) {other} private\n')
+        with contextlib.redirect_stdout(io.StringIO()), self.assertRaisesRegex(helper.ValidationError, '^COMMON_SIGNING_IDENTITY$'):
+            helper.select_certificate(directory, False)
+        (directory / 'identities.txt').write_text(f'  1) {fingerprint} private\n')
+        with contextlib.redirect_stdout(io.StringIO()):
+            helper.select_certificate(directory, False)
+        self.assertEqual((directory / 'certificate.der').read_bytes(), CERTIFICATE)
+        self.assertEqual((directory / 'certificate.der').stat().st_mode & 0o777, 0o600)
+
+    def test_exported_profiles_and_signed_entitlements_match_each_target(self):
+        profiles = explicit_profile_fixtures()
+        context, _, _ = self.prepare_explicit(profiles)
+        for target in context['targets']:
+            profile = profiles[target['name']]
+            actual = {key: profile['Entitlements'][key] for key in
+                      ('application-identifier', 'com.apple.developer.team-identifier', 'get-task-allow')}
+            helper.verify_embedded(context, target['bundleIdentifier'], profile, actual, CERTIFICATE, now=NOW)
+            wrong = copy.deepcopy(profile); wrong['UUID'] = PROFILE_UUID
+            with self.assertRaisesRegex(helper.ValidationError, '^EXPORTED_PROFILE$'):
+                helper.verify_embedded(context, target['bundleIdentifier'], wrong, actual, CERTIFICATE, now=NOW)
+            wrong = copy.deepcopy(profile); wrong['ProvisionedDevices'].append('extra unpublished device')
+            with self.assertRaisesRegex(helper.ValidationError, '^EXPORTED_PROFILE_CONTENT$'):
+                helper.verify_embedded(context, target['bundleIdentifier'], wrong, actual, CERTIFICATE, now=NOW)
+            with self.assertRaisesRegex(helper.ValidationError, '^EXPORTED_CERTIFICATE$'):
+                helper.verify_embedded(context, target['bundleIdentifier'], profile, actual, OTHER_CERTIFICATE, now=NOW)
+            for key, value, code in [('get-task-allow', True, 'EXPORTED_DEBUGGING'),
+                                     ('application-identifier', 'LEGACY0001.' + target['bundleIdentifier'], 'EXPORTED_IDENTITY'),
+                                     ('com.apple.security.application-groups', ['group.unpermitted'], 'ENTITLEMENT_NOT_ALLOWED')]:
+                with self.subTest(target=target['name'], key=key), self.assertRaisesRegex(helper.ValidationError, '^' + code + '$'):
+                    helper.verify_embedded(context, target['bundleIdentifier'], profile, dict(actual, **{key: value}), CERTIFICATE, now=NOW)
+
+    def test_legacy_export_accepts_same_wildcard_profile_with_per_bundle_signed_identity(self):
+        context, _, _ = self.prepare()
+        for target in context['targets']:
+            actual = {'application-identifier': TEAM + '.' + target['bundleIdentifier'],
+                      'com.apple.developer.team-identifier': TEAM, 'get-task-allow': False,
+                      'keychain-access-groups': [TEAM + '.' + target['bundleIdentifier']]}
+            helper.verify_embedded(context, target['bundleIdentifier'], self.profile, actual, CERTIFICATE, now=NOW)
+
+    def test_explicit_private_context_cannot_swap_identity_or_profile_selection(self):
+        context, _, _ = self.prepare_explicit()
+        for key, value, code in [('teamID', 'OTHERTEAM1', 'CONTEXT_PROFILE_IDENTITY'),
+                                 ('identitySHA1', 'F' * 40, 'CONTEXT_PROFILE_IDENTITY'),
+                                 ('profileUUID', context['targetProfiles'][NAMES[0]]['profileUUID'], 'CONTEXT_PROFILE_COLLISION'),
+                                 ('profileName', context['targetProfiles'][NAMES[0]]['profileName'], 'CONTEXT_PROFILE_COLLISION'),
+                                 ('profileSHA256', '', 'CONTEXT_PROFILE_DIGEST'),
+                                 ('applicationIdentifierPrefix', 'malformed', 'CONTEXT_PREFIX')]:
+            changed = copy.deepcopy(context)
+            changed['targetProfiles'][NAMES[1]][key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(helper.ValidationError, '^' + code + '$'):
+                helper.patch(self.project, changed)
+
+    def test_exported_requested_capability_cannot_be_omitted_or_source_changed(self):
+        profiles = explicit_profile_fixtures()
+        key = 'com.apple.security.application-groups'
+        profiles[NAMES[1]]['Entitlements'][key] = ['group.synthetic']
+        path = self.root / 'Entitlements/widgets.plist'
+        path.write_bytes(plistlib.dumps({key: ['group.synthetic']}))
+        context, _, _ = self.prepare_explicit(profiles)
+        profile = profiles[NAMES[1]]
+        actual = {name: profile['Entitlements'][name] for name in
+                  ('application-identifier', 'com.apple.developer.team-identifier', 'get-task-allow')}
+        with self.assertRaisesRegex(helper.ValidationError, '^EXPORTED_ENTITLEMENTS_MISSING$'):
+            helper.verify_embedded(context, 'com.baserize.mirror.widgets', profile, actual, CERTIFICATE, now=NOW)
+        actual[key] = ['group.synthetic']
+        helper.verify_embedded(context, 'com.baserize.mirror.widgets', profile, actual, CERTIFICATE, now=NOW)
+        path.write_bytes(plistlib.dumps({}))
+        with self.assertRaisesRegex(helper.ValidationError, '^CONTEXT_ENTITLEMENTS_CHANGED$'):
+            helper.verify_embedded(context, 'com.baserize.mirror.widgets', profile, actual, CERTIFICATE, now=NOW)
+
+    def test_explicit_cli_uses_private_context_and_export_with_safe_errors(self):
+        directory = self.root / 'explicit-cli'; directory.mkdir()
+        profiles = explicit_profile_fixtures()
+        for name, stem, _ in helper.PROFILE_INPUTS:
+            (directory / (stem + '.plist')).write_bytes(plistlib.dumps(profiles[name]))
+        (directory / 'certificate.der').write_bytes(CERTIFICATE)
+        (directory / 'project.json').write_text(json.dumps(self.project))
+        arguments = ['prepare', '--target-profiles-dir', str(directory), '--certificate', str(directory / 'certificate.der'),
+                     '--project-json', str(directory / 'project.json'), '--project-root', str(self.root), '--targets', *NAMES,
+                     '--context-out', str(directory / 'context.json'), '--manifest-out', str(directory / 'manifest.json'),
+                     '--export-options-out', str(directory / 'ExportOptions.plist')]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(helper.main(arguments), 0)
+        self.assertEqual(stderr.getvalue(), '')
+        for filename in ('context.json', 'ExportOptions.plist'):
+            self.assertEqual((directory / filename).stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads((directory / 'context.json').read_text())['schemaVersion'], 2)
+        for profile in profiles.values():
+            for value in (TEAM, profile['UUID'], profile['Name'], *profile['ProvisionedDevices']):
+                self.assertNotIn(value, stdout.getvalue() + stderr.getvalue())
+        profiles[NAMES[2]]['Entitlements']['get-task-allow'] = True
+        (directory / 'share.plist').write_bytes(plistlib.dumps(profiles[NAMES[2]]))
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            self.assertEqual(helper.main(arguments), 1)
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(json.loads(stderr.getvalue()), {'result': 'fail', 'code': 'PROFILE_DEBUGGING'})
 
 
 if __name__ == '__main__':
