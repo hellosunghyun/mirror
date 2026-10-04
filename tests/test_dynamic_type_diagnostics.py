@@ -54,9 +54,9 @@ def typed(failed=False):
     return summary, tree
 
 
-def public_help():
+def public_help(listing=None):
     return ('Usage: simctl ui <device> <option> [<arguments>]\nSupported options:\n  content_size\n'
-            + '\n'.join('    ' + value for value in helper.CATEGORIES))
+            + ('\n'.join('    ' + value for value in helper.CATEGORIES) if listing is None else listing))
 
 
 class DynamicTypeDiagnosticsTests(unittest.TestCase):
@@ -123,6 +123,107 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             self.assertEqual(report['nativeHelpExitCode'], 64)
             write.assert_not_called()
 
+    def test_scoped_complete_category_list_accepts_only_equivalent_separators(self):
+        values = helper.CATEGORIES
+        listings = {
+            'standalone': '\n'.join('    ' + value for value in values),
+            'bullet': '\n'.join('    - ' + value for value in values),
+            'commaList': '    ' + ', '.join(values),
+            'table': '\n'.join('    | ' + ' | '.join(values[index:index + 3]) + ' |'
+                               for index in range(0, len(values), 3)),
+        }
+        for kind, listing in listings.items():
+            with self.subTest(kind=kind):
+                text = public_help('    Valid values:\n' + '\n'.join('    ' + line for line in listing.splitlines()))
+                self.assertTrue(helper.supports_ui(text))
+                metadata = helper.help_metadata(text)
+                self.assertEqual(metadata['knownCategories'], list(values))
+                self.assertEqual(metadata['categoryFormat'], kind)
+                self.assertTrue(metadata['categoryListComplete'])
+                report, _ = helper.help_contract('', text)
+                self.assertEqual(report['contractFrom'], 'stderr')
+        wrapped = '\n'.join('    ' + ', '.join(values[index:index + 3]) + (',' if index < 9 else '')
+                            for index in range(0, len(values), 3))
+        self.assertTrue(helper.supports_ui(public_help(wrapped)))
+        columns = '\n'.join('    ' + '\t'.join(values[index:index + 3]) for index in range(0, len(values), 3))
+        self.assertTrue(helper.supports_ui(public_help(columns)))
+
+    def test_category_contract_rejects_fragments_unknown_words_duplicates_and_cross_option_lists(self):
+        values = helper.CATEGORIES
+        lines = ['    ' + value for value in values]
+        valid = '\n'.join(lines)
+        invalid = (
+            '\n'.join(lines[:-1]), valid + '\n' + lines[0],
+            valid.replace(values[-1], values[-1] + '_extra'),
+            '    ' + ' '.join(values), '    ' + ', '.join(values) + ', ' + PRIVATE,
+            valid + '\n    unknown-category', valid + '\n    ' + PRIVATE,
+            '\n'.join(lines[:6] + [''] + lines[6:]),
+            '\n'.join(lines[:6] + ['    ' + PRIVATE] + lines[6:]),
+            '\n'.join(lines[:6] + ['  another_operation'] + lines[6:]),
+            '\n'.join(lines[:6] + ['  content_size'] + lines[6:]),
+            '\n'.join(lines[:6] + ['    ' + line for line in lines[6:]]),
+            valid.replace('    extra-small', '    -extra-small'),
+            valid.replace('    extra-small', '    extra-small / small'),
+        )
+        for listing in invalid:
+            with self.subTest(listing=listing):
+                text = public_help(listing)
+                self.assertFalse(helper.supports_ui(text))
+                self.assertNotIn(PRIVATE, json.dumps(helper.help_metadata(text)))
+        report, _ = helper.help_contract(public_help('\n'.join(lines[:6])), public_help('\n'.join(lines[6:])))
+        self.assertEqual(report['contractFrom'], 'none')
+        self.assertFalse(report['publicUIContractVerified'])
+        outside = public_help().replace('  content_size', '  another_operation') + '\n  content_size\n    No values'
+        metadata = helper.help_metadata(outside)
+        self.assertEqual(metadata['knownCategoryCount'], 0)
+        self.assertEqual(metadata['categoryFormat'], 'none')
+        self.assertFalse(metadata['supported'])
+
+    def test_fixed_inline_declaration_is_one_complete_list_independent_of_prior_prose(self):
+        values = ', '.join(helper.CATEGORIES)
+        for prefix in ('Valid sizes:', 'Valid values:'):
+            for period in ('', '.'):
+                with self.subTest(prefix=prefix, period=period):
+                    text = public_help('    Earlier descriptive prose.\n    ' + prefix + ' ' + values + period
+                                       + '\n    Later descriptive prose.')
+                    metadata = helper.help_metadata(text)
+                    self.assertTrue(metadata['supported'])
+                    self.assertTrue(metadata['categoryListComplete'])
+                    self.assertEqual(metadata['categoryFormat'], 'inlineDeclaration')
+                    self.assertEqual(metadata['knownCategories'], list(helper.CATEGORIES))
+                    self.assertEqual(metadata['knownTokensPresent'], list(helper.CATEGORIES))
+        invalid = (
+            'Valid sizes: ' + ', '.join(helper.CATEGORIES[:-1]),
+            'Valid sizes: ' + values + ', unknown-category',
+            'Valid sizes: ' + values + '_extra',
+            'Valid sizes: ' + values + '. ' + PRIVATE,
+            'Valid sizes: ' + values + ', ' + helper.CATEGORIES[0],
+            'Valid sizes: ' + ', '.join(helper.CATEGORIES[:6]) + ',\n    ' + ', '.join(helper.CATEGORIES[6:]),
+            'Unknown sizes: ' + values, 'Example Valid sizes: ' + values,
+            'Valid sizes:' + ' ' * 512 + values,
+        )
+        for declaration in invalid:
+            with self.subTest(declaration=declaration):
+                text = public_help('    ' + declaration)
+                self.assertFalse(helper.supports_ui(text))
+                self.assertNotIn(PRIVATE, json.dumps(helper.help_metadata(text)))
+
+    def test_scoped_fixed_token_presence_does_not_accept_unknown_list_grammar(self):
+        text = public_help('    ' + PRIVATE + ': ' + ', '.join(helper.CATEGORIES) + '.')
+        metadata = helper.help_metadata(text)
+        self.assertEqual(metadata['knownTokensPresent'], list(helper.CATEGORIES))
+        self.assertEqual(metadata['knownTokensPresentCount'], 12)
+        self.assertEqual(metadata['knownCategories'], [])
+        self.assertFalse(metadata['categoryListComplete'])
+        self.assertFalse(metadata['supported'])
+        self.assertNotIn(PRIVATE, json.dumps(metadata))
+        text = public_help('    Tokens: extra-small, small_extra, extra-smallish, élarge, medium2.'
+                           '\n  another_operation\n    large, medium')
+        metadata = helper.help_metadata(text)
+        self.assertEqual(metadata['knownTokensPresent'], ['extra-small'])
+        self.assertEqual(metadata['knownTokensPresentCount'], 1)
+        self.assertFalse(metadata['supported'])
+
     def test_help_metadata_exposes_only_bounded_static_usage_and_operation_syntax(self):
         usage = 'Usage:simctl ui <device> <option> [<arguments>]'
         operation = 'content_size [<size> | increase | decrease]'
@@ -134,8 +235,9 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         text = '\n'.join((usage, operation, operation, *invalid, '    large', '    made-up-category'))
         metadata = helper.help_metadata(text)
         self.assertEqual(metadata['safeLines'], [usage, operation])
-        self.assertEqual(metadata['knownCategories'], ['large'])
-        self.assertEqual(metadata['knownCategoryCount'], 1)
+        self.assertEqual(metadata['knownCategories'], [])
+        self.assertEqual(metadata['knownCategoryCount'], 0)
+        self.assertEqual(metadata['categoryFormat'], 'none')
         self.assertEqual(metadata['bytes'], len(text.encode('utf-8')))
         self.assertNotIn(PRIVATE, json.dumps(metadata))
         self.assertFalse(metadata['supported'])

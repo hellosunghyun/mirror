@@ -37,19 +37,91 @@ def require(value, code):
         raise Failure(code)
 
 
-def supports_ui(text):
-    """공개 usage의 인자 순서·선택 인자와 content_size의 독립 항목을 모두 요구한다."""
-    section = re.search(r'(?m)^([ \t]+)content_size[ \t]*$', text)
-    if section is None:
-        return False
+def category_row(line):
+    """설명문에서 단어를 추출하지 않고, 고정 token과 목록 구분자로만 된 한 행을 읽는다."""
+    value = line.strip()
+    declaration = re.match(r'^(?:Valid sizes:|Valid values:)[ \t]+', value)
+    if declaration:
+        if len(value) > 512:
+            return None
+        tokens = [part.strip() for part in value[declaration.end():].removesuffix('.').split(',')]
+        if len(tokens) == len(CATEGORIES) and set(tokens) == set(CATEGORIES):
+            return tokens, 'inlineDeclaration'
+        return None
+    bullet = re.match(r'^[-*•][ \t]+', value)
+    if bullet:
+        value = value[bullet.end():]
+    if ',' in value:
+        tokens, kind = [part.strip() for part in value.removesuffix(',').split(',')], 'commaList'
+    elif '|' in value:
+        tokens, kind = [part.strip() for part in value.strip('|').split('|')], 'table'
+    elif re.search(r'\t| {2,}', value):
+        tokens, kind = re.split(r'(?:\t| {2,})+', value), 'table'
+    else:
+        tokens, kind = [value], 'standalone'
+    if not tokens or any(token not in CATEGORIES for token in tokens):
+        return None
+    return tokens, 'bullet' if bullet else kind
+
+
+def category_listing(text):
+    # 두 option, 두 문단 또는 두 채널의 부분 목록을 합쳐 지원 계약을 만들지 않는다.
+    sections = list(re.finditer(r'(?m)^([ \t]+)content_size[ \t]*$', text))
+    result = {'knownCategories': [], 'knownCategoryCount': 0, 'categoryFormat': 'none',
+              'categoryListComplete': False, 'knownTokensPresent': [], 'knownTokensPresentCount': 0}
+    if len(sections) != 1:
+        return result
+    section = sections[0]
     block = []
     for line in text[section.end():].splitlines():
         if line.strip() and len(line) - len(line.lstrip()) <= len(section[1]):
             break
         block.append(line)
+    # 등장 여부는 안전한 고정 token만 기록하며, 목록 문법이나 지원 계약의 증거로 사용하지 않는다.
+    present = [value for value in CATEGORIES if re.search(r'(?<![\w-])' + re.escape(value)
+                                                        + r'(?![\w-])', '\n'.join(block))]
+    result.update(knownTokensPresent=present, knownTokensPresentCount=len(present))
+    groups, group, indent = [], [], None
+    for line in [*block, '']:
+        current = len(line) - len(line.lstrip())
+        row = category_row(line)
+        declaration = row is not None and row[1] == 'inlineDeclaration'
+        if not line.strip() or declaration or indent is not None and current != indent:
+            if group:
+                groups.append(group)
+            group, indent = [], None
+        if declaration:
+            groups.append([line])
+        elif line.strip():
+            group.append(line)
+            indent = current
+    candidates, known, formats = [], set(), set()
+    for group in groups:
+        rows, valid = [], True
+        for line in group:
+            row = category_row(line)
+            if row is None:
+                valid = False
+                continue
+            tokens, kind = row
+            rows.extend(tokens)
+            known.update(tokens)
+            formats.add(kind)
+        if rows:
+            candidates.append((rows, valid))
+    result.update(knownCategories=[value for value in CATEGORIES if value in known],
+                  knownCategoryCount=len(known), categoryFormat=next(iter(formats)) if len(formats) == 1
+                  else 'mixed' if formats else 'none')
+    if len(candidates) == 1:
+        rows, valid = candidates[0]
+        result['categoryListComplete'] = valid and len(rows) == len(CATEGORIES) and set(rows) == set(CATEGORIES)
+    return result
+
+
+def supports_ui(text):
+    """공개 usage와 단일 content_size 항목의 완전한 고정 category 목록을 요구한다."""
     return (re.search(r'(?m)^Usage: simctl ui <device> <(?:option|operation)> \[<(?:arguments|value)>\]\s*$', text)
-            is not None and all(re.search(r'(?m)^\s+' + re.escape(value) + r'\s*$', '\n'.join(block))
-                                for value in CATEGORIES))
+            is not None and category_listing(text)['categoryListComplete'])
 
 
 def help_metadata(text):
@@ -72,9 +144,8 @@ def help_metadata(text):
         if all(word in ('appearance', 'content_size', 'increase_contrast', 'increase', 'decrease') for word in words):
             if line not in safe_lines and len(safe_lines) < 8:
                 safe_lines.append(line)
-    categories = [value for value in CATEGORIES if re.search(r'(?m)^\s+' + re.escape(value) + r'\s*$', text)]
     return {'bytes': len(text.encode('utf-8')), 'supported': supports_ui(text), 'safeLines': safe_lines,
-            'knownCategories': categories, 'knownCategoryCount': len(categories)}
+            **category_listing(text)}
 
 
 def help_contract(stdout, stderr):
