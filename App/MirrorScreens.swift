@@ -402,6 +402,7 @@ struct MirrorCaptureView: View {
                         .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
                     VStack(alignment: .leading, spacing: 0) {
                         Button {
+                            if !more { focusedField = nil }
                             if more, focusedField == .note || focusedField == .url { focusedField = .title }
                             more.toggle()
                         } label: {
