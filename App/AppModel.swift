@@ -86,7 +86,7 @@ final class AppModel {
     func setTextEditing(_ active: Bool, ownerID: UUID) {
         textEditingOwnership.setEditing(active, ownerID: ownerID)
     }
-    struct DetailEditingClaim: Equatable {
+    struct DetailEditingClaim: Equatable, Sendable {
         let id = UUID()
         let observationID: UUID
         let taskID: UUID
@@ -282,15 +282,19 @@ final class AppModel {
         detailEditingFeedback = nil
     }
     func canSaveDetailEditing(ownerID: UUID, claim: DetailEditingClaim?) -> Bool {
-        guard let claim, detailEditingOwners[ownerID] == claim, claim.observationID == storeObservationID,
-              store != nil, selectedTaskID == claim.taskID, let configuration,
-              claim.workspaceKey == configuration.workspaceKey, claim.workspaceEpoch == configuration.workspaceEpoch,
-              tasks.contains(where: { $0.taskID == claim.taskID && $0.workspaceKey == claim.workspaceKey && $0.workspaceEpoch == claim.workspaceEpoch }) else {
+        guard isCurrentDetailEditing(ownerID: ownerID, claim: claim) else {
             feedback = "편집을 시작한 뒤 저장 공간 연결이 바뀌었어요. 입력한 내용을 유지했어요. 편집을 취소하고 최신 내용을 확인해 주세요."
             detailEditingFeedback = feedback
             return false
         }
         detailEditingFeedback = nil
+        return true
+    }
+    func isCurrentDetailEditing(ownerID: UUID, claim: DetailEditingClaim?) -> Bool {
+        guard let claim, detailEditingOwners[ownerID] == claim, claim.observationID == storeObservationID,
+              store != nil, selectedTaskID == claim.taskID, let configuration,
+              claim.workspaceKey == configuration.workspaceKey, claim.workspaceEpoch == configuration.workspaceEpoch,
+              tasks.contains(where: { $0.taskID == claim.taskID && $0.workspaceKey == claim.workspaceKey && $0.workspaceEpoch == claim.workspaceEpoch }) else { return false }
         return true
     }
 
@@ -828,6 +832,38 @@ final class AppModel {
                             success: deadline == nil ? "실제 마감을 지웠어요. 계획은 유지했어요." : "실제 마감을 저장했어요. 계획은 유지했어요.")
     }
 
+    private func deadlineEditorRetryEnvelope(_ task: TaskProjection, deadline: Deadline,
+                                             ownerID: UUID, claim: DetailEditingClaim) -> CommandEnvelope? {
+        guard isCurrentDetailEditing(ownerID: ownerID, claim: claim), claim.taskID == task.taskID,
+              claim.workspaceKey == task.workspaceKey, claim.workspaceEpoch == task.workspaceEpoch,
+              let envelope = retryEnvelope, envelope.source == .app, envelope.workspaceEpoch == claim.workspaceEpoch,
+              case let .setDeadline(taskID, pendingDeadline, expectedDeadline) = envelope.payload,
+              taskID == task.taskID, pendingDeadline == deadline,
+              expectedDeadline == task.versions[.deadline]?.headsDigest else { return nil }
+        return envelope
+    }
+    func saveDeadlineEditor(_ task: TaskProjection, deadline: Deadline,
+                            ownerID: UUID, claim: DetailEditingClaim) async -> Bool {
+        guard isCurrentDetailEditing(ownerID: ownerID, claim: claim), claim.taskID == task.taskID,
+              claim.workspaceKey == task.workspaceKey, claim.workspaceEpoch == task.workspaceEpoch,
+              let context, let digest = task.versions[.deadline]?.headsDigest,
+              let envelope = makeEnvelope(.setDeadline(taskID: task.taskID, deadline: deadline, expectedDeadline: digest),
+                                          context: context, token: UUID().uuidString) else { return false }
+        return await execute(envelope, success: "실제 마감을 저장했어요. 계획은 유지했어요.",
+                             expectedDetailOwner: (ownerID, claim))
+    }
+    func canRetryDeadlineEditorSave(_ task: TaskProjection, deadline: Deadline,
+                                   ownerID: UUID, claim: DetailEditingClaim) -> Bool {
+        deadlineEditorRetryEnvelope(task, deadline: deadline, ownerID: ownerID, claim: claim) != nil
+    }
+    func retryDeadlineEditorSave(_ task: TaskProjection, deadline: Deadline,
+                                ownerID: UUID, claim: DetailEditingClaim) async -> Bool {
+        guard let envelope = deadlineEditorRetryEnvelope(task, deadline: deadline, ownerID: ownerID, claim: claim) else { return false }
+        let saved = await execute(envelope, success: "실제 마감을 저장했어요. 계획은 유지했어요.",
+                                  expectedDetailOwner: (ownerID, claim))
+        return isCurrentDetailEditing(ownerID: ownerID, claim: claim) && saved
+    }
+
     func makePicker(taskIDs: [UUID], week: WeekRange? = nil, reviewCard: ReviewCard? = nil,
                     reviewSession: AppReviewSession? = nil) {
         guard !isSaving, !projectionPending, !isDetailEditing,
@@ -1257,13 +1293,19 @@ final class AppModel {
     }
 
     @discardableResult
-    private func execute(_ envelope: CommandEnvelope, success: String) async -> Bool {
+    private func execute(_ envelope: CommandEnvelope, success: String,
+                         expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil) async -> Bool {
+        if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         guard let store, !isSaving, !projectionPending || envelope.idempotencyKey == retryEnvelope?.idempotencyKey else { return false }
         isSaving = true; problem = nil
         defer { finishSaving() }
         if configuration?.cloudSync != nil, let cloud, !isUITesting {
-            guard await cloud.validateLocalIdentity() else {
-                cloudSyncStatus = await cloud.status()
+            let valid = await cloud.validateLocalIdentity()
+            if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+            guard valid else {
+                let status = await cloud.status()
+                if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+                cloudSyncStatus = status
                 stopCanonicalObservation()
                 problem = "iCloud 계정을 확인하지 못했어요. 이전 계정 공간의 쓰기를 잠시 멈췄어요. 동기화 설정을 확인해 주세요."
                 return false
@@ -1272,12 +1314,16 @@ final class AppModel {
         let current: PlanningContext
         do { current = try PlanningContext.capture(at: now, timeZoneID: preferences.timeZoneID, policyRevision: preferences.policyRevision) }
         catch { problem = "계획 시간대를 확인해 주세요."; return false }
+        if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         let result = await store.execute(envelope, context: current)
-        return await handleResult(envelope, result: result, success: success)
+        if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
+        return await handleResult(envelope, result: result, success: success, expectedDetailOwner: expectedDetailOwner)
     }
     private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String,
-                              expectedWidgetOwnership: WidgetDecisionOwnership? = nil) async -> Bool {
+                              expectedWidgetOwnership: WidgetDecisionOwnership? = nil,
+                              expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil) async -> Bool {
         if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
+        if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         let feedbackSessionID: String?
         switch envelope.payload {
         case let .setPlan(_, _, decision): feedbackSessionID = decision?.sessionID
@@ -1303,6 +1349,7 @@ final class AppModel {
             case .persistenceFailed: outcome = .failure
             }
             let metrics = await services.metrics
+            if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
             let activeTime: Int?
             if case .reviewClose = envelope.payload, committed {
                 endReviewExposureSegment()
@@ -1312,6 +1359,7 @@ final class AppModel {
             try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome,
                                                   activeReviewMilliseconds: activeTime,
                                                   countBucket: result.affectedTaskIDs.isEmpty ? 0 : result.affectedTaskIDs.count == 1 ? 1 : result.affectedTaskIDs.count <= 5 ? 5 : 20))
+            if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         }
         switch result.state {
         case .locallyCommitted, .alreadyApplied:
@@ -1319,6 +1367,7 @@ final class AppModel {
             projectionPending = false
             let refreshed = await refresh()
             if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
+            if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
             guard refreshed else {
                 projectionPending = true; retryEnvelope = envelope
                 feedback = "저장했어요. 화면을 갱신하고 있어요."
@@ -1611,6 +1660,36 @@ final class AppModel {
         if let fireAt { preferences.deadlineAlarmDates[task.taskID] = fireAt }
         else { preferences.deadlineAlarmDates.removeValue(forKey: task.taskID) }
         savePreferences()
+    }
+    /// nil은 편집 소유 또는 저장한 마감 버전의 변경이다. 권한 거절(false)과 구분한다.
+    func authorizeDeadlineEditorNotifications(_ task: TaskProjection, ownerID: UUID, claim: DetailEditingClaim) async -> Bool? {
+        guard isCurrentDetailEditing(ownerID: ownerID, claim: claim), claim.taskID == task.taskID,
+              claim.workspaceKey == task.workspaceKey, claim.workspaceEpoch == task.workspaceEpoch,
+              let expectedDeadline = task.versions[.deadline],
+              tasks.first(where: { $0.taskID == task.taskID })?.versions[.deadline] == expectedDeadline,
+              let services else { return nil }
+        problem = nil
+        do {
+            let notifications = await services.notifications
+            guard isCurrentDetailEditing(ownerID: ownerID, claim: claim),
+                  tasks.first(where: { $0.taskID == task.taskID })?.versions[.deadline] == expectedDeadline else { return nil }
+            let authorized = try await notifications.requestAuthorization()
+            guard isCurrentDetailEditing(ownerID: ownerID, claim: claim),
+                  tasks.first(where: { $0.taskID == task.taskID })?.versions[.deadline] == expectedDeadline else { return nil }
+            notificationsAuthorized = authorized
+            guard authorized else {
+                problem = "실제 마감은 저장했어요. 알림은 허용되지 않았어요. 앱에서 마감을 확인하거나 설정에서 알림 권한을 바꿔 주세요."
+                return false
+            }
+            preferences.deadlineNotifications = true
+            savePreferences()
+            return true
+        } catch {
+            guard isCurrentDetailEditing(ownerID: ownerID, claim: claim),
+                  tasks.first(where: { $0.taskID == task.taskID })?.versions[.deadline] == expectedDeadline else { return nil }
+            problem = "실제 마감은 저장했어요. 알림 권한을 확인하지 못했어요. 알림 설정을 다시 확인해 주세요."
+            return false
+        }
     }
     func handleURL(_ url: URL, expectedObservationID: UUID? = nil, captureOwner: CaptureSceneOwner? = nil) async {
         do {

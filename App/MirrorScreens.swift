@@ -1619,6 +1619,88 @@ struct MirrorMonthGrid: View {
     }
 }
 
+/// 표시 전에 claim을 확보한다. 창이나 sheet가 사라져도 다른 표시 회차의 claim을 해제하지 않는다.
+@MainActor @Observable
+private final class MirrorDeadlineEditingRequest: Identifiable {
+    struct Submission {
+        let task: TaskProjection
+        let deadline: Deadline
+        let alarmAt: Date?
+    }
+    nonisolated let id: UUID
+    let claim: AppModel.DetailEditingClaim
+    private let model: AppModel
+    private let policyRevision: String
+    var task: TaskProjection
+    var date: Date
+    var precise: Bool
+    var alarm: Bool
+    var alarmAt: Date
+    let timeZoneID: String
+    var submitting = false
+    var showDiscardConfirmation = false
+    var saveConflict = false
+    var pendingSubmission: Submission?
+    private(set) var closed = false
+    private var initialDeadline: Deadline?
+    private var initialAlarmAt: Date?
+    private(set) var savedDeadline: Deadline?
+
+    init?(task: TaskProjection, model: AppModel) {
+        let ownerID = UUID()
+        guard let claim = model.beginDetailEditing(ownerID: ownerID, task: task) else { return nil }
+        id = ownerID; self.claim = claim; self.model = model; self.task = task
+        policyRevision = model.preferences.policyRevision
+        let initialDate: Date
+        switch task.deadline {
+        case let .day(day, zone):
+            timeZoneID = zone; initialDate = AppDate.instant(day, zone: zone) ?? model.now; precise = false
+        case let .instant(instant, zone):
+            timeZoneID = zone; initialDate = instant; precise = true
+        case nil:
+            timeZoneID = model.preferences.timeZoneID; initialDate = model.now; precise = false
+        }
+        date = initialDate
+        alarmAt = model.preferences.deadlineAlarmDates[task.taskID] ?? initialDate
+        alarm = model.preferences.deadlineAlarmDates[task.taskID] != nil
+        initialDeadline = deadline
+        initialAlarmAt = alarm ? alarmAt : nil
+    }
+    deinit {
+        // 표시되기 전에 host가 제거된 경우도 원래 claim만 정리한다.
+        let model = model, ownerID = id, claim = claim
+        Task { @MainActor in model.endDetailEditing(ownerID: ownerID, claim: claim) }
+    }
+    var isCurrent: Bool { !closed && model.isCurrentDetailEditing(ownerID: id, claim: claim) }
+    var deadline: Deadline? {
+        if precise { return .instant(utcTimestamp: date, displayTimeZoneID: timeZoneID) }
+        guard let day = try? PlanningContext.capture(at: date, timeZoneID: timeZoneID, policyRevision: policyRevision).planningDay else { return nil }
+        return .day(localDate: day, timeZoneID: timeZoneID)
+    }
+    var hasUnsavedChanges: Bool { deadline != initialDeadline || (alarm ? alarmAt : nil) != initialAlarmAt }
+    var deadlineChangedExternally: Bool {
+        model.tasks.first { $0.taskID == task.taskID }?.versions[.deadline] != task.versions[.deadline]
+    }
+    func requestClose() -> Bool {
+        if closed { return true }
+        guard !submitting, !model.isSaving else { return false }
+        if hasUnsavedChanges { showDiscardConfirmation = true; return false }
+        finish()
+        return true
+    }
+    func finish() {
+        guard !closed else { return }
+        closed = true
+        model.endDetailEditing(ownerID: id, claim: claim)
+    }
+    func acceptSavedDeadline(_ deadline: Deadline) -> Bool {
+        guard isCurrent, let latest = model.tasks.first(where: { $0.taskID == task.taskID }), latest.deadline == deadline else { return false }
+        task = latest; savedDeadline = deadline; initialDeadline = deadline
+        return true
+    }
+    func acceptSavedAlarm(_ fireAt: Date?) { initialAlarmAt = fireAt }
+}
+
 @MainActor
 struct MirrorTaskDetail: View {
     @Environment(AppModel.self) private var model
@@ -1637,7 +1719,7 @@ struct MirrorTaskDetail: View {
     @State private var editingSnapshot: TaskProjection?
     @State private var detailEditorOwnerID = UUID()
     @State private var editingClaim: AppModel.DetailEditingClaim?
-    @State private var showDeadline = false
+    @State private var deadlineEditor: MirrorDeadlineEditingRequest?
     @State private var showHistory = false
     @State private var showNotes = false
     init(task: TaskProjection, closeRequestedID: Binding<UUID?> = .constant(nil), draftTaskID: Binding<UUID?> = .constant(nil),
@@ -1773,11 +1855,11 @@ struct MirrorTaskDetail: View {
                                 Label("실제 마감 · 계획과 별개", systemImage: "flag")
                                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                                 Text(deadlineLabel(task.deadline, context: model.context))
-                                Button("실제 마감 편집") { showDeadline = true }.buttonStyle(.borderless).frame(minHeight: 44)
+                                Button("실제 마감 편집", action: openDeadlineEditor).buttonStyle(.borderless).frame(minHeight: 44)
                                 Text(model.preferences.deadlineAlarmDates[task.taskID].map { "이 기기 알림: \($0.formatted())" } ?? "이 작업의 실제 마감 알림은 꺼져 있어요.")
                                     .font(.caption).foregroundStyle(.secondary)
                             } else {
-                                Button { showDeadline = true } label: { Label("실제 마감 추가", systemImage: "flag") }
+                                Button(action: openDeadlineEditor) { Label("실제 마감 추가", systemImage: "flag") }
                                     .buttonStyle(.borderless).frame(minHeight: 44)
                             }
                         }
@@ -1802,7 +1884,7 @@ struct MirrorTaskDetail: View {
                                         Button("당분간 보관") { Task { await model.park(task) } }.frame(minHeight: 44)
                                     }
                                     if task.deadline != nil {
-                                        Button("실제 마감 알림 설정") { showDeadline = true }.frame(minHeight: 44)
+                                        Button("실제 마감 알림 설정", action: openDeadlineEditor).frame(minHeight: 44)
                                         if model.preferences.deadlineAlarmDates[task.taskID] != nil {
                                             Button("이 작업 마감 알림 끄기") { model.setDeadlineAlarm(task, fireAt: nil) }.frame(minHeight: 44)
                                         }
@@ -1978,13 +2060,24 @@ struct MirrorTaskDetail: View {
             showNotes = false; showHistory = false; discardRequestedID = nil; showDiscardConfirmation = false; closeRequestedID = nil
             draftTaskID = hasUnsavedChanges ? task.taskID : nil
         }
-        .sheet(isPresented: $showDeadline) {
-            MirrorDeadlineEditor(task: task).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "deadline"))
+        .sheet(item: deadlinePresentation) { request in
+            MirrorDeadlineEditor(request: request).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "deadline"))
         }
         .sheet(item: detailPickerPresentation) {
             MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
         }
         .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil))
+    }
+    private func openDeadlineEditor() {
+        guard deadlineEditor == nil, !model.isSaving else { return }
+        deadlineEditor = MirrorDeadlineEditingRequest(task: task, model: model)
+    }
+    private var deadlinePresentation: Binding<MirrorDeadlineEditingRequest?> {
+        let displayed = deadlineEditor
+        return Binding(get: { deadlineEditor }, set: { next in
+            guard next == nil, let displayed, deadlineEditor?.id == displayed.id, displayed.requestClose() else { return }
+            deadlineEditor = nil
+        })
     }
     private var detailPickerPresentation: Binding<PlanPickerRequest?> {
         let displayedRequest = model.picker
@@ -2002,72 +2095,107 @@ struct MirrorTaskDetail: View {
 }
 
 @MainActor
-struct MirrorDeadlineEditor: View {
+private struct MirrorDeadlineEditor: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    let task: TaskProjection
-    @State private var date = Date()
-    @State private var precise = false
-    @State private var alarm = false
-    @State private var alarmAt = Date()
-    @State private var deadlineTimeZoneID: String?
-    @State private var editingSnapshot: TaskProjection?
-    private var editorTimeZoneID: String { deadlineTimeZoneID ?? model.preferences.timeZoneID }
+    let request: MirrorDeadlineEditingRequest
     var body: some View {
+        @Bindable var draft = request
         NavigationStack {
             Form {
                 Text("실제 마감은 계획 날짜와 별도예요. 날짜 배치로 마감이 바뀌지 않아요.")
-                Toggle("정확한 시각까지 정하기", isOn: $precise)
-                DatePicker("실제 마감", selection: $date, displayedComponents: precise ? [.date, .hourAndMinute] : [.date])
-                Text("마감 시간대: \(editorTimeZoneID)").font(.caption)
-                Toggle("이 기기에서 이 작업의 실제 마감 알림", isOn: $alarm)
-                if alarm { DatePicker("알림을 받을 시각", selection: $alarmAt, displayedComponents: [.date, .hourAndMinute]) }
-                if let original = editingSnapshot,
-                   original.taskID != task.taskID || original.versions[.deadline]?.headsDigest != task.versions[.deadline]?.headsDigest {
+                Toggle("정확한 시각까지 정하기", isOn: $draft.precise)
+                DatePicker("실제 마감", selection: $draft.date, displayedComponents: request.precise ? [.date, .hourAndMinute] : [.date])
+                Text("마감 시간대: \(request.timeZoneID)").font(.caption)
+                Toggle("이 기기에서 이 작업의 실제 마감 알림", isOn: $draft.alarm)
+                if request.alarm { DatePicker("알림을 받을 시각", selection: $draft.alarmAt, displayedComponents: [.date, .hourAndMinute]) }
+                if !request.isCurrent || request.deadlineChangedExternally || request.saveConflict {
                     Text("편집을 시작한 뒤 작업이나 실제 마감이 바뀌었어요. 입력한 값은 유지했어요. 취소하고 최신 마감을 확인한 뒤 다시 편집하세요.").font(.callout)
                 }
                 if let problem = model.problem {
                     Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
                 }
-                Button("실제 마감 저장") {
-                    guard let original = editingSnapshot, original.taskID == task.taskID else { return }
-                    let submittedDate = date
-                    let submittedZone = editorTimeZoneID
-                    let submittedPrecise = precise
-                    let submittedAlarm = alarm
-                    let submittedAlarmAt = alarmAt
-                    Task {
-                        let deadline: Deadline
-                        if submittedPrecise { deadline = .instant(utcTimestamp: submittedDate, displayTimeZoneID: submittedZone) }
-                        else {
-                            guard let value = try? PlanningContext.capture(at: submittedDate, timeZoneID: submittedZone,
-                                                                          policyRevision: model.preferences.policyRevision).planningDay else { return }
-                            deadline = .day(localDate: value, timeZoneID: submittedZone)
-                        }
-                        guard await model.setDeadline(original, deadline: deadline) else { return }
-                        if submittedAlarm { await model.enableNotifications(review: model.preferences.reviewNotifications, deadlines: true) }
-                        model.setDeadlineAlarm(original, fireAt: submittedAlarm ? submittedAlarmAt : nil)
-                        if model.problem == nil { dismiss() }
-                    }
-                }.disabled(model.isSaving || model.projectionPending || editingSnapshot?.taskID != task.taskID)
-                if model.projectionPending {
-                    Button("저장 결과 다시 확인") { Task { await model.retry() } }
+                Button("실제 마감 저장") { save(retrying: false) }
+                    .disabled(model.projectionPending || request.pendingSubmission != nil)
+                if request.pendingSubmission != nil {
+                    Button("저장 결과 다시 확인") { save(retrying: true) }
                 }
-            }.navigationTitle("실제 마감")
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } } }
-                .environment(\.timeZone, TimeZone(identifier: editorTimeZoneID) ?? .gmt)
-                .onAppear {
-                    guard editingSnapshot == nil else { return }
-                    editingSnapshot = task
-                    switch task.deadline {
-                    case let .day(day, zone): deadlineTimeZoneID = zone; date = AppDate.instant(day, zone: zone) ?? model.now
-                    case let .instant(instant, zone): deadlineTimeZoneID = zone; date = instant; precise = true
-                    case nil: deadlineTimeZoneID = model.preferences.timeZoneID; date = model.now
-                    }
-                    alarmAt = model.preferences.deadlineAlarmDates[task.taskID] ?? date
-                    alarm = model.preferences.deadlineAlarmDates[task.taskID] != nil
+            }
+            .disabled(request.submitting || model.isSaving || !request.isCurrent)
+            .navigationTitle("실제 마감")
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("취소") { if request.requestClose() { dismiss() } }
+                    .disabled(request.submitting || model.isSaving)
+            } }
+            .environment(\.timeZone, TimeZone(identifier: request.timeZoneID) ?? .gmt)
+        }
+        .frame(minWidth: 300, idealWidth: 450, minHeight: 300)
+        .interactiveDismissDisabled(request.hasUnsavedChanges || request.submitting || model.isSaving)
+        .alert("편집한 실제 마감을 버리고 닫을까요?", isPresented: $draft.showDiscardConfirmation) {
+            Button("버리고 닫기", role: .destructive) {
+                guard !request.submitting, !model.isSaving else { return }
+                request.finish(); dismiss()
+            }
+            Button("계속 편집", role: .cancel) {}
+        }
+        .onDisappear { request.finish() }
+    }
+    private func save(retrying: Bool) {
+        guard request.isCurrent, !request.submitting, !model.isSaving else { return }
+        let submission: MirrorDeadlineEditingRequest.Submission
+        if retrying {
+            guard let pending = request.pendingSubmission else { return }
+            submission = pending
+        } else {
+            guard request.pendingSubmission == nil, let deadline = request.deadline, !model.projectionPending else { return }
+            submission = .init(task: request.task, deadline: deadline, alarmAt: request.alarm ? request.alarmAt : nil)
+        }
+        request.submitting = true
+        request.pendingSubmission = submission
+        Task {
+            defer { request.submitting = false }
+            guard request.isCurrent else { return }
+            let saved: Bool
+            if retrying {
+                saved = await model.retryDeadlineEditorSave(submission.task, deadline: submission.deadline, ownerID: request.id, claim: request.claim)
+            } else if request.savedDeadline == submission.deadline, !request.deadlineChangedExternally {
+                saved = true
+            } else {
+                saved = await model.saveDeadlineEditor(submission.task, deadline: submission.deadline, ownerID: request.id, claim: request.claim)
+            }
+            guard request.isCurrent else { return }
+            guard saved else {
+                if !model.canRetryDeadlineEditorSave(submission.task, deadline: submission.deadline, ownerID: request.id, claim: request.claim) {
+                    request.pendingSubmission = nil
                 }
-        }.frame(minWidth: 300, idealWidth: 450, minHeight: 300)
+                return
+            }
+            guard request.acceptSavedDeadline(submission.deadline) else {
+                request.pendingSubmission = nil; request.saveConflict = true
+                return
+            }
+            var notificationReady = true
+            if submission.alarmAt != nil {
+                let authorized = await model.authorizeDeadlineEditorNotifications(request.task, ownerID: request.id, claim: request.claim)
+                guard request.isCurrent else { return }
+                guard !request.deadlineChangedExternally else {
+                    request.pendingSubmission = nil; request.saveConflict = true
+                    return
+                }
+                guard let authorized else { return }
+                notificationReady = authorized
+            }
+            guard request.isCurrent else { return }
+            guard !request.deadlineChangedExternally else {
+                request.pendingSubmission = nil; request.saveConflict = true
+                return
+            }
+            model.setDeadlineAlarm(submission.task, fireAt: submission.alarmAt)
+            request.acceptSavedAlarm(submission.alarmAt)
+            request.pendingSubmission = nil
+            // 오래된 제출을 재확인한 동안 바꾼 초안은 그대로 남긴다.
+            if notificationReady, !request.hasUnsavedChanges { request.finish(); dismiss() }
+        }
     }
 }
 
