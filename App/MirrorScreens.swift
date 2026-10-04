@@ -406,6 +406,7 @@ struct MirrorCaptureView: View {
     @State private var splitPreview = false
     @State private var requestToken = UUID().uuidString
     @State private var pendingCapture = CaptureDraftCommitState()
+    @State private var pendingTitleFocus = false
     @State private var captureFlowStarted = false
     @State private var showSavedFeedback = false
     @State private var savedFeedback = "보관함에 넣었어요."
@@ -418,6 +419,11 @@ struct MirrorCaptureView: View {
     @State private var textEditingOwnerID = UUID()
     private var lines: [String] { title.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } }
     private var captureBusy: Bool { pendingCapture.isSubmitting || model.isSaving }
+    private var canRestoreTitleFocus: Bool {
+        pendingTitleFocus && !request.single && !captureBusy && !model.projectionPending
+            && !splitPreview && !showDatePicker
+            && model.capturePresentation(for: request.ownerSceneID) == request
+    }
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -433,7 +439,7 @@ struct MirrorCaptureView: View {
                         .background(MirrorPalette.card, in: RoundedRectangle(cornerRadius: 12))
                     VStack(alignment: .leading, spacing: 0) {
                         Button {
-                            if !more { focusedField = nil }
+                            if !more { pendingTitleFocus = false; focusedField = nil }
                             if more, focusedField == .note || focusedField == .url { focusedField = .title }
                             more.toggle()
                         } label: {
@@ -501,16 +507,27 @@ struct MirrorCaptureView: View {
             .interactiveDismissDisabled(captureBusy)
             .onAppear { model.clearCaptureInputProblem(); focusedField = .title; startCaptureFlow() }
             .onChange(of: title) { _, value in
-                if !value.isEmpty { showSavedFeedback = false; startCaptureFlow() }
+                if !value.isEmpty { pendingTitleFocus = false; showSavedFeedback = false; startCaptureFlow() }
             }
-            .onChange(of: note) { _, value in if !value.isEmpty { showSavedFeedback = false } }
-            .onChange(of: sourceURL) { _, value in if !value.isEmpty { showSavedFeedback = false } }
-            .onChange(of: initialPlan) { _, _ in showSavedFeedback = false }
+            .onChange(of: note) { _, value in if !value.isEmpty { pendingTitleFocus = false; showSavedFeedback = false } }
+            .onChange(of: sourceURL) { _, value in if !value.isEmpty { pendingTitleFocus = false; showSavedFeedback = false } }
+            .onChange(of: initialPlan) { _, value in
+                if value != nil { pendingTitleFocus = false }
+                showSavedFeedback = false
+            }
             .onChange(of: more) { _, expanded in
                 if !expanded, focusedField == .note || focusedField == .url { focusedField = .title }
             }
             .onChange(of: focusedField, initial: true) { _, focused in model.setTextEditing(focused != nil, ownerID: textEditingOwnerID) }
-            .onDisappear { model.setTextEditing(false, ownerID: textEditingOwnerID); model.clearCaptureInputProblem() }
+            .onChange(of: canRestoreTitleFocus) { _, ready in
+                guard ready, canRestoreTitleFocus else { return }
+                pendingTitleFocus = false
+                focusedField = .title
+            }
+            .onDisappear {
+                pendingTitleFocus = false
+                model.setTextEditing(false, ownerID: textEditingOwnerID); model.clearCaptureInputProblem()
+            }
             .onChange(of: model.presentedCaptureCommittedToken) { _, token in
                 acceptCaptureCommit(token)
             }
@@ -614,6 +631,7 @@ struct MirrorCaptureView: View {
     }
     private func closeCapture() {
         guard !captureBusy, model.closeCapture(request) else { return }
+        pendingTitleFocus = false
         model.clearCaptureInputProblem()
         focusedField = nil
         dismiss()
@@ -627,6 +645,7 @@ struct MirrorCaptureView: View {
             return
         }
         guard let submission = pendingCapture.beginSubmission(draft: captureDraft) else { return }
+        pendingTitleFocus = false
         let submitted = submission.draft
         let token = UUID().uuidString
         guard model.registerPresentedCapture(token: token, presentation: request) else {
@@ -657,6 +676,7 @@ struct MirrorCaptureView: View {
             return
         }
         guard let submission = pendingCapture.beginSubmission(draft: captureDraft) else { return }
+        pendingTitleFocus = false
         let submitted = submission.draft
         let submittedLines = submitted.title.components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -690,6 +710,7 @@ struct MirrorCaptureView: View {
         // pending 상태에서도 자기 재시도는 허용하되 같은 화면의 새 제출과 겹치지 않는다.
         guard !captureBusy, model.canRetryPresentedCapture(request),
               let submission = pendingCapture.beginSubmission(draft: captureDraft) else { return }
+        pendingTitleFocus = false
         Task {
             defer { pendingCapture.endSubmission(submission) }
             await model.retryPresentedCapture(request)
@@ -714,6 +735,7 @@ struct MirrorCaptureView: View {
             if remaining.isEmpty { initialPlan = nil; planContext = nil; finishSavedCapture() }
             else { focusedField = .title }
         case .preserveDraft:
+            pendingTitleFocus = false
             savedFeedback = "이전 입력은 저장됐어요. 수정한 내용은 그대로 남겼어요."
             showSavedFeedback = true
         }
@@ -726,7 +748,9 @@ struct MirrorCaptureView: View {
         if !single { showSavedFeedback = true }
         note = ""; sourceURL = ""
         more = false
-        focusedField = single ? nil : .title
+        // 제출 잠금이 풀려 TextField가 다시 활성화된 화면 갱신에서 포커스를 복원한다.
+        pendingTitleFocus = !single
+        focusedField = nil
         if model.finishCapture(request) { dismiss() }
     }
     private func startCaptureFlow() {
