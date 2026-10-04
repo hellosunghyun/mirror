@@ -810,11 +810,37 @@ final class MirrorAdaptiveUITests: XCTestCase {
               diagnosticCase == .searchDetailUndo, diagnosticProgressPhase == .postponeStarted,
               diagnosticRequestedElement == .taskPostpone, element === diagnosticRequestedObject,
               (swipeLimit ? observationCount == 9 : (1...8).contains(observationCount)),
-              swipeDirections.count == observationCount - 1,
-              app.state == .runningForeground else { return }
-        let windows = app.windows.allElementsBoundByIndex
-        guard windows.count == 1, let window = windows.first,
-              window.buttons.matching(identifier: identifier).count == 1 else { return }
+              swipeDirections.count == observationCount - 1 else { return }
+        var counts: [String: Any] = ["appTargets": NSNull(), "ownerWindows": NSNull(), "windowTargets": NSNull()]
+        func rejected(_ reason: String) {
+            let fields: [String: Any] = [
+                "schemaVersion": 3, "case": "searchDetailUndo", "requestSequence": diagnosticRequestSequence,
+                "requestedElement": "taskPostpone", "status": "guardRejected", "reason": reason,
+                "boundary": swipeLimit ? "swipeLimit" : "reveal", "observationCount": observationCount,
+                "swipeDirections": swipeDirections, "counts": counts,
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+                  data.count <= 768 else { return }
+            print("UI adaptive phone reveal obstruction diagnostic: \(String(decoding: data, as: UTF8.self))")
+        }
+        guard app.state == .runningForeground else { rejected("appForeground"); return }
+        guard !identifier.isEmpty, element.exists, element.elementType == .button,
+              element.identifier == identifier else { rejected("targetIdentity"); return }
+        let appTargets = app.buttons.matching(identifier: identifier).allElementsBoundByIndex
+        counts["appTargets"] = appTargets.count <= 10_000 ? appTargets.count as Any : NSNull()
+        guard appTargets.count == 1, let appTarget = appTargets.first, appTarget.exists,
+              appTarget.elementType == .button, appTarget.identifier == identifier else {
+            rejected("targetUniqueness"); return
+        }
+        let windows = app.windows.containing(.button, identifier: identifier).allElementsBoundByIndex
+        counts["ownerWindows"] = windows.count <= 10_000 ? windows.count as Any : NSNull()
+        guard windows.count == 1, let window = windows.first else { rejected("ownerWindowCount"); return }
+        let windowTargets = window.buttons.matching(identifier: identifier).allElementsBoundByIndex
+        counts["windowTargets"] = windowTargets.count <= 10_000 ? windowTargets.count as Any : NSNull()
+        guard window.exists, windowTargets.count == 1, let windowTarget = windowTargets.first,
+              windowTarget.exists, windowTarget.elementType == .button, windowTarget.identifier == identifier else {
+            rejected("anchorUniqueness"); return
+        }
         func coordinates(_ frame: CGRect?) -> [Double]? {
             guard let frame else { return nil }
             let values = [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]
@@ -823,7 +849,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
             return values
         }
         let windowBounds = window.frame
-        guard hasArea(windowBounds), let windowFrame = coordinates(windowBounds) else { return }
+        guard hasArea(windowBounds), let windowFrame = coordinates(windowBounds) else {
+            rejected("windowGeometry"); return
+        }
         func observation(_ value: RevealFrameObservation) -> [String: Any] {
             ["target": coordinates(value.target).map { $0 as Any } ?? NSNull(),
              "owner": coordinates(value.owner).map { $0 as Any } ?? NSNull()]
@@ -842,7 +870,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
               let dismissFeedback = measurement(window.buttons.matching(identifier: "state.dismissFeedback")),
               let undo = measurement(window.buttons.matching(identifier: "task.undo")),
               let retry = measurement(window.buttons.matching(identifier: "state.retry")),
-              let tabBar = measurement(window.tabBars), app.state == .runningForeground else { return }
+              let tabBar = measurement(window.tabBars) else { rejected("measurementBounds"); return }
+        guard app.state == .runningForeground else { rejected("appForeground"); return }
         var fields: [String: Any] = [
             "schemaVersion": swipeLimit ? 2 : 1, "case": "searchDetailUndo", "requestSequence": diagnosticRequestSequence,
             "requestedElement": "taskPostpone", "observationCount": observationCount,
@@ -854,7 +883,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         ]
         if swipeLimit { fields["boundary"] = "swipeLimit" }
         guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
-              data.count <= 1_900 else { return }
+              data.count <= 1_900 else { rejected("payloadBounds"); return }
         print("UI adaptive phone reveal obstruction diagnostic: \(String(decoding: data, as: UTF8.self))")
         #endif
     }

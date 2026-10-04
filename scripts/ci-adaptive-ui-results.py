@@ -546,6 +546,39 @@ def phone_reveal_obstruction_fields(value):
             'swipeDirections', 'first', 'previous', 'last', 'windowFrame', 'elements'}
     if not isinstance(value, dict) or type(value.get('schemaVersion')) is not int:
         return False
+    if value['schemaVersion'] == 3:
+        keys = {'schemaVersion', 'case', 'requestSequence', 'requestedElement', 'status', 'reason',
+                'boundary', 'observationCount', 'swipeDirections', 'counts'}
+        reasons = ('appForeground', 'targetIdentity', 'targetUniqueness', 'ownerWindowCount',
+                   'anchorUniqueness', 'windowGeometry', 'measurementBounds', 'payloadBounds')
+        if not (set(value) == keys and value['case'] == 'searchDetailUndo'
+                and value['requestedElement'] == 'taskPostpone' and value['status'] == 'guardRejected'
+                and type(value['reason']) is str and value['reason'] in reasons
+                and value['boundary'] in ('reveal', 'swipeLimit')
+                and type(value['observationCount']) is int
+                and (value['observationCount'] == 9 if value['boundary'] == 'swipeLimit'
+                     else 1 <= value['observationCount'] <= 8)
+                and isinstance(value['swipeDirections'], list)
+                and len(value['swipeDirections']) == value['observationCount'] - 1
+                and all(type(direction) is str and direction in ('up', 'down') for direction in value['swipeDirections'])
+                and isinstance(value['counts'], dict)
+                and set(value['counts']) == {'appTargets', 'ownerWindows', 'windowTargets'}
+                and all(count is None or type(count) is int and 0 <= count <= 10_000
+                        for count in value['counts'].values())):
+            return False
+        app, owner, window = (value['counts'][key] for key in ('appTargets', 'ownerWindows', 'windowTargets'))
+        reason = value['reason']
+        if reason == 'appForeground':
+            return (app, owner, window) in ((None, None, None), (1, 1, 1))
+        if reason == 'targetIdentity':
+            return app is None and owner is None and window is None
+        if reason == 'targetUniqueness':
+            return owner is None and window is None
+        if reason == 'ownerWindowCount':
+            return app == 1 and owner != 1 and window is None
+        if reason == 'anchorUniqueness':
+            return app == 1 and owner == 1
+        return app == owner == window == 1
     swipe_limit = value['schemaVersion'] == 2
     if swipe_limit:
         keys.add('boundary')
@@ -693,7 +726,8 @@ def xctest_case_diagnostics(log, expected, entries):
             value = strict_json(text[len(marker):])
         except (AdaptiveError, ValueError, TypeError, RecursionError):
             return None
-        versions = (1, 2) if marker in (REVEAL_OWNER_MARKER, PHONE_REVEAL_OBSTRUCTION_MARKER) else (1,)
+        versions = ((1, 2, 3) if marker == PHONE_REVEAL_OBSTRUCTION_MARKER
+                    else (1, 2) if marker == REVEAL_OWNER_MARKER else (1,))
         if not (isinstance(value, dict) and type(value.get('schemaVersion')) is int
                 and value['schemaVersion'] in versions and value.get('case') == CASE_DIAGNOSTIC_NAMES[active]):
             return None

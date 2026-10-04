@@ -1725,6 +1725,97 @@ esac
             self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), {**EXPECTED, 'platform': platform},
                                                            helper.source_method_entries(source, platform)))
 
+    def phone_reveal_guard_row(self, **extra):
+        return helper.PHONE_REVEAL_OBSTRUCTION_MARKER + json.dumps({
+            'schemaVersion': 3, 'case': 'searchDetailUndo', 'requestSequence': 1,
+            'requestedElement': 'taskPostpone', 'status': 'guardRejected', 'reason': 'ownerWindowCount',
+            'boundary': 'swipeLimit', 'observationCount': 9, 'swipeDirections': ['up'] * 8,
+            'counts': {'appTargets': 1, 'ownerWindows': 2, 'windowTargets': None}, **extra})
+
+    def test_phone_obstruction_guard_rejection_preserves_only_fixed_partial_observations(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        variants = [('appForeground', (None, None, None)), ('appForeground', (1, 1, 1)),
+                    ('targetIdentity', (None, None, None)), ('targetUniqueness', (0, None, None)),
+                    ('targetUniqueness', (1, None, None)), ('targetUniqueness', (None, None, None)),
+                    ('ownerWindowCount', (1, 0, None)), ('ownerWindowCount', (1, 2, None)),
+                    ('ownerWindowCount', (1, None, None)), ('anchorUniqueness', (1, 1, 0)),
+                    ('anchorUniqueness', (1, 1, None)), ('anchorUniqueness', (1, 1, 1)),
+                    ('windowGeometry', (1, 1, 1)), ('measurementBounds', (1, 1, 1)),
+                    ('payloadBounds', (1, 1, 1))]
+        for reason, counts in variants:
+            for boundary in ({}, {'boundary': 'reveal', 'observationCount': 1, 'swipeDirections': []},
+                             {'boundary': 'reveal', 'observationCount': 8, 'swipeDirections': ['down'] * 7}):
+                with self.subTest(reason=reason, counts=counts, boundary=boundary):
+                    row = self.phone_reveal_guard_row(reason=reason, **boundary,
+                        counts=dict(zip(('appTargets', 'ownerWindows', 'windowTargets'), counts)))
+                    report = helper.xctest_case_diagnostics('\n'.join(prefix + [row, event(case=case, state='failed')]),
+                                                           EXPECTED, entries)[0]
+                    self.assertEqual(report['phoneRevealObstruction'],
+                                     json.loads(row[len(helper.PHONE_REVEAL_OBSTRUCTION_MARKER):]))
+                    self.assertEqual(report['lastProgress']['phase'], 'postponeStarted')
+                    self.assertIn('revealOwnerFailure', report)
+                    for forbidden in ('windowFrame', 'first', 'last', 'elements', 'label', 'value',
+                                      'passedTests', 'failedTests', 'xcodebuildExitCode', PRIVATE):
+                        self.assertNotIn(forbidden, json.dumps(report['phoneRevealObstruction']))
+
+    def test_phone_obstruction_guard_rejection_rejects_private_or_impossible_fields(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        counts = {'appTargets': 1, 'ownerWindows': 2, 'windowTargets': None}
+        changes = [{'status': 'observed'}, {'status': PRIVATE}, {'reason': PRIVATE}, {'reason': True},
+                   {'schemaVersion': 1}, {'schemaVersion': 2}, {'schemaVersion': 4}, {'schemaVersion': True},
+                   {'case': PRIVATE}, {'requestedElement': PRIVATE}, {'requestSequence': True},
+                   {'requestSequence': 2}, {'label': PRIVATE}, {'identifier': PRIVATE}, {'value': PRIVATE},
+                   {'windowFrame': [0, 0, 402, 874]}, {'boundary': PRIVATE}, {'boundary': 'reveal'},
+                   {'observationCount': 8}, {'observationCount': 10}, {'observationCount': True},
+                   {'swipeDirections': ['up'] * 7}, {'swipeDirections': ['up'] * 7 + [PRIVATE]},
+                   {'counts': None}, {'counts': {**counts, 'private': PRIVATE}},
+                   {'counts': {'appTargets': 1, 'ownerWindows': 2}},
+                   {'counts': {**counts, 'appTargets': 0}}, {'counts': {**counts, 'ownerWindows': 1}},
+                   {'counts': {**counts, 'windowTargets': 0}}]
+        for key in counts:
+            for invalid in (-1, 10_001, True, 1.0, PRIVATE, [], {}):
+                changes.append({'counts': {**counts, key: invalid}})
+        for reason in ('appForeground', 'targetIdentity', 'targetUniqueness', 'anchorUniqueness',
+                       'windowGeometry', 'measurementBounds', 'payloadBounds'):
+            changes.append({'reason': reason})
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(
+                    prefix + [self.phone_reveal_guard_row(**change), event(case=case, state='failed')]), EXPECTED, entries))
+
+    def test_phone_obstruction_guard_rejection_requires_owned_failure_and_cannot_replace_pass_evidence(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        row, failed = self.phone_reveal_guard_row(), event(case=case, state='failed')
+        wrong_phase = [text for text in prefix if '"phase": "postponeStarted"' not in text]
+        wrong_request = [text.replace('"taskPostpone"', '"librarySearch"') for text in prefix]
+        invalid = (prefix + [row], prefix + [row, event(case=case, state='passed')],
+                   prefix + [row, event(case=case, state='skipped')], prefix + [row, row, failed],
+                   prefix + [row, self.phone_reveal_obstruction_row(), failed],
+                   prefix + [row, self.progress_row(case, 'postponeComplete', 6), failed],
+                   prefix + [row, self.case_diagnostic_row(case, 2, 'librarySearch'), failed],
+                   prefix + [failed, row], prefix[:-1] + [row, failed],
+                   prefix[:-1] + [row, prefix[-1], failed], wrong_phase + [row, failed],
+                   wrong_request + [row, failed], [row] + prefix + [failed],
+                   prefix + ['quoted ' + row, failed], prefix + [row + PRIVATE, failed],
+                   prefix + [row.replace('"reason":', '"reason": "ownerWindowCount", "reason":'), failed])
+        for rows in invalid:
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries))
+        for platform in ('ipad', 'macos'):
+            rows = prefix + [row, failed]
+            if platform == 'macos':
+                rows = [text.replace(BUNDLE, 'MirrorMacAdaptiveUITests') for text in rows]
+                rows[-3] = self.reveal_owner_row(schemaVersion=2, case='searchDetailUndo', requestedElement='taskPostpone',
+                    candidateCount=1, areaCount=1, hittableCount=0, typedTargetCount=1, columnCount=1,
+                    intersectCount=1, keyboardCount=None, keyboardFrame=None)
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(rows), {**EXPECTED, 'platform': platform},
+                                                           helper.source_method_entries(source, platform)))
+
     def failure_image_fixture(self, directory):
         root = Path(directory).resolve()
         source, _ = self.progress_fixture()
