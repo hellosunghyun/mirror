@@ -405,42 +405,44 @@ struct MirrorRootView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
     private var statusActions: some View {
-        let layout = dynamicTypeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(spacing: 12))
-        return layout {
-            if model.problem != nil || model.projectionPending || model.systemProblem != nil {
-                Button { Task { await model.retry() } } label: {
-                    Text("다시 확인")
-                        #if os(iOS)
-                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                        #endif
-                }.accessibilityIdentifier("state.retry")
-                    .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
-            }
-            if let undo = model.lastUndo,
-               !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
-                Button { Task { await model.undo() } } label: {
-                    Text("되돌리기")
-                        #if os(iOS)
-                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                        #endif
-                }.accessibilityIdentifier("task.undo")
-                    .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
-            }
-            if model.feedback != nil, model.problem == nil, !model.isSaving, !model.projectionPending {
-                Button {
-                    guard model.problem == nil, !model.isSaving, !model.projectionPending else { return }
-                    model.feedback = nil
-                    model.detailEditingFeedback = nil
-                } label: {
-                    Label("안내 닫기", systemImage: "xmark")
-                        .labelStyle(.iconOnly)
-                        #if os(iOS)
-                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
-                        #endif
-                }.accessibilityIdentifier("state.dismissFeedback")
-            }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { statusActionButtons }
+                .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 8) { statusActionButtons }
+        }
+    }
+    @ViewBuilder private var statusActionButtons: some View {
+        if model.problem != nil || model.projectionPending || model.systemProblem != nil {
+            Button { Task { await model.retry() } } label: {
+                Text("다시 확인")
+                    #if os(iOS)
+                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    #endif
+            }.accessibilityIdentifier("state.retry")
+                .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
+        }
+        if let undo = model.lastUndo,
+           !isTaskInspectorVisible || undo.taskID != model.selectedTaskID {
+            Button { Task { await model.undo() } } label: {
+                Text("되돌리기")
+                    #if os(iOS)
+                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    #endif
+            }.accessibilityIdentifier("task.undo")
+                .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : nil)
+        }
+        if model.feedback != nil, model.problem == nil, !model.isSaving, !model.projectionPending {
+            Button {
+                guard model.problem == nil, !model.isSaving, !model.projectionPending else { return }
+                model.feedback = nil
+                model.detailEditingFeedback = nil
+            } label: {
+                Label("안내 닫기", systemImage: "xmark")
+                    .labelStyle(.iconOnly)
+                    #if os(iOS)
+                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    #endif
+            }.accessibilityIdentifier("state.dismissFeedback")
         }
     }
     private var captureOpenAction: MirrorCaptureOpenAction {
