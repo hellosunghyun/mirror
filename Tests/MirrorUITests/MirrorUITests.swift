@@ -814,13 +814,12 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func requireReviewWindow(in app: XCUIApplication) throws -> XCUIElement {
         let windows = app.windows.containing(.button, identifier: "review.finish")
-            .containing(.button, identifier: "review.today")
             .allElementsBoundByAccessibilityElement
         guard app.state == .runningForeground, windows.count == 1 else {
             XCTFail("정리의 실제 버튼 두 개를 소유한 창이 고유해야 한다.")
             throw UIHarnessError.unexpectedElement("reviewWindowOwner")
         }
-        // 결정 뒤 마지막 카드의 today 버튼이 사라져도 처음 확인한 실제 창에 묶어 둔다.
+        // 마지막 결정 뒤에도 남는 finish로 창을 조회하고 초기 두 버튼의 소유는 아래에서 검증한다.
         let window = windows[0]
         guard window.exists else {
             XCTFail("정리를 시작한 실제 창이 존재해야 한다.")
