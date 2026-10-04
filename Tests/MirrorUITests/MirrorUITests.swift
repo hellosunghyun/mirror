@@ -45,8 +45,9 @@ final class MirrorUITests: XCTestCase {
         try showLibrary(in: app)
         let unassigned = try requireRow(title, in: app)
         recordCapturePhase(.libraryOpened)
-        XCTAssertTrue(value(of: unassigned).contains("아직 정하지 않음"))
-        XCTAssertTrue(value(of: unassigned).contains("미완료"))
+        let unassignedValue = value(of: unassigned)
+        XCTAssertTrue(unassignedValue.contains("아직 정하지 않음"))
+        XCTAssertTrue(unassignedValue.contains("미완료"))
         XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "정하지 않은 일")
         try verifyPhoneNavigation(in: app, stage: .library, requiresFeedback: true)
         recordCapturePhase(.libraryNavigationVerified)
@@ -93,8 +94,9 @@ final class MirrorUITests: XCTestCase {
         _ = try requireElement("today.list", in: app)
 
         let today = try requireRow(title, in: app)
-        XCTAssertTrue(value(of: today).contains("9월 30일"))
-        XCTAssertTrue(value(of: today).contains("미완료"), "Q-009: 오늘 배치는 완료가 아니다.")
+        let todayValue = value(of: today)
+        XCTAssertTrue(todayValue.contains("9월 30일"))
+        XCTAssertTrue(todayValue.contains("미완료"), "Q-009: 오늘 배치는 완료가 아니다.")
         recordCapturePhase(.todayRowVerified)
         try verifyPhoneNavigation(in: app, stage: .todayPopulated, requiresFeedback: true)
         recordCapturePhase(.todayNavigationVerified)
@@ -116,13 +118,15 @@ final class MirrorUITests: XCTestCase {
         try requireNoElement("capture.note", in: app)
         let splitPreviewButtons = app.buttons.matching(NSPredicate(format: "label == %@", "줄마다 나누기 · 2개 미리 보기"))
         XCTAssertTrue(splitPreviewButtons.firstMatch.waitForExistence(timeout: 15))
-        XCTAssertEqual(splitPreviewButtons.count, 1, "여러 줄 미리 보기는 고유한 실제 Button으로 연다.")
-        guard splitPreviewButtons.count == 1 else { throw UIHarnessError.missingElement("splitCapturePreviewButton") }
+        let splitPreviewButtonCount = splitPreviewButtons.count
+        XCTAssertEqual(splitPreviewButtonCount, 1, "여러 줄 미리 보기는 고유한 실제 Button으로 연다.")
+        guard splitPreviewButtonCount == 1 else { throw UIHarnessError.missingElement("splitCapturePreviewButton") }
         try interact(with: splitPreviewButtons.firstMatch, in: app)
         let splitSaveButtons = app.buttons.matching(NSPredicate(format: "label == %@", "2개를 각각 저장"))
         XCTAssertTrue(splitSaveButtons.firstMatch.waitForExistence(timeout: 15))
-        XCTAssertEqual(splitSaveButtons.count, 1, "두 줄을 실제 저장하는 고유한 Button을 사용한다.")
-        guard splitSaveButtons.count == 1 else { throw UIHarnessError.missingElement("splitCaptureSaveButton") }
+        let splitSaveButtonCount = splitSaveButtons.count
+        XCTAssertEqual(splitSaveButtonCount, 1, "두 줄을 실제 저장하는 고유한 Button을 사용한다.")
+        guard splitSaveButtonCount == 1 else { throw UIHarnessError.missingElement("splitCaptureSaveButton") }
         try interact(with: splitSaveButtons.firstMatch, in: app)
         try waitForValue("", element: continuousTitle)
         try requireNoElement("capture.note", in: app)
@@ -144,8 +148,9 @@ final class MirrorUITests: XCTestCase {
         let followingID = followingRow.identifier
         XCTAssertEqual(Set([firstSplitRow.identifier, secondSplitRow.identifier, followingID]).count, 3,
                        "두 줄과 다음 입력은 서로 다른 실제 작업으로 저장한다.")
-        XCTAssertTrue(value(of: followingRow).contains("아직 정하지 않음"))
-        XCTAssertTrue(value(of: followingRow).contains("미완료"))
+        let followingValue = value(of: followingRow)
+        XCTAssertTrue(followingValue.contains("아직 정하지 않음"))
+        XCTAssertTrue(followingValue.contains("미완료"))
         try replaceText(in: continuousSearch, with: splitNote, app: app)
         continuousSearch.typeText("\n")
         try requireNoElement(followingID, in: app)
@@ -317,8 +322,9 @@ final class MirrorUITests: XCTestCase {
         recordTomorrowPhase(.searchEntered)
         let future = try requireRow(title, in: app)
         XCTAssertEqual(displayedText(of: future), title, "목록의 접근성 이름은 저장한 500자 제목 원문을 보존한다.")
-        XCTAssertTrue(value(of: future).contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
-        XCTAssertTrue(value(of: future).contains("미완료"))
+        let futureValue = value(of: future)
+        XCTAssertTrue(futureValue.contains("10월 1일"), "Q-010: 서울 9월 30일의 내일은 10월 1일이다.")
+        XCTAssertTrue(futureValue.contains("미완료"))
         recordTomorrowPhase(.futureRowVerified)
         XCTAssertEqual(displayedText(of: try requireElement("library.resultsTitle", in: app)), "검색 결과",
                        "범위를 넓힌 검색 결과를 날짜 미정 목록으로 표시하지 않는다.")
@@ -1933,7 +1939,7 @@ final class MirrorUITests: XCTestCase {
         // 38d7849 iPhone 실제 AX: 행 중심 y=434, 목록 하단 y=403인데 hittable=true였다.
         // 작업 행은 소유 목록의 표시 영역 안으로 실제 스크롤한 뒤 일반 tap을 수행한다.
         let rowSurface = identifier.hasPrefix("task.row.")
-            ? scrollContainer(containing: element, in: app, requiringHittable: false) : nil
+            ? scrollContainer(containing: element, in: app, requiringHittable: false, knownIdentifier: identifier) : nil
         if identifier.hasPrefix("task.row."), rowSurface == nil {
             printFailurePrefix("작업 행을 포함하는 스크롤 컨테이너가 없다")
             XCTFail("작업 행을 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
@@ -1941,7 +1947,9 @@ final class MirrorUITests: XCTestCase {
         }
         // Form 아래쪽의 완료/Undo도 실제 스크롤로 도달한다. 숨겨진 요소의 좌표를 강제로 누르지 않는다.
         for _ in 0..<8 {
-            let rowNeedsScroll = rowSurface.map { !rowCenterIsVisible(element, in: $0) } ?? false
+            // 같은 반복의 중심·방향 판정만 공유한다. 다음 반복과 마지막 조작 검사는 새 경계를 읽는다.
+            let rowGeometry = rowSurface.map { (frame: element.frame, viewport: $0.frame) }
+            let rowNeedsScroll = rowGeometry.map { !rowCenterIsVisible($0.frame, in: $0.viewport) } ?? false
             guard !element.isHittable || rowNeedsScroll else { break }
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
             guard let surface = rowSurface ?? scrollContainer(containing: element, in: app) else {
@@ -1952,8 +1960,9 @@ final class MirrorUITests: XCTestCase {
                 XCTFail("대상 UI를 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
                 throw UIHarnessError.unhittable(identifier)
             }
-            let isAboveViewport = rowSurface == nil ? element.frame.minY < surface.frame.minY
-                : element.frame.midY < surface.frame.minY
+            let isAboveViewport: Bool
+            if let rowGeometry { isAboveViewport = rowGeometry.frame.midY < rowGeometry.viewport.minY }
+            else { isAboveViewport = element.frame.minY < surface.frame.minY }
             #if os(macOS)
             surface.scroll(byDeltaX: 0, deltaY: isAboveViewport ? 250 : -250)
             #else
@@ -2041,10 +2050,10 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func scrollContainer(containing element: XCUIElement, in app: XCUIApplication,
-                                 requiringHittable: Bool = true) -> XCUIElement? {
+                                 requiringHittable: Bool = true, knownIdentifier: String? = nil) -> XCUIElement? {
         let surfaces = app.scrollViews.allElementsBoundByIndex
             + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
-        let identifier = element.identifier
+        let identifier = knownIdentifier ?? element.identifier
         if requiringHittable {
             return surfaces.first { candidate in
                 candidate.isHittable && candidate.descendants(matching: .any).matching(identifier: identifier).firstMatch.exists
@@ -2076,6 +2085,11 @@ final class MirrorUITests: XCTestCase {
     private func rowCenterIsVisible(_ element: XCUIElement, in surface: XCUIElement) -> Bool {
         let frame = element.frame
         let viewport = surface.frame
+        return rowCenterIsVisible(frame, in: viewport)
+    }
+
+    @MainActor
+    private func rowCenterIsVisible(_ frame: CGRect, in viewport: CGRect) -> Bool {
         return !frame.isEmpty && !viewport.isEmpty && viewport.contains(CGPoint(x: frame.midX, y: frame.midY))
     }
 
