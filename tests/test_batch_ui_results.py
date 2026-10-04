@@ -526,6 +526,226 @@ class BatchResultGateTests(unittest.TestCase):
             source.symlink_to(ROOT / helper.SOURCE)
             self.assertEqual(helper.mobile_target_failure_locations(valid, BUNDLE, source_root), [])
 
+    def mobile_measurement_source_fixture(self, source_root):
+        source = source_root / helper.SOURCE
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('\n'.join((
+            '    private func assertMobileTarget(_ element: XCUIElement) throws {',
+            '        let target = mobileTargetControl(element)',
+            '        let width = element.frame.width',
+            '        recordMobileTargetFailure(width, axis: "width", target: target, callerLine: #line + 1)',
+            '        XCTAssertGreaterThanOrEqual(width, 44, "Batch UI mobile target: width \\(target)")',
+            '        let height = element.frame.height',
+            '        recordMobileTargetFailure(height, axis: "height", target: target, callerLine: #line + 1)',
+            '        XCTAssertGreaterThanOrEqual(height, 44, "Batch UI mobile target: height \\(target)")',
+            '    }',
+        )))
+        return source
+
+    def mobile_measurement_log_fixture(self, source_root, case=None, axis='width', column=1, **changes):
+        case = helper.CASES[0] if case is None else case
+        caller_line = 5 if axis == 'width' else 8
+        value = {'schemaVersion': 1, 'method': case, 'progressSequence': 2,
+                 'callerLine': caller_line, 'axis': axis, 'targetControl': 'captureOpen',
+                 'actual': 37.125, 'required': 44, **changes}
+        assertion = self.mobile_target_fixture(source_root,
+            'XCTAssertGreaterThanOrEqual failed: SYNTHETIC_PRIVATE_VALUE /private/synthetic/title'
+            ' - Batch UI mobile target: ' + axis + ' captureOpen', case=case,
+            line=value['callerLine'], column=column)
+        return ([event(case, 'started')] + progress_lines(case, 2)
+                + ['Batch UI mobile measurement diagnostic: ' + json.dumps(value),
+                   assertion, event(case, 'failed')])
+
+    def test_mobile_measurements_bind_each_axis_to_failed_case_and_exact_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.mobile_measurement_source_fixture(source_root)
+            for case in helper.CASES:
+                for axis, caller_line in (('width', 5), ('height', 8)):
+                    for actual in (0, 37.125, 43.999):
+                        with self.subTest(case=case, axis=axis, actual=actual):
+                            lines = self.mobile_measurement_log_fixture(source_root, case, axis, actual=actual)
+                            reports = helper.mobile_target_measurements('\n'.join(lines), BUNDLE, source_root)
+                            self.assertEqual(reports, [{'scope': 'partialFailureOnly', 'method': case,
+                                'sourceFile': helper.SOURCE, 'line': caller_line, 'column': 1,
+                                'axis': axis, 'targetControl': 'captureOpen', 'actual': actual,
+                                'required': 44, 'progressSequence': 2, 'terminal': 'failed'}])
+                            for private in ('SYNTHETIC_PRIVATE_VALUE', '/private/synthetic/title', str(source_root)):
+                                self.assertNotIn(private, json.dumps(reports))
+                            with self.assertRaises(helper.BatchError):
+                                helper.validate_outcome({**EXPECTED, **reports[0]}, EXPECTED)
+            combined = sum((self.mobile_measurement_log_fixture(source_root, case) for case in helper.CASES), [])
+            self.assertEqual([item['method'] for item in helper.mobile_target_measurements(
+                '\n'.join(combined), BUNDLE, source_root)], list(helper.CASES))
+            lines = self.mobile_measurement_log_fixture(source_root, column=None)
+            self.assertNotIn('column', helper.mobile_target_measurements('\n'.join(lines), BUNDLE, source_root)[0])
+
+    def test_mobile_measurements_reject_nonfinite_nonfailure_and_private_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.mobile_measurement_source_fixture(source_root)
+            changes = [{'actual': value} for value in
+                       (True, False, -1, 44, 44.001, 10 ** 400, float('nan'), float('inf'), -float('inf'),
+                        '37.125', None, [], {}, 'SYNTHETIC_PRIVATE_VALUE')]
+            changes += [{'required': value} for value in (True, 43, 44.0, '44', None)]
+            changes += [{'schemaVersion': value} for value in (True, 0, 2, '1')]
+            changes += [{'progressSequence': value} for value in (True, 0, 1, 3, 97, '2')]
+            changes += [{'callerLine': value} for value in (True, 0, 4, 100001, '5')]
+            changes += [{'axis': value} for value in ('height', 'diagonal', [], None)]
+            changes += [{'targetControl': value} for value in ('captureSave', 'task.select.private', [], None)]
+            changes += [{'method': helper.CASES[1]}, {'method': 'testUnexpected'},
+                        {'extra': 'SYNTHETIC_PRIVATE_VALUE'}]
+            for change in changes:
+                with self.subTest(change=change):
+                    lines = self.mobile_measurement_log_fixture(source_root)
+                    marker_prefix = 'Batch UI mobile measurement diagnostic: '
+                    fields = json.loads(lines[-3][len(marker_prefix):])
+                    lines[-3] = marker_prefix + json.dumps({**fields, **change})
+                    self.assertEqual(helper.mobile_target_measurements('\n'.join(lines), BUNDLE, source_root), [])
+            lines = self.mobile_measurement_log_fixture(source_root)
+            marker = lines[-3]
+            for malformed in (marker[:-1], marker.replace('"actual": 37.125', '"actual": 37.125, "actual": 37.125'),
+                              marker.replace('"actual": 37.125, ', ''),
+                              'Batch UI mobile measurement diagnostic: []',
+                              'Batch UI mobile measurement diagnostic: {}',
+                              'SDK error: ' + marker, 'title="' + marker + '"', marker + ' SYNTHETIC_PRIVATE_VALUE'):
+                self.assertEqual(helper.mobile_target_measurements(
+                    '\n'.join(lines[:-3] + [malformed] + lines[-2:]), BUNDLE, source_root), [])
+            padded = lines[:-3] + [marker.ljust(511)] + lines[-2:]
+            self.assertEqual(len(helper.mobile_target_measurements('\n'.join(padded), BUNDLE, source_root)), 1)
+            for malformed in (marker.ljust(512), marker + ' ' * 512, marker + '한' * 200):
+                self.assertEqual(helper.mobile_target_measurements(
+                    '\n'.join(lines[:-3] + [malformed] + lines[-2:]), BUNDLE, source_root), [])
+
+    def test_mobile_measurements_reject_wrong_call_source_axis_control_and_assertion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            source = self.mobile_measurement_source_fixture(source_root)
+            lines = self.mobile_measurement_log_fixture(source_root)
+            assertion = lines[-2]
+            for changed in (assertion.replace(helper.SOURCE, 'Tests/Other.swift'),
+                            assertion.replace(helper.SOURCE, '../' + helper.SOURCE),
+                            assertion.replace(':5:1:', ':8:1:'), assertion.replace(':5:1:', ':5:0:'),
+                            assertion.replace('width captureOpen', 'height captureOpen'),
+                            assertion.replace('width captureOpen', 'width captureSave'),
+                            assertion.replace('XCTAssertGreaterThanOrEqual failed', 'XCTAssertEqual failed'),
+                            assertion.replace(BUNDLE, 'OtherUITests'),
+                            assertion.replace(helper.CASES[0], helper.CASES[1]),
+                            assertion + ' SYNTHETIC_PRIVATE_VALUE'):
+                with self.subTest(assertion=changed):
+                    self.assertEqual(helper.mobile_target_measurements(
+                        '\n'.join(lines[:-2] + [changed, lines[-1]]), BUNDLE, source_root), [])
+            original = source.read_text()
+            mutations = (original.replace('let width = element.frame.width', 'let width = element.frame.height'),
+                         original.replace('callerLine: #line + 1', 'callerLine: #line + 2'),
+                         original.replace('recordMobileTargetFailure(width, axis: "width"',
+                                          'recordMobileTargetFailure(width, axis: "height"'),
+                         original.replace('target: target', 'target: "private"'),
+                         original.replace('XCTAssertGreaterThanOrEqual(width, 44,', 'XCTAssertGreaterThanOrEqual(width, 43,'),
+                         original.replace('let width = element.frame.width\n',
+                                          'let width = element.frame.width\n        // non-adjacent call\n'),
+                         original.replace('private func assertMobileTarget(', 'private func unrelated('),
+                         original + '\n' + original,
+                         original.replace('        let height = element.frame.height',
+                                          '\n'.join(original.splitlines()[2:5]) + '\n        let height = element.frame.height'))
+            for changed in mutations:
+                source.write_text(changed)
+                self.assertEqual(helper.mobile_target_measurements('\n'.join(lines), BUNDLE, source_root), [])
+            source.write_text(original)
+            with mock.patch.object(helper.SUPPORT, 'read_regular', side_effect=OSError('SYNTHETIC_PRIVATE_VALUE')):
+                self.assertEqual(helper.mobile_target_measurements('\n'.join(lines), BUNDLE, source_root), [])
+            source.unlink()
+            source.symlink_to(ROOT / helper.SOURCE)
+            self.assertEqual(helper.mobile_target_measurements('\n'.join(lines), BUNDLE, source_root), [])
+
+    def test_mobile_measurements_require_one_observation_before_one_assertion_and_failed_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.mobile_measurement_source_fixture(source_root)
+            lines = self.mobile_measurement_log_fixture(source_root)
+            before, marker, assertion, terminal = lines[:-3], *lines[-3:]
+            invalid = ([marker, assertion, terminal], before + [marker, terminal], before + [assertion, terminal],
+                       before + [marker, assertion], before + [marker, assertion, terminal.replace('failed', 'skipped')],
+                       before + [marker, assertion, terminal.replace('failed', 'passed')],
+                       before + [marker, marker, assertion, terminal], before + [marker, assertion, assertion, terminal],
+                       before + [assertion, marker, assertion, terminal],
+                       before + [marker, assertion, terminal, assertion],
+                       before + [assertion, marker, terminal], before + [marker, terminal, assertion],
+                       before + [marker, assertion, terminal, marker],
+                       before + [marker, progress_lines(helper.CASES[0], 3)[-1], assertion, terminal],
+                       before + [marker, assertion, progress_lines(helper.CASES[0], 3)[-1], terminal],
+                       [before[0], event(helper.CASES[1], 'started')] + lines[1:],
+                       before + [marker, assertion, terminal.replace(helper.CASES[0], helper.CASES[1])],
+                       [before[0], before[2], marker, assertion, terminal],
+                       [before[0], marker, assertion, terminal])
+            for wrong in invalid:
+                self.assertEqual(helper.mobile_target_measurements('\n'.join(wrong), BUNDLE, source_root), [])
+            complete = progress_lines(helper.CASES[0])
+            passed_marker = marker.replace('"progressSequence": 2', '"progressSequence": ' + str(len(complete)))
+            passed = [before[0]] + complete + [passed_marker, assertion, terminal.replace('failed', 'passed')]
+            self.assertEqual(helper.partial_progress('\n'.join(passed), BUNDLE)['status'], 'partial')
+            self.assertEqual(helper.mobile_target_measurements('\n'.join(passed), BUNDLE, source_root), [])
+            value = '\n'.join(lines)
+            for bundle in ('MirrorMacBatchUITests', 'OtherUITests'):
+                self.assertEqual(helper.mobile_target_measurements(value, bundle, source_root), [])
+                self.assertEqual(helper.mobile_target_measurements(value.replace(BUNDLE, bundle), bundle, source_root), [])
+            for wrong in ('', None):
+                self.assertEqual(helper.mobile_target_measurements(wrong, BUNDLE, source_root), [])
+            with mock.patch.object(helper, 'MAX_LOG', 8):
+                self.assertEqual(helper.mobile_target_measurements(value, BUNDLE, source_root), [])
+
+    def test_mobile_measurement_notice_is_opt_in_merges_only_matching_location_and_cannot_publish_success(self):
+        source = (ROOT / helper.SOURCE).read_text().splitlines()
+        caller_line = next(index for index, text in enumerate(source, 1)
+                           if text.strip() == 'XCTAssertGreaterThanOrEqual(width, 44, "Batch UI mobile target: width \\(target)")')
+        lines = self.mobile_measurement_log_fixture(ROOT, callerLine=caller_line)
+        unmeasured = self.mobile_measurement_log_fixture(ROOT, helper.CASES[1], callerLine=caller_line)
+        lines += unmeasured[:-3] + unmeasured[-2:]
+        value = '\n'.join(lines)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            (directory / 'test.log').write_text(value)
+            output_path, summary_path = directory / 'github-output', directory / 'github-summary'
+            output_path.write_text('previous=value\n')
+            summary_path.write_text('previous summary\n')
+            for enabled in (False, True):
+                with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                           'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                    helper.diagnostics(directory, EXPECTED, 'test', partial_failure=enabled)
+                messages = [call.args[0] for call in printed.call_args_list]
+                prefix = '::notice::Batch UI mobile target diagnostics: '
+                notices = [message for message in messages if message.startswith(prefix)]
+                self.assertEqual(len(notices), 1)
+                original = helper.mobile_target_failure_locations(value, BUNDLE)
+                expected_location = {**original[0], **({'actual': 37.125, 'required': 44, 'progressSequence': 2,
+                                                      'measurementScope': 'partialFailureOnly'} if enabled else {})}
+                self.assertEqual(json.loads(notices[0][len(prefix):]),
+                                 {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly',
+                                  'locations': [expected_location, original[1]], 'locationCount': 2})
+                self.assertEqual(messages[0], '::notice::Batch UI source diagnostics: ' + json.dumps(
+                    {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly',
+                     'locations': helper.failure_locations(value, BUNDLE)}, sort_keys=True))
+                self.assertEqual(messages[1], '::notice::Batch UI query failure diagnostics: ' + json.dumps(
+                    {**EXPECTED, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': [], 'locationCount': 0}, sort_keys=True))
+                write.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
+                self.assertFalse((directory / 'safe-outcome.json').exists())
+                for private in ('SYNTHETIC_PRIVATE_VALUE', '/private/synthetic/title', str(ROOT)):
+                    self.assertNotIn(private, '\n'.join(messages))
+            with self.assertRaises(helper.BatchError):
+                helper.validate_log(value, BUNDLE)
+            malformed = value.replace('"actual": 37.125', '"actual": "SYNTHETIC_PRIVATE_VALUE"')
+            (directory / 'test.log').write_text(malformed)
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, EXPECTED, 'test', partial_failure=True)
+            notices = [call.args[0] for call in printed.call_args_list if call.args[0].startswith(prefix)]
+            self.assertEqual(json.loads(notices[0][len(prefix):])['locations'],
+                             helper.mobile_target_failure_locations(malformed, BUNDLE))
+            self.assertNotIn('SYNTHETIC_PRIVATE_VALUE', '\n'.join(call.args[0] for call in printed.call_args_list))
+
     def test_partial_progress_keeps_interrupted_capture_ordinal_without_claiming_a_pass(self):
         for bundle in ('MirrorIOSBatchUITests', 'MirrorMacBatchUITests'):
             for case, capture_count in zip(helper.CASES, (3, 20)):
@@ -833,7 +1053,8 @@ class BatchResultGateTests(unittest.TestCase):
                 helper.mobile_target_failure_locations(rows[0], BUNDLE, source_root)
         native_source = (ROOT / helper.SOURCE).read_text().splitlines()
         actual_line = next(index for index, text in enumerate(native_source, 1)
-                           if text.strip() == 'XCTAssertGreaterThanOrEqual(element.frame.width, 44, "Batch UI mobile target: width \\(target)")')
+                           if text.strip() in ('XCTAssertGreaterThanOrEqual(element.frame.width, 44, "Batch UI mobile target: width \\(target)")',
+                                               'XCTAssertGreaterThanOrEqual(width, 44, "Batch UI mobile target: width \\(target)")'))
         value = self.mobile_target_fixture(ROOT, payload, line=actual_line)
         actual = helper.mobile_target_failure_locations(value, BUNDLE)
         self.assertEqual(len(actual), 1)

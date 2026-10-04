@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -27,6 +28,7 @@ COUNT_FIELDS = {'totalTestCount': 2, 'passedTests': 2, 'failedTests': 0, 'skippe
 MAX_LOG = 64 * 1024 * 1024
 PROGRESS_MARKER = 'Batch UI progress: '
 DISCLOSURE_MARKER = 'Batch UI disclosure failure diagnostic: '
+MOBILE_MEASUREMENT_MARKER = 'Batch UI mobile measurement diagnostic: '
 
 
 class BatchError(Exception):
@@ -353,7 +355,13 @@ def mobile_target_failure_locations(log, bundle, source_root=ROOT):
         axis, control = fixed[1], fixed[2]
         required_source = ('XCTAssertGreaterThanOrEqual(element.frame.' + axis
                            + ', 44, "Batch UI mobile target: ' + axis + ' \\(target)")')
-        if source_lines[location['line'] - 1].strip() != required_source:
+        measured_source = [
+            'let ' + axis + ' = element.frame.' + axis,
+            'recordMobileTargetFailure(' + axis + ', axis: "' + axis + '", target: target, callerLine: #line + 1)',
+            'XCTAssertGreaterThanOrEqual(' + axis + ', 44, "Batch UI mobile target: ' + axis + ' \\(target)")',
+        ]
+        if (source_lines[location['line'] - 1].strip() != required_source
+                and [line.strip() for line in source_lines[max(0, location['line'] - 3):location['line']]] != measured_source):
             continue
         report = {'scope': 'stdoutOnly', 'method': case[2], 'sourceFile': SOURCE,
                   'line': location['line'], **({'column': location['column']} if match[3] else {}),
@@ -363,6 +371,93 @@ def mobile_target_failure_locations(log, bundle, source_root=ROOT):
         if len(reports) == 12:
             break
     return reports
+
+
+def mobile_target_measurements(log, bundle, source_root=ROOT):
+    """같은 실패 사례·현재 축 assertion에 앞선 제한된 실제 측정만 연결한다."""
+    if (bundle != 'MirrorIOSBatchUITests' or not isinstance(log, str)
+            or len(log.encode('utf-8')) > MAX_LOG or MOBILE_MEASUREMENT_MARKER.rstrip() not in log
+            or partial_progress(log, bundle).get('status') != 'partial'):
+        return []
+    locations = mobile_target_failure_locations(log, bundle, source_root)
+    try:
+        source = SUPPORT.read_regular(source_root / SOURCE, SUPPORT.MAX_JSON).decode('utf-8').splitlines()
+    except (OSError, UnicodeError, SUPPORT.AdaptiveError):
+        return []
+    declaration = '    private func assertMobileTarget(_ element: XCUIElement) throws {'
+    if source.count(declaration) != 1:
+        return []
+    start = source.index(declaration)
+    end = next((index for index in range(start + 1, len(source))
+                if source[index].startswith('    private func ')), len(source))
+    calls = {}
+    for axis in ('width', 'height'):
+        expected = [
+            'let ' + axis + ' = element.frame.' + axis,
+            'recordMobileTargetFailure(' + axis + ', axis: "' + axis + '", target: target, callerLine: #line + 1)',
+            'XCTAssertGreaterThanOrEqual(' + axis + ', 44, "Batch UI mobile target: ' + axis + ' \\(target)")',
+        ]
+        matches = [index + 1 for index in range(start + 2, end)
+                   if [line.strip() for line in source[index - 2:index + 1]] == expected]
+        if len(matches) != 1:
+            return []
+        calls[axis] = matches[0]
+    fields = {'schemaVersion', 'method', 'progressSequence', 'callerLine', 'axis', 'targetControl', 'actual', 'required'}
+    reports, active, progress, observation, location = [], None, None, None, None
+    seen_assertions = set()
+    for line in log.splitlines():
+        if MOBILE_MEASUREMENT_MARKER.rstrip() in line:
+            if (active is None or progress is None or observation is not None
+                    or not line.startswith(MOBILE_MEASUREMENT_MARKER) or len(line.encode('utf-8')) + 1 > 512):
+                return []
+            try:
+                value = SUPPORT.strict_json(line[len(MOBILE_MEASUREMENT_MARKER):])
+            except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
+                return []
+            if (not isinstance(value, dict) or set(value) != fields
+                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
+                    or value['method'] != active or type(value['progressSequence']) is not int
+                    or not 1 <= value['progressSequence'] <= 96 or value['progressSequence'] != progress['sequence']
+                    or not isinstance(value['axis'], str) or value['axis'] not in calls
+                    or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= 100_000
+                    or value['callerLine'] != calls[value['axis']]
+                    or type(value['actual']) not in (int, float) or not 0 <= value['actual'] < 44
+                    or not math.isfinite(value['actual']) or type(value['required']) is not int or value['required'] != 44
+                    or not any(item['method'] == active and item['line'] == value['callerLine']
+                               and item['axis'] == value['axis'] and item['targetControl'] == value['targetControl']
+                               for item in locations)):
+                return []
+            observation = value
+        elif line.startswith(PROGRESS_MARKER):
+            if observation is not None:
+                return []
+            progress = SUPPORT.strict_json(line[len(PROGRESS_MARKER):])
+        elif event := SUPPORT.UI_CASE_EVENT.match(line):
+            if event[3] == 'started':
+                active, progress, observation, location = event[2], None, None, None
+            else:
+                if observation is not None:
+                    if event[3] != 'failed' or location is None:
+                        return []
+                    reports.append({'scope': 'partialFailureOnly', 'method': active, 'sourceFile': SOURCE,
+                                    **location, **{key: observation[key] for key in
+                                                 ('axis', 'targetControl', 'actual', 'required', 'progressSequence')},
+                                    'terminal': 'failed'})
+                active, progress, observation, location = None, None, None, None
+        elif SUPPORT.UI_FAILURE_SOURCE.fullmatch(line):
+            found = mobile_target_failure_locations(line, bundle, source_root)
+            if found:
+                key = tuple(found[0][key] for key in ('method', 'line', 'axis', 'targetControl'))
+                if key in seen_assertions or len(seen_assertions) >= 12:
+                    return []
+                seen_assertions.add(key)
+            if observation is not None:
+                if (len(found) != 1 or location is not None or found[0]['method'] != active
+                        or found[0]['line'] != observation['callerLine'] or found[0]['axis'] != observation['axis']
+                        or found[0]['targetControl'] != observation['targetControl']):
+                    return []
+                location = {key: found[0][key] for key in ('line', 'column') if key in found[0]}
+    return [] if observation is not None else reports
 
 
 def progress_steps(case):
@@ -532,6 +627,13 @@ def diagnostics(directory, expected, phase, partial_failure=False):
                  'locationCount': len(reachable_reports)}, sort_keys=True))
         mobile_reports = mobile_target_failure_locations(log, context['bundle'])
         if mobile_reports:
+            measurements = mobile_target_measurements(log, context['bundle']) if partial_failure else []
+            for report in mobile_reports:
+                matches = [value for value in measurements
+                           if all(value[key] == report[key] for key in ('method', 'line', 'axis', 'targetControl'))]
+                if len(matches) == 1:
+                    report.update({key: matches[0][key] for key in ('actual', 'required', 'progressSequence')})
+                    report['measurementScope'] = 'partialFailureOnly'
             print('::notice::Batch UI mobile target diagnostics: ' + json.dumps(
                 {**expected, 'phase': phase, 'scope': 'stdoutOnly', 'locations': mobile_reports,
                  'locationCount': len(mobile_reports)}, sort_keys=True))

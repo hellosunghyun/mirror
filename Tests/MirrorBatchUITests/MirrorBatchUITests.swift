@@ -715,9 +715,26 @@ final class MirrorBatchUITests: XCTestCase {
     private func assertMobileTarget(_ element: XCUIElement) throws {
         #if os(iOS)
         let target = mobileTargetCode(element.identifier)
-        XCTAssertGreaterThanOrEqual(element.frame.width, 44, "Batch UI mobile target: width \(target)")
-        XCTAssertGreaterThanOrEqual(element.frame.height, 44, "Batch UI mobile target: height \(target)")
+        let width = element.frame.width
+        recordMobileTargetFailure(width, axis: "width", target: target, callerLine: #line + 1)
+        XCTAssertGreaterThanOrEqual(width, 44, "Batch UI mobile target: width \(target)")
+        let height = element.frame.height
+        recordMobileTargetFailure(height, axis: "height", target: target, callerLine: #line + 1)
+        XCTAssertGreaterThanOrEqual(height, 44, "Batch UI mobile target: height \(target)")
         #endif
+    }
+
+    private func recordMobileTargetFailure(_ actual: CGFloat, axis: String, target: String, callerLine: Int) {
+        guard actual.isFinite, actual >= 0, actual < 44, let progressCase else { return }
+        // 원래 축별 조회값만 실패 직전에 남긴다. 다음 축은 앞선 assertion 뒤에 읽는다.
+        let fields: [String: Any] = [
+            "schemaVersion": 1, "method": progressCase.rawValue, "progressSequence": progressSequence,
+            "callerLine": callerLine, "axis": axis, "targetControl": target, "actual": Double(actual), "required": 44,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
+        let line = Data(("Batch UI mobile measurement diagnostic: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
+        guard line.count <= 512 else { return }
+        try? FileHandle.standardOutput.write(contentsOf: line)
     }
 
     private func hasArea(_ frame: CGRect) -> Bool {
