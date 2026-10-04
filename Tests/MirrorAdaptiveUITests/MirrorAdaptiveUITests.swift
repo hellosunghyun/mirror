@@ -499,8 +499,12 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor
     private func unique(_ query: XCUIElementQuery, requestedElement: RequestedElement, timeout: TimeInterval = 15) throws -> XCUIElement {
         recordLookupRequest(requestedElement)
-        guard query.firstMatch.waitForExistence(timeout: timeout), query.count == 1 else {
-            XCTFail("필수 추가검증 요소는 실제 역할의 고유한 후보여야 한다.")
+        guard query.firstMatch.waitForExistence(timeout: timeout) else {
+            XCTFail("Adaptive UI lookup failure: missing")
+            throw HarnessFailure.missingElement
+        }
+        guard query.count == 1 else {
+            XCTFail("Adaptive UI lookup failure: nonUnique")
             throw HarnessFailure.missingElement
         }
         return query.firstMatch

@@ -173,6 +173,90 @@ class AdaptiveResultGateTests(unittest.TestCase):
             common = '\n'.join((event(), self.xctest_row(path), event(state='failed')))
             self.assertEqual(len(helper.xctest_failure_diagnostics(common, {'platform': 'ipad', 'appearance': 'dark'}, root)), 1)
 
+    def test_lookup_failure_reasons_emit_only_owned_fixed_reason_without_private_suffix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            contexts = ((EXPECTED, BUNDLE + '.MirrorAdaptiveUITests', CASE),
+                        ({'platform': 'macos', 'appearance': 'dark'},
+                         'MirrorMacAdaptiveUITests.MirrorAdaptiveUITests', helper.NARROW))
+            for expected, owner, case in contexts:
+                for reason in ('missing', 'nonUnique'):
+                    for suffix in ('', ' /private/' + PRIVATE + ' AX label=' + PRIVATE,
+                                   '\t' + PRIVATE):
+                        with self.subTest(platform=expected['platform'], reason=reason, suffix=bool(suffix)):
+                            payload = 'failed - Adaptive UI lookup failure: ' + reason + suffix
+                            row = self.xctest_row(path, owner=owner, case=case, payload=payload)
+                            log = '\n'.join((event(case, owner), row, event(case, owner, 'failed')))
+                            reports = helper.xctest_failure_diagnostics(log, expected, root)
+                            self.assertEqual(reports, [{
+                                'scope': 'stdoutOnly', 'method': case, 'sourceFile': helper.UI_FAILURE_SOURCE_FILE,
+                                'line': 1, 'column': 5, 'assertionKind': 'XCTFail', 'lookupFailureReason': reason,
+                            }])
+                            serialized = json.dumps(reports)
+                            for forbidden in (PRIVATE, str(root), '/private/', 'AX label=',
+                                              'Adaptive UI lookup failure:', 'payload', 'message'):
+                                self.assertNotIn(forbidden, serialized)
+
+    def test_lookup_failure_reasons_do_not_guess_unknown_embedded_sdk_or_other_assertion_messages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            payloads = (
+                'failed - Adaptive UI lookup failure: unknown ' + PRIVATE,
+                'failed - Adaptive UI lookup failure: Missing ' + PRIVATE,
+                'failed - Adaptive UI lookup failure: nonunique ' + PRIVATE,
+                'failed - Adaptive UI lookup failure: missingSuffix ' + PRIVATE,
+                'failed - Adaptive UI lookup failure: nonUniqueSuffix ' + PRIVATE,
+                'failed - Adaptive UI lookup failure: missing:' + PRIVATE,
+                'failed - Adaptive UI lookup failure:  missing ' + PRIVATE,
+                'failed - prefix Adaptive UI lookup failure: missing ' + PRIVATE,
+                'failed - No matches found for SDK query ' + PRIVATE,
+                'failed - Multiple matching elements found ' + PRIVATE,
+                'XCTAssertTrue failed - Adaptive UI lookup failure: missing ' + PRIVATE,
+                'XCTAssertEqual failed: Adaptive UI lookup failure: nonUnique ' + PRIVATE,
+                'Adaptive UI lookup failure: missing ' + PRIVATE,
+                'Caught error: Adaptive UI lookup failure: nonUnique ' + PRIVATE,
+            )
+            for payload in payloads:
+                with self.subTest(payload=payload):
+                    log = '\n'.join((event(), self.xctest_row(path, payload=payload), event(state='failed')))
+                    reports = helper.xctest_failure_diagnostics(log, EXPECTED, root)
+                    self.assertEqual(len(reports), 1)
+                    self.assertNotIn('lookupFailureReason', reports[0])
+                    self.assertNotIn(PRIVATE, json.dumps(reports))
+
+    def test_lookup_failure_reasons_require_verified_source_and_explicit_matching_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            link = path.parent / 'Link.swift'
+            link.symlink_to(path)
+            payload = 'failed - Adaptive UI lookup failure: missing ' + PRIVATE
+            rows = (
+                self.xctest_row('/private/' + helper.UI_FAILURE_SOURCE_FILE, payload=payload),
+                self.xctest_row('Tests/../' + helper.UI_FAILURE_SOURCE_FILE, payload=payload),
+                self.xctest_row(link, payload=payload),
+                self.xctest_row(path, line=31, payload=payload),
+                self.xctest_row(path, owner='MirrorMacAdaptiveUITests.MirrorAdaptiveUITests', payload=payload),
+                self.xctest_row(path, case='testMaximumTypeReviewAndWeekPicker', payload=payload),
+                self.xctest_row(path, case='test' + PRIVATE, payload=payload),
+                str(path) + ':1:5: error: ' + payload,
+                payload,
+            )
+            for row in rows:
+                with self.subTest(row=row):
+                    log = '\n'.join((event(), row, event(state='failed')))
+                    self.assertEqual(helper.xctest_failure_diagnostics(log, EXPECTED, root), [])
+
+    def test_lookup_failure_reasons_still_require_failed_terminal_and_unambiguous_event_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, path = self.xctest_fixture(directory)
+            row = self.xctest_row(path, payload='failed - Adaptive UI lookup failure: nonUnique ' + PRIVATE)
+            good = (event(), row, event(state='failed'))
+            for rows in ((event(), row), (event(), row, event(state='passed')),
+                         (event(), row, event(state='skipped')), (row, event(), event(state='failed')),
+                         (event(), event(state='failed'), row), (*good, *good), (*good, event())):
+                with self.subTest(rows=rows):
+                    self.assertEqual(helper.xctest_failure_diagnostics('\n'.join(rows), EXPECTED, root), [])
+
     def test_xctest_diagnostics_require_observed_failed_terminal_for_the_same_instance(self):
         with tempfile.TemporaryDirectory() as directory:
             root, path = self.xctest_fixture(directory)

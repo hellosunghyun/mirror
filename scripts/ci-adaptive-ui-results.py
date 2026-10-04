@@ -58,6 +58,7 @@ UI_ASSERTION_KINDS = frozenset({
     'XCTAssertLessThanOrEqual', 'XCTAssertNil', 'XCTAssertNotNil', 'XCTAssertIdentical',
     'XCTAssertNotIdentical', 'XCTAssertThrowsError', 'XCTAssertNoThrow', 'XCTFail',
 })
+UI_LOOKUP_FAILURE_PREFIX = re.compile(r'^failed - Adaptive UI lookup failure: (missing|nonUnique)(?=$|[ \t])')
 UI_CASE_EVENT = re.compile(
     r"Test Case '[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]' "
     r'(started|passed|failed|skipped)(?=[\s.]|$)')
@@ -373,6 +374,11 @@ def xctest_failure_diagnostics(log, expected, source_root=ROOT):
         if column is not None:
             report['column'] = column
         report.update({'assertionKind': kind} if kind in UI_ASSERTION_KINDS else {'failureKind': 'unclassified'})
+        if kind == 'XCTFail':
+            # 소유가 확인된 자체 실패 문구만 분류한다. 뒤쪽 AX·입력·SDK 원문은 전달하지 않는다.
+            lookup_failure = UI_LOOKUP_FAILURE_PREFIX.match(payload)
+            if lookup_failure is not None:
+                report['lookupFailureReason'] = lookup_failure[1]
         if report not in pending and len(pending) < MAX_DIAGNOSTICS:
             pending.append(report)
     return [] if active is not None else reports
