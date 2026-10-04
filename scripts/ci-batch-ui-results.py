@@ -25,6 +25,7 @@ CASES = ('testTwoTaskBatchKeepsUnselectedTaskAndOriginalContent',
 SOURCE = 'Tests/MirrorBatchUITests/MirrorBatchUITests.swift'
 COUNT_FIELDS = {'totalTestCount': 2, 'passedTests': 2, 'failedTests': 0, 'skippedTests': 0}
 MAX_LOG = 64 * 1024 * 1024
+PROGRESS_MARKER = 'Batch UI progress: '
 
 
 class BatchError(Exception):
@@ -323,8 +324,72 @@ def mobile_target_failure_locations(log, bundle, source_root=ROOT):
     return reports
 
 
-def diagnostics(directory, expected, phase):
+def progress_steps(case):
+    capture_count = 3 if case == CASES[0] else 20
+    steps = [('started', 0), ('launched', 0)]
+    steps += [(phase, ordinal) for ordinal in range(1, capture_count + 1)
+              for phase in ('captureStarted', 'captureSaveRequested', 'captureSaved')]
+    phases = ['captureComplete', 'libraryStarted', 'libraryVerified']
+    if case == CASES[0]:
+        phases += ['selectionStarted', 'selectionVerified', 'libraryReturnStarted', 'libraryReturnVerified',
+                   'pickerStarted', 'pickerVerified', 'cancelStarted', 'cancelVerified',
+                   'pickerStarted', 'pickerVerified', 'todayCommitStarted', 'todayCommitVerified',
+                   'selectionStarted', 'selectionVerified', 'pickerStarted', 'pickerVerified']
+    else:
+        phases += ['bulkSelectionStarted', 'bulkSelectionVerified', 'selectionStarted', 'selectionVerified',
+                   'pickerStarted', 'pickerVerified']
+    phases += ['tomorrowCommitStarted', 'tomorrowCommitVerified', 'complete']
+    return steps + [(phase, 0) for phase in phases]
+
+
+def partial_progress(log, bundle):
+    """현재 순차 사례의 완전한 marker만 관측한다. 중단된 stdout은 수용 결과가 아니다."""
+    unavailable = {'status': 'diagnosticUnavailable'}
+    if not isinstance(log, str) or len(log.encode('utf-8')) > MAX_LOG:
+        return unavailable
+    reports, active, sequence = [], None, 0
+    for line in log.splitlines():
+        if 'Batch UI progress' in line:
+            if active is None or not line.startswith(PROGRESS_MARKER) or len(line.encode('utf-8')) + 1 > 512:
+                return unavailable
+            try:
+                value = SUPPORT.strict_json(line[len(PROGRESS_MARKER):])
+            except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
+                return unavailable
+            if (not isinstance(value, dict) or set(value) != {'method', 'phase', 'sequence', 'captureOrdinal'}
+                    or value['method'] != active['method'] or type(value['sequence']) is not int
+                    or type(value['captureOrdinal']) is not int or value['sequence'] != sequence + 1):
+                return unavailable
+            steps = progress_steps(active['method'])
+            if sequence >= len(steps) or (value['phase'], value['captureOrdinal']) != steps[sequence]:
+                return unavailable
+            sequence += 1
+            active['lastProgress'] = {key: value[key] for key in ('phase', 'sequence', 'captureOrdinal')}
+        elif re.search(r'\bTest\s+Case\b', line):
+            event = re.fullmatch(
+                r"Test Case '-\[([A-Za-z_][A-Za-z0-9_.]*) ([A-Za-z_][A-Za-z0-9_]*)\]' "
+                r'(started|passed|failed|skipped)(?: \([0-9]{1,6}(?:\.[0-9]{1,9})? seconds\))?\.', line)
+            if (event is None or event[1] != bundle + '.' + CLASS or event[2] not in CASES
+                    or (event[3] == 'started' and not line.endswith("' started."))):
+                return unavailable
+            if event[3] == 'started':
+                if active is not None or any(report['method'] == event[2] for report in reports):
+                    return unavailable
+                active = {'method': event[2], 'terminal': 'notObserved', 'lastProgress': None}
+                reports.append(active)
+                sequence = 0
+            else:
+                if (active is None or active['method'] != event[2]
+                        or (event[3] == 'passed' and sequence != len(progress_steps(event[2])))):
+                    return unavailable
+                active['terminal'] = event[3]
+                active = None
+    return {'status': 'partial', 'cases': reports} if reports else unavailable
+
+
+def diagnostics(directory, expected, phase, partial_failure=False):
     require(phase in ('build', 'test'), 'invalidArguments')
+    require(not partial_failure or phase == 'test', 'invalidArguments')
     context = context_for(directory, expected)
     log = SUPPORT.read_regular(directory / (phase + '.log'), MAX_LOG).decode('utf-8', errors='replace')
     reports = SUPPORT.compiler_diagnostics(log, ROOT) if phase == 'build' else failure_locations(log, context['bundle'])
@@ -340,6 +405,10 @@ def diagnostics(directory, expected, phase):
             print('::notice::Batch UI mobile target diagnostics: ' + json.dumps(
                 {**expected, 'phase': phase, 'scope': 'stdoutOnly', 'locations': mobile_reports,
                  'locationCount': len(mobile_reports)}, sort_keys=True))
+        if partial_failure:
+            validate_source(SUPPORT.read_regular(ROOT / SOURCE, SUPPORT.MAX_JSON).decode('utf-8'))
+            print('::notice::Batch UI partial progress diagnostics: ' + json.dumps(
+                {**expected, 'scope': 'partialFailureOnly', **partial_progress(log, context['bundle'])}, sort_keys=True))
 
 
 def validate_source(source):
@@ -401,7 +470,9 @@ def main():
     parser.add_argument('--phase', choices=('build', 'test'))
     parser.add_argument('--exit-code', type=int)
     parser.add_argument('--native-exit-code', type=int, default=-1)
+    parser.add_argument('--partial-failure', action='store_true')
     args = parser.parse_args()
+    require(not args.partial_failure or (args.command == 'diagnostics' and args.phase == 'test'), 'invalidArguments')
     expected = identity(args.platform)
     directory = directory_for(args.platform)
     if args.command == 'prepare':
@@ -422,7 +493,7 @@ def main():
     elif args.command == 'outcome-verify':
         validate_outcome(SUPPORT.read_json(directory / 'safe-outcome.json'), expected)
     elif args.command == 'diagnostics':
-        diagnostics(directory, expected, args.phase)
+        diagnostics(directory, expected, args.phase, partial_failure=args.partial_failure)
     else:
         require(args.phase in ('build', 'test') and type(args.exit_code) is int and 1 <= args.exit_code <= 255
                 and -1 <= args.native_exit_code <= 255, 'invalidArguments')

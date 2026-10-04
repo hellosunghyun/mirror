@@ -52,6 +52,8 @@
 
 `6cb236d` Mac Adaptive에서는 계획 입력의 `capture.planToday` 존재 확인이 `missing`으로 실패했다. 날짜 선택 영역은 자식 버튼을 유지하는 이름 있는 접근성 그룹으로 명시하고, 펼친 그룹과 그 안의 고유한 오늘 버튼을 확인한 뒤 기존 동작을 수행한다. identifier 상속이나 펼침 실패 중 무엇이 원인인지는 아직 확정하지 않는다. Batch 취소 검사는 스크롤 밖의 iOS 상단 헤더·Mac toolbar와 일치하도록 기존 실제 창 기준을 사용하며 고유성·전체 표시·조작 가능 여부·iOS 44pt와 도메인 assertions를 유지한다. 이 화면 계약 수정은 관측한 Phone scroll owner 실패의 원인 확정을 뜻하지 않는다.
 
+`748672d`의 [Batch 실행](https://github.com/hellosunghyun/mirror/actions/runs/37197743914)에서도 Mac은 빌드 뒤 두 사례가 초기 `capture.close` snapshot 조회에서 실패했다. iPhone은 UI 단계가 1,213초 뒤 기존 20분 제한으로 중단됐다. 정확한 iPhone 조작 위치는 미상이다. 이 workflow는 XCTest 원문을 별도 파일에 기록하므로 GitHub job log에 사례 활동이 없었고, 중단 시 native 종료 상태를 아직 받지 못한 EXIT trap은 기존 고정 진단을 호출하지 않았다. 검사 시간이나 성공 기준을 바꾸는 대신, 이런 중단에서도 현재 사례의 마지막 고정 진행 단계를 확인하도록 진단을 보완한다. 진행 정보는 부분 관측이며 실제 두 사례의 typed 성공 결과를 대신하지 않는다.
+
 ## 주요 흐름의 수용 기준
 
 | 흐름 | 기대하는 행동 | 유지할 보호 |

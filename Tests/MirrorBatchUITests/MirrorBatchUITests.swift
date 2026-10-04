@@ -13,22 +13,41 @@ final class MirrorBatchUITests: XCTestCase {
     }
     private enum Surface: Equatable { case library, planner, none }
     private enum HarnessFailure: Error { case missing, ambiguous, unreachable, wrongValue }
+    private enum ProgressCase: String {
+        case two = "testTwoTaskBatchKeepsUnselectedTaskAndOriginalContent"
+        case twenty = "testTwentyTaskBatchKeepsEveryOriginalAndUsesTomorrow"
+        var captureCount: Int { self == .two ? 3 : 20 }
+    }
+    private enum ProgressPhase: String {
+        case started, launched, captureStarted, captureSaveRequested, captureSaved, captureComplete
+        case libraryStarted, libraryVerified, bulkSelectionStarted, bulkSelectionVerified
+        case selectionStarted, selectionVerified, libraryReturnStarted, libraryReturnVerified
+        case pickerStarted, pickerVerified, cancelStarted, cancelVerified
+        case todayCommitStarted, todayCommitVerified, tomorrowCommitStarted, tomorrowCommitVerified, complete
+    }
+    private var progressCase: ProgressCase?
+    private var progressSequence = 0
     private let unassigned = "미완료, 배치: 아직 정하지 않음"
     private let today = "미완료, 배치: 9월 30일 수요일에 하기"
     private let tomorrow = "미완료, 배치: 10월 1일 목요일에 하기"
 
     func testTwoTaskBatchKeepsUnselectedTaskAndOriginalContent() throws {
+        beginProgress(.two)
         let app = try launchApp()
         defer { app.terminate() }
+        progress(.launched)
         let titles = ["UI batch two alpha original title", "UI batch two beta original title",
                       "UI batch two control stays unassigned"]
         try captureConsecutively(titles, in: app)
+        progress(.libraryStarted)
         try showLibrary(search: "UI batch two", in: app)
         let originals = try originalTasks(titles, in: app)
         try verifyRows(originals, plan: unassigned, in: app)
+        progress(.libraryVerified)
         let selected = Array(originals.prefix(2))
         let control = originals[2]
         try beginSelection(selected, control: control, in: app)
+        progress(.libraryReturnStarted)
         try selectDestination("오늘", identifier: "destination.today", in: app)
         try selectDestination("보관함", identifier: "destination.library", in: app)
         XCTAssertEqual(textValue(try unique(app.textFields.matching(identifier: "library.search"))), "UI batch two")
@@ -36,44 +55,74 @@ final class MirrorBatchUITests: XCTestCase {
         try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
         XCTAssertEqual(try reachableBatchFooter(in: app).label, "선택한 2개 날짜 배치",
                        "같은 창의 화면을 다시 구성해도 일괄 대상을 유지한다.")
+        progress(.libraryReturnVerified)
         try verifyPicker(selected, in: app)
+        progress(.cancelStarted)
         // 취소는 iOS 고정 헤더와 Mac 툴바에 있으므로 실제 앱 창을 기준으로 도달 가능성을 확인한다.
         try activate("plan.cancel", in: app)
         try gone("plan.cancel", in: app)
         try verifyRows(selected, plan: unassigned, selection: "선택됨", in: app)
         try verifyRows([control], plan: unassigned, selection: "선택 안 됨", in: app)
+        progress(.cancelVerified)
         try verifyPicker(selected, in: app)
+        progress(.todayCommitStarted)
         try activate("plan.today", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
         try verifyRows(selected, plan: today, in: app)
         try verifyRows([control], plan: unassigned, in: app)
         try gone("library.batchPlan", in: app)
+        progress(.todayCommitVerified)
         try beginSelection(selected, control: control, in: app)
         try verifyPicker(selected, in: app)
+        progress(.tomorrowCommitStarted)
         try activate("plan.tomorrow", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
         try verifyRows(selected, plan: tomorrow, in: app)
         try verifyRows([control], plan: unassigned, in: app)
         try gone("library.batchPlan", in: app)
+        progress(.tomorrowCommitVerified)
+        progress(.complete)
     }
 
     func testTwentyTaskBatchKeepsEveryOriginalAndUsesTomorrow() throws {
+        beginProgress(.twenty)
         let app = try launchApp()
         defer { app.terminate() }
+        progress(.launched)
         let titles = (1...20).map { String(format: "UI batch twenty task %02d original title", $0) }
         try captureConsecutively(titles, in: app)
+        progress(.libraryStarted)
         try showLibrary(search: "UI batch twenty", in: app)
         let originals = try originalTasks(titles, in: app)
         XCTAssertEqual(originals.count, 20)
         try verifyRows(originals, plan: unassigned, in: app)
+        progress(.libraryVerified)
         try verifyBulkSelection(originals, in: app)
         try beginSelection(originals, control: nil, in: app)
         try verifyPicker(originals, in: app)
+        progress(.tomorrowCommitStarted)
         try activate("plan.tomorrow", surface: .planner, in: app)
         try gone("plan.cancel", in: app)
         try verifyRows(originals, plan: tomorrow, in: app)
         try gone("library.batchPlan", in: app)
         XCTAssertEqual(Set(originals.map(\.identifier)).count, 20)
+        progress(.tomorrowCommitVerified)
+        progress(.complete)
+    }
+
+    private func beginProgress(_ value: ProgressCase) {
+        progressCase = value; progressSequence = 0
+        progress(.started)
+    }
+
+    private func progress(_ phase: ProgressPhase, ordinal: Int = 0) {
+        guard let progressCase, (0...progressCase.captureCount).contains(ordinal), progressSequence < 96 else { return }
+        progressSequence += 1
+        // 사용자 값과 AX 조회 없이 고정 경계만 한 번 쓴다. 중단되어도 print 버퍼에 남기지 않는다.
+        let line = "Batch UI progress: {\"method\":\"\(progressCase.rawValue)\",\"phase\":\"\(phase.rawValue)\",\"sequence\":\(progressSequence),\"captureOrdinal\":\(ordinal)}\n"
+        let data = Data(line.utf8)
+        guard data.count <= 512 else { return }
+        try? FileHandle.standardOutput.write(contentsOf: data)
     }
 
     private func launchApp() throws -> XCUIApplication {
@@ -96,7 +145,8 @@ final class MirrorBatchUITests: XCTestCase {
 
     private func captureConsecutively(_ titles: [String], in app: XCUIApplication) throws {
         try activate("capture.open", in: app)
-        for title in titles {
+        for (index, title) in titles.enumerated() {
+            progress(.captureStarted, ordinal: index + 1)
             #if os(macOS)
             let field = try requireMacCaptureTitle(in: app)
             #else
@@ -116,14 +166,17 @@ final class MirrorBatchUITests: XCTestCase {
             field.typeText(title)
             try waitValue(title, element: field)
             try gone("capture.feedback", in: app)
+            progress(.captureSaveRequested, ordinal: index + 1)
             try activate("capture.save", in: app)
             try waitValue("", element: field)
             let feedback = try unique(app.staticTexts.matching(identifier: "capture.feedback"))
             XCTAssertEqual(feedback.label, "보관함에 넣었어요.")
             XCTAssertTrue(feedback.isHittable)
+            progress(.captureSaved, ordinal: index + 1)
         }
         try activate("capture.close", in: app)
         try gone("capture.title", in: app)
+        progress(.captureComplete)
     }
 
     #if os(macOS)
@@ -250,6 +303,7 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func verifyBulkSelection(_ originals: [OriginalTask], in app: XCUIApplication) throws {
+        progress(.bulkSelectionStarted)
         XCTAssertFalse(app.buttons.matching(identifier: "library.selectAll").firstMatch.exists)
         try activate("library.selectToggle", surface: .library, in: app)
         let bulk = try reachable(app.buttons.matching(identifier: "library.selectAll"), surface: .library,
@@ -280,6 +334,7 @@ final class MirrorBatchUITests: XCTestCase {
         try verifyRows(originals, plan: unassigned, selection: "선택 안 됨", in: app)
         try activate("library.selectToggle", surface: .library, in: app)
         XCTAssertFalse(app.buttons.matching(identifier: "library.selectAll").firstMatch.exists)
+        progress(.bulkSelectionVerified)
     }
 
     private func verifySelectionState(_ originals: [OriginalTask], value: String, in app: XCUIApplication) throws {
@@ -294,6 +349,7 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func beginSelection(_ selected: [OriginalTask], control: OriginalTask?, in app: XCUIApplication) throws {
+        progress(.selectionStarted)
         try activate("library.selectToggle", surface: .library, in: app)
         for task in selected {
             let id = "task.select.\(task.uuid)"
@@ -315,9 +371,11 @@ final class MirrorBatchUITests: XCTestCase {
         try assertMobileTarget(batch)
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "task.postpone.")).count, 0,
                        "선택 모드에는 개별 미루기 버튼을 표시하지 않는다.")
+        progress(.selectionVerified)
     }
 
     private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {
+        progress(.pickerStarted)
         performActivation(try reachableBatchFooter(in: app))
         _ = try unique(app.buttons.matching(identifier: "plan.cancel"))
         let disclosure = try plannerDisclosure(in: app)
@@ -342,6 +400,7 @@ final class MirrorBatchUITests: XCTestCase {
         performActivation(folded)
         try waitValue("접힘", element: folded)
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "plan.task.")).count, 0)
+        progress(.pickerVerified)
     }
 
     private func plannerDisclosure(in app: XCUIApplication) throws -> XCUIElement {

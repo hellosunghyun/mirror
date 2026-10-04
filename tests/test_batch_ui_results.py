@@ -37,6 +37,12 @@ def outcome():
             'buildReceiptSHA256': 'c' * 64}
 
 
+def progress_lines(case, count=None):
+    return [helper.PROGRESS_MARKER + json.dumps({'method': case, 'phase': phase,
+            'sequence': index, 'captureOrdinal': ordinal})
+            for index, (phase, ordinal) in enumerate(helper.progress_steps(case)[:count], 1)]
+
+
 class BatchResultGateTests(unittest.TestCase):
     def test_exact_two_typed_cases_and_source_are_accepted(self):
         for bundle in ('MirrorIOSBatchUITests', 'MirrorMacBatchUITests'):
@@ -436,6 +442,113 @@ class BatchResultGateTests(unittest.TestCase):
             source.unlink()
             source.symlink_to(ROOT / helper.SOURCE)
             self.assertEqual(helper.mobile_target_failure_locations(valid, BUNDLE, source_root), [])
+
+    def test_partial_progress_keeps_interrupted_capture_ordinal_without_claiming_a_pass(self):
+        for bundle in ('MirrorIOSBatchUITests', 'MirrorMacBatchUITests'):
+            for case, capture_count in zip(helper.CASES, (3, 20)):
+                lines = [event(case, 'started', bundle)] + progress_lines(case, 2 + capture_count * 3)
+                expected = {'status': 'partial', 'cases': [{'method': case, 'terminal': 'notObserved',
+                    'lastProgress': {'phase': 'captureSaved', 'sequence': 2 + capture_count * 3,
+                                     'captureOrdinal': capture_count}}]}
+                self.assertEqual(helper.partial_progress('\n'.join(lines), bundle), expected)
+                self.assertNotIn('passedTests', expected)
+                for terminal in ('failed', 'skipped'):
+                    ended = event(case, terminal, bundle).replace(terminal + '.', terminal + ' (1.250 seconds).')
+                    report = helper.partial_progress('\n'.join(lines + [ended]), bundle)
+                    self.assertEqual(report['cases'][0]['terminal'], terminal)
+
+    def test_partial_progress_rejects_wrong_sequence_phase_shape_and_case_specific_ordinal(self):
+        for case, capture_count in zip(helper.CASES, (3, 20)):
+            prefix = [event(case, 'started')] + progress_lines(case, 2)
+            valid = {'method': case, 'phase': 'captureStarted', 'sequence': 3, 'captureOrdinal': 1}
+            for change in ({'phase': 'captureSaved'}, {'phase': 'unknown'}, {'sequence': 2}, {'sequence': 4},
+                           {'sequence': True}, {'captureOrdinal': True}, {'captureOrdinal': 0},
+                           {'captureOrdinal': capture_count + 1}, {'method': 'testUnexpected'},
+                           {'extra': 'SYNTHETIC_PRIVATE_VALUE'}):
+                value = helper.PROGRESS_MARKER + json.dumps({**valid, **change})
+                with self.subTest(change=change):
+                    self.assertEqual(helper.partial_progress('\n'.join(prefix + [value]), BUNDLE),
+                                     {'status': 'diagnosticUnavailable'})
+            value = helper.PROGRESS_MARKER + json.dumps(valid)
+            for malformed in (value[:-1], value.replace('"sequence": 3', '"sequence": 3, "sequence": 3'),
+                              value.replace('"sequence": 3', '"sequence": NaN'),
+                              helper.PROGRESS_MARKER + '[]', helper.PROGRESS_MARKER + '{}', 'title="' + value + '"'):
+                self.assertEqual(helper.partial_progress('\n'.join(prefix + [malformed]), BUNDLE),
+                                 {'status': 'diagnosticUnavailable'})
+            self.assertEqual(helper.partial_progress('\n'.join(prefix + [value, value]), BUNDLE),
+                             {'status': 'diagnosticUnavailable'})
+
+    def test_partial_progress_requires_unambiguous_active_case_and_rejects_embedded_events(self):
+        first, second = helper.CASES
+        started = event(first, 'started')
+        marker = progress_lines(first, 1)[0]
+        for lines in ([marker], [started, event(first, 'failed'), marker],
+                      [event(first, 'started', 'OtherUITests'), marker],
+                      [event('testUnexpected', 'started'), marker],
+                      [started, event(second, 'started'), marker],
+                      [started, event(second, 'failed')], [started, started],
+                      [started, event(first, 'failed'), started],
+                      [started.replace('Test Case', 'Test  Case'), marker],
+                      [started, 'title="' + started + '"'],
+                      [started, 'SDK error: ' + marker],
+                      [started, marker.replace(first, second)]):
+            with self.subTest(lines=lines):
+                self.assertEqual(helper.partial_progress('\n'.join(lines), BUNDLE),
+                                 {'status': 'diagnosticUnavailable'})
+
+    def test_partial_progress_records_complete_cases_but_cannot_replace_typed_acceptance(self):
+        for case in helper.CASES:
+            incomplete = [event(case, 'started')] + progress_lines(case, 1) + [event(case, 'passed')]
+            self.assertEqual(helper.partial_progress('\n'.join(incomplete), BUNDLE),
+                             {'status': 'diagnosticUnavailable'})
+        for order in (helper.CASES, tuple(reversed(helper.CASES))):
+            lines = []
+            for case in order:
+                lines += [event(case, 'started')] + progress_lines(case) + [event(case, 'passed')]
+            report = helper.partial_progress('\n'.join(lines), BUNDLE)
+            self.assertEqual(report['status'], 'partial')
+            self.assertEqual([item['method'] for item in report['cases']], list(order))
+            self.assertEqual([item['terminal'] for item in report['cases']], ['passed', 'passed'])
+            with self.assertRaises(helper.BatchError):
+                helper.validate_outcome({**EXPECTED, **report}, EXPECTED)
+            self.assertEqual(helper.partial_progress('\n'.join(lines + [progress_lines(order[-1], 1)[0]]), BUNDLE),
+                             {'status': 'diagnosticUnavailable'})
+
+    def test_partial_progress_bounds_whole_log_and_single_write_without_echoing_payload(self):
+        case = helper.CASES[0]
+        prefix = event(case, 'started') + '\n'
+        marker = progress_lines(case, 1)[0]
+        self.assertEqual(helper.partial_progress(prefix + marker.ljust(511), BUNDLE)['status'], 'partial')
+        for value in ('', None, prefix + marker.ljust(512), prefix + 'Batch UI progress: SYNTHETIC_PRIVATE_VALUE'):
+            self.assertEqual(helper.partial_progress(value, BUNDLE), {'status': 'diagnosticUnavailable'})
+        with mock.patch.object(helper, 'MAX_LOG', 8):
+            self.assertEqual(helper.partial_progress(prefix + marker, BUNDLE), {'status': 'diagnosticUnavailable'})
+
+    def test_partial_progress_notice_is_opt_in_and_does_not_write_outcome_or_actions_outputs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            case = helper.CASES[0]
+            (directory / 'test.log').write_text(event(case, 'started') + '\n' + progress_lines(case, 1)[0])
+            output_path, summary_path = directory / 'github-output', directory / 'github-summary'
+            output_path.write_text('previous=value\n')
+            summary_path.write_text('previous summary\n')
+            for enabled in (False, True):
+                with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                           'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                    helper.diagnostics(directory, EXPECTED, 'test', partial_failure=enabled)
+                messages = [call.args[0] for call in printed.call_args_list]
+                self.assertEqual(len(messages), 3 if enabled else 2)
+                write.assert_not_called()
+                self.assertFalse((directory / 'safe-outcome.json').exists())
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
+                if enabled:
+                    report = json.loads(messages[-1].split(': ', 1)[1])
+                    self.assertEqual(report, {**EXPECTED, 'scope': 'partialFailureOnly', 'status': 'partial',
+                        'cases': [{'method': case, 'terminal': 'notObserved',
+                                   'lastProgress': {'phase': 'started', 'sequence': 1, 'captureOrdinal': 0}}]})
 
     def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
