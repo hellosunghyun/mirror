@@ -1715,7 +1715,7 @@ final class MirrorUITests: XCTestCase {
             throw UIHarnessError.applicationNotRunning
         }
         let found = element(identifier, in: app, preferButtons: preferButtons)
-        guard found.waitForExistence(timeout: timeout) else {
+        guard found.exists || found.waitForExistence(timeout: timeout) else {
             printFailurePrefix("필수 UI 요소가 없다: \(identifier)")
             XCTFail("필수 UI 요소가 없다: \(identifier). \(diagnostics(in: app))", file: file, line: line)
             throw UIHarnessError.missingElement(identifier)
