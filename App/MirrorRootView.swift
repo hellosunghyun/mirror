@@ -30,9 +30,7 @@ struct MirrorRootView: View {
     @State private var libraryNavigation = MirrorLibraryNavigationState()
     @State private var calendarNavigation = MirrorCalendarNavigationState()
     @State private var adjacentCalendarNavigation = MirrorCalendarNavigationState()
-    @State private var detailCloseRequestedID: UUID?
-    @State private var detailDraftTaskID: UUID?
-    @State private var detailSelectionRequested: MirrorTaskSelectionRequest?
+    @State private var detailNavigation = MirrorDetailNavigationState()
     @State private var basePickerPresentationState = PlanPickerPresentationState()
     @State private var displayedBasePicker: PlanPickerRequest?
     @State private var basePickerDidAppear = false
@@ -63,6 +61,7 @@ struct MirrorRootView: View {
     }
     var body: some View {
         @Bindable var model = model
+        @Bindable var detailState = detailNavigation
         Group {
             if isCompact {
                 rootContent()
@@ -78,13 +77,13 @@ struct MirrorRootView: View {
         .inspector(isPresented: taskInspectorPresentation) {
             NavigationStack {
                 if let task = model.selectedTask {
-                    MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID, selectionRequested: $detailSelectionRequested)
+                    MirrorTaskDetail(task: task, closeRequestedID: $detailState.closeRequestedID, draftTaskID: $detailState.draftTaskID, selectionRequested: $detailState.selectionRequested)
                 }
             }
             .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "detail"))
             .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
         }
-        .environment(\.mirrorTaskSelection, { id in requestTaskSelection(id) })
+        .environment(\.mirrorTaskSelection, taskSelectionAction)
         .environment(\.mirrorCaptureOpen, captureOpenAction)
         #if os(macOS)
         .focusedSceneValue(\.mirrorCaptureOpen, captureOpenAction)
@@ -475,7 +474,7 @@ struct MirrorRootView: View {
             isTaskInspectorVisible
         }, set: { shown in
             guard !shown, !model.showReview, !model.isSaving else { return }
-            if let id = model.selectedTaskID, (detailDraftTaskID == id || model.isDetailEditing) { detailCloseRequestedID = id }
+            if let id = model.selectedTaskID, (detailNavigation.draftTaskID == id || model.isDetailEditing) { detailNavigation.closeRequestedID = id }
             else { model.selectedTaskID = nil }
         })
     }
@@ -489,14 +488,8 @@ struct MirrorRootView: View {
         if destination != model.destination && !model.isDetailEditing { model.selectedTaskID = nil }
         model.destination = destination
     }
-    private func requestTaskSelection(_ id: UUID) {
-        guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
-        if let owner = model.selectedTask, (detailDraftTaskID == owner.taskID || model.isDetailEditing) {
-            guard id != owner.taskID, !model.projectionPending,
-                  target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
-            detailSelectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
-                                                                  workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch)
-        } else { model.selectedTaskID = id }
+    private var taskSelectionAction: MirrorTaskSelectionAction {
+        MirrorTaskSelectionAction(model: model, navigation: detailNavigation)
     }
     private var basePicker: Binding<PlanPickerRequest?> {
         let displayedRequest = displayedBasePicker

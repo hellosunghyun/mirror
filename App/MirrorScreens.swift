@@ -13,6 +13,37 @@ struct MirrorTaskSelectionRequest: Equatable, Sendable {
     let workspaceEpoch: String
 }
 
+@MainActor @Observable
+final class MirrorDetailNavigationState {
+    var closeRequestedID: UUID?
+    var draftTaskID: UUID?
+    var selectionRequested: MirrorTaskSelectionRequest?
+
+    func requestTaskSelection(_ id: UUID, model: AppModel) {
+        guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
+        if let owner = model.selectedTask, (draftTaskID == owner.taskID || model.isDetailEditing) {
+            guard id != owner.taskID, !model.projectionPending,
+                  target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
+            selectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
+                                                           workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch)
+        } else { model.selectedTaskID = id }
+    }
+}
+
+nonisolated struct MirrorTaskSelectionAction: Equatable, Sendable {
+    let model: AppModel
+    let navigation: MirrorDetailNavigationState
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.navigation === rhs.navigation
+    }
+
+    @MainActor
+    func callAsFunction(_ id: UUID) {
+        navigation.requestTaskSelection(id, model: model)
+    }
+}
+
 /// custom environment/focused value에는 동등한 scene 입력을 비교할 수 있는 값만 보관한다.
 nonisolated struct MirrorCaptureOpenAction: Equatable, Sendable {
     let model: AppModel
@@ -49,11 +80,11 @@ extension EnvironmentValues {
 }
 
 private struct MirrorTaskSelectionKey: EnvironmentKey {
-    static let defaultValue: (@MainActor @Sendable (UUID) -> Void)? = nil
+    static let defaultValue: MirrorTaskSelectionAction? = nil
 }
 
 extension EnvironmentValues {
-    var mirrorTaskSelection: (@MainActor @Sendable (UUID) -> Void)? {
+    var mirrorTaskSelection: MirrorTaskSelectionAction? {
         get { self[MirrorTaskSelectionKey.self] }
         set { self[MirrorTaskSelectionKey.self] = newValue }
     }
@@ -1022,11 +1053,10 @@ struct MirrorReviewView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var exposureID = UUID()
-    @State private var detailCloseRequestedID: UUID?
-    @State private var detailDraftTaskID: UUID?
-    @State private var detailSelectionRequested: MirrorTaskSelectionRequest?
+    @State private var detailNavigation = MirrorDetailNavigationState()
 
     var body: some View {
+        @Bindable var detailState = detailNavigation
         NavigationStack {
             VStack(spacing: 0) {
                 ScrollView {
@@ -1051,7 +1081,7 @@ struct MirrorReviewView: View {
                                         .font(.title3.weight(.semibold))
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .id(task.taskID)
-                                    Button { requestTaskSelection(task.taskID) } label: {
+                                    Button { taskSelectionAction(task.taskID) } label: {
                                         Label("작업 상세", systemImage: "info.circle")
                                             .labelStyle(.iconOnly)
                                             .font(.title3)
@@ -1115,17 +1145,17 @@ struct MirrorReviewView: View {
             }
             .sheet(item: Binding(get: { model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: {
                 guard $0 == nil, model.showReview, !model.isSaving else { return }
-                if let id = model.selectedTaskID, (detailDraftTaskID == id || model.isDetailEditing) { detailCloseRequestedID = id }
+                if let id = model.selectedTaskID, (detailNavigation.draftTaskID == id || model.isDetailEditing) { detailNavigation.closeRequestedID = id }
                 else { model.selectedTaskID = nil }
             })) { detail in
                 NavigationStack {
-                    if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID, selectionRequested: $detailSelectionRequested) }
+                    if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailState.closeRequestedID, draftTaskID: $detailState.draftTaskID, selectionRequested: $detailState.selectionRequested) }
                 }
                 .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "detail"))
             }
             .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil && model.selectedTaskID == nil))
         }
-        .environment(\.mirrorTaskSelection, { id in requestTaskSelection(id) })
+        .environment(\.mirrorTaskSelection, taskSelectionAction)
         .tint(MirrorPalette.accent)
         .disabled(model.isSaving)
         .frame(minWidth: 300, idealWidth: 580, minHeight: 460)
@@ -1143,14 +1173,8 @@ struct MirrorReviewView: View {
             model.closePlanPicker(requestID: displayedRequest.id)
         })
     }
-    private func requestTaskSelection(_ id: UUID) {
-        guard !model.isSaving, let target = model.tasks.first(where: { $0.taskID == id }) else { return }
-        if let owner = model.selectedTask, (detailDraftTaskID == owner.taskID || model.isDetailEditing) {
-            guard id != owner.taskID, !model.projectionPending,
-                  target.workspaceKey == owner.workspaceKey, target.workspaceEpoch == owner.workspaceEpoch else { return }
-            detailSelectionRequested = MirrorTaskSelectionRequest(ownerID: owner.taskID, destinationID: id,
-                                                                  workspaceKey: owner.workspaceKey, workspaceEpoch: owner.workspaceEpoch)
-        } else { model.selectedTaskID = id }
+    private var taskSelectionAction: MirrorTaskSelectionAction {
+        MirrorTaskSelectionAction(model: model, navigation: detailNavigation)
     }
     @ViewBuilder private func immediateChoices(_ destinations: DateDestinations, card: ReviewCard, session: AppReviewSession) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
