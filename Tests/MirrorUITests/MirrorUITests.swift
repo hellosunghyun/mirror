@@ -2140,18 +2140,43 @@ final class MirrorUITests: XCTestCase {
     #if os(macOS)
     @MainActor
     private func recordReviewFeedbackFailure(in app: XCUIApplication) {
-        guard app.state == .runningForeground, app.windows.count == 1 else { return }
-        let window = app.windows.element(boundBy: 0)
-        guard window.exists else { return }
+        var observedCounts: [String: Int] = [:]
+        func rejected(_ reason: String) {
+            let diagnostic: [String: Any] = [
+                "method": "testReviewUndoRestoresUnassignedCardInsteadOfAddingToToday",
+                "phase": "initialZeroDecisionsFeedbackUnexpected", "reason": reason, "counts": observedCounts,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+               let json = String(data: data, encoding: .utf8) { print("UI review feedback failure diagnostic: \(json)") }
+        }
+        guard app.state == .runningForeground else { rejected("appForeground"); return }
+        let windows = app.windows.containing(.button, identifier: "review.finish")
+            .containing(.button, identifier: "review.today")
+        let windowCount = windows.count
+        observedCounts["ownerWindows"] = windowCount
+        guard windowCount == 1 else { rejected("ownerWindowCount"); return }
+        let window = windows.element(boundBy: 0)
+        guard window.exists else { rejected("windowMissing"); return }
+        let finish = window.buttons.matching(identifier: "review.finish")
+        let today = window.buttons.matching(identifier: "review.today")
+        let finishCount = finish.count, todayCount = today.count
+        observedCounts["finishAnchors"] = finishCount; observedCounts["todayAnchors"] = todayCount
+        guard finishCount == 1, todayCount == 1,
+              finish.element(boundBy: 0).exists, today.element(boundBy: 0).exists,
+              finish.element(boundBy: 0).elementType == .button,
+              today.element(boundBy: 0).elementType == .button else { rejected("anchorUniqueness"); return }
         let cards = window.descendants(matching: .any).matching(identifier: "review.card")
-        guard cards.count == 1, cards.element(boundBy: 0).exists else { return }
+        let cardCount = cards.count
+        observedCounts["cards"] = cardCount
+        guard cardCount == 1, cards.element(boundBy: 0).exists else { rejected("cardUniqueness"); return }
         func frameValue(_ frame: CGRect) -> Any {
             let values = [frame.minX, frame.minY, frame.width, frame.height]
             guard values.allSatisfy({ $0.isFinite }), frame.width > 0, frame.height > 0 else { return NSNull() }
             return values.map { Double($0) }
         }
-        guard !(frameValue(window.frame) is NSNull), app.state == .runningForeground else { return }
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        guard !(frameValue(window.frame) is NSNull) else { rejected("windowGeometry"); return }
+        guard app.state == .runningForeground else { rejected("appForeground"); return }
+        let screenshot = XCTAttachment(screenshot: window.screenshot())
         screenshot.name = "mirror-diagnostic-review-feedback"
         screenshot.lifetime = .keepAlways
         add(screenshot)
@@ -2226,18 +2251,38 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func recordDetailCollapseFailure(in app: XCUIApplication) {
-        guard app.state == .runningForeground else { return }
-        let windows = app.windows
-        guard windows.count == 1 else { return }
+        var observedCounts: [String: Int] = [:]
+        func rejected(_ reason: String) {
+            let diagnostic: [String: Any] = [
+                "method": "testTomorrowStaysOutOfTodayAndIsSearchableInLibrary",
+                "phase": "collapseActivatedExpandLookupFailed", "reason": reason, "counts": observedCounts,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: diagnostic, options: [.sortedKeys]),
+               let json = String(data: data, encoding: .utf8) { print("UI detail collapse failure diagnostic: \(json)") }
+        }
+        guard app.state == .runningForeground else { rejected("appForeground"); return }
+        let windows = app.windows.containing(.button, identifier: "detail.close")
+            .containing(NSPredicate(format: "identifier == %@", "detail.plan"))
+        let windowCount = windows.count
+        observedCounts["ownerWindows"] = windowCount
+        guard windowCount == 1 else { rejected("ownerWindowCount"); return }
         let window = windows.element(boundBy: 0)
-        guard window.exists else { return }
+        guard window.exists else { rejected("windowMissing"); return }
+        let close = window.buttons.matching(identifier: "detail.close")
+        let plan = window.descendants(matching: .any).matching(identifier: "detail.plan")
+        let closeCount = close.count, planCount = plan.count
+        observedCounts["closeAnchors"] = closeCount; observedCounts["planAnchors"] = planCount
+        guard closeCount == 1, planCount == 1,
+              close.element(boundBy: 0).exists, plan.element(boundBy: 0).exists,
+              close.element(boundBy: 0).elementType == .button else { rejected("anchorUniqueness"); return }
         func frameValue(_ frame: CGRect) -> Any {
             let values = [frame.minX, frame.minY, frame.width, frame.height]
             guard values.allSatisfy({ $0.isFinite }), frame.width > 0, frame.height > 0 else { return NSNull() }
             return values.map { Double($0) }
         }
-        guard !(frameValue(window.frame) is NSNull), app.state == .runningForeground else { return }
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        guard !(frameValue(window.frame) is NSNull) else { rejected("windowGeometry"); return }
+        guard app.state == .runningForeground else { rejected("appForeground"); return }
+        let screenshot = XCTAttachment(screenshot: window.screenshot())
         screenshot.name = "mirror-diagnostic-detail-collapse"
         screenshot.lifetime = .keepAlways
         add(screenshot)
