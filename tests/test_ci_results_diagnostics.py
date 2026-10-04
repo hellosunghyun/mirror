@@ -90,6 +90,25 @@ VALIDATION_RECOVERY_BOOL_FIELDS = (
     'frameHasArea', 'ownedBySingleWindow', 'keyboardPresent', 'alertPresent', 'sheetPresent',
 )
 VALIDATION_RECOVERY_NULLABLE_FIELDS = ('frameInsideWindow', 'belowStatus')
+QUERY_FAILURE_SAMPLES = (
+    ('Failed to get matching snapshot', 'failedToGetMatchingSnapshot'),
+    ('Failed to get matching snapshots', 'failedToGetMatchingSnapshot'),
+    ('Multiple matching elements found', 'multipleMatchingElements'),
+    ('No matching elements found', 'noMatchingElements'),
+    ('No matches found', 'noMatchingElements'),
+    ('AX snapshot timed out', 'axSnapshotTimedOut'),
+    ('Element query evaluation failed', 'elementQueryEvaluationFailed'),
+    ('Application is not running', 'applicationNotRunning'),
+    ('Unhandled XCTest exception', 'unhandledXCTestException'),
+)
+HISTORY_FAILURE_SAMPLES = (
+    ('이력 탐색 중 앱이 전경에서 실행되지 않는다', 'historyApplicationNotForeground'),
+    ('이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다', 'historyScrollOwnerNotUnique'),
+    ('이력 스크롤 탐색의 기존 15초 예산을 초과했다', 'historyScrollDeadlineExceeded'),
+    ('이력의 기존 상세 스크롤 소유자가 사라지거나 표시되지 않는다', 'historyScrollOwnerUnavailable'),
+    ('이력 대상이 기존 상세 소유자 안에 없다', 'historyTargetOutsideOwner'),
+    ('기존 8회 실제 스크롤 안에 이력 대상에 도달하지 못했다', 'historyScrollLimitReached'),
+)
 
 
 def case_line(method=METHODS[0], event='passed', seconds='12.345', module='MirrorIOSUITests'):
@@ -116,6 +135,10 @@ def ui_failure_line(method=METHODS[0], source='Tests/MirrorUITests/MirrorUITests
 
 def ui_failure_message_line(message, **arguments):
     return ui_failure_line(**arguments).replace('expected/actual=/private/' + PRIVATE, message)
+
+
+def ui_query_failure_line(message, **arguments):
+    return ui_failure_message_line(message, **arguments).replace('XCTAssertTrue failed - ', '', 1)
 
 
 def viewport_line(payload):
@@ -1999,6 +2022,191 @@ class CIResultsDiagnosticsTests(unittest.TestCase):
         self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [{'invalidCount': 1}])
         for raw in ('Native UI error', '/private/', 'expected/actual', 'Swift Testing completion reports:',
                     METHODS[1], 'UI screenshot timing:', 'UI stdout diagnostics:', 'executedTests'):
+            self.assertNotIn(raw, output)
+        self.assertIn('::error::error: safe unrelated compiler failure', output)
+        record.assert_not_called()
+        self.assertEqual(output_path.read_text(), 'previous=value\n')
+        self.assertEqual(summary_path.read_text(), 'previous summary\n')
+
+    def test_native_query_reason_uses_only_known_prefix_after_owned_source_and_case(self):
+        log = self.root / 'ui-query-reasons.log'
+        private = '/private/' + PRIVATE + ' identifier=private AX frame=(1,2,3,4)'
+        for owner in ('MirrorUITests', 'MirrorIOSUITests.MirrorUITests', 'MirrorMacUITests.MirrorUITests'):
+            for index, (prefix, reason) in enumerate(QUERY_FAILURE_SAMPLES):
+                method = METHODS[index % len(METHODS)]
+                with self.subTest(owner=owner, prefix=prefix):
+                    failure = ui_query_failure_line(prefix + ': ' + private, method=method, line='475',
+                        source='/private/' + PRIVATE + '/Tests/MirrorUITests/MirrorUITests.swift')
+                    log.write_text(failure.replace('MirrorIOSUITests.MirrorUITests', owner) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': method,
+                        'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                        'failureKind': 'unclassified', 'queryFailureReason': reason,
+                    }])
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                    counts = self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE)[0]['reasonCounts']
+                    self.assertEqual(counts['assertionKind'], 1)
+                    self.assertEqual(sum(counts.values()), 1)
+                    for raw in (prefix, '/private/', 'identifier=', 'AX frame=', '::error::'):
+                        self.assertNotIn(raw, output)
+
+    def test_native_query_reason_requires_prefix_boundary_and_does_not_reclassify_assertions(self):
+        for prefix, reason in QUERY_FAILURE_SAMPLES:
+            for suffix in ('', '.', ':', ' ', ': ' + PRIVATE):
+                with self.subTest(prefix=prefix, suffix=suffix):
+                    output = self.capture(helper.report_ui_first_failure, [ui_query_failure_line(prefix + suffix)])
+                    self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE)[0]['queryFailureReason'], reason)
+            messages = (prefix + 'Unexpected: ' + PRIVATE, 'prefix ' + prefix + ': ' + PRIVATE,
+                        prefix.lower() + ': ' + PRIVATE, 'Native UI error: ' + prefix + ': ' + PRIVATE)
+            for message in messages:
+                with self.subTest(message=message):
+                    output = self.capture(helper.report_ui_first_failure, [ui_query_failure_line(message)])
+                    self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': METHODS[0],
+                        'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                        'failureKind': 'unclassified',
+                    }])
+            for kind in ('XCTAssertTrue', 'XCTAssertEqual', 'XCTFail'):
+                with self.subTest(prefix=prefix, kind=kind):
+                    output = self.capture(helper.report_ui_first_failure, [
+                        ui_failure_message_line(prefix + ': ' + PRIVATE, kind=kind)])
+                    self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [])
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': METHODS[0],
+                        'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                        'assertionKind': kind,
+                    }])
+
+    def test_native_query_reason_preserves_source_and_case_rejection_and_headerless_boundary(self):
+        payload = 'Failed to get matching snapshots: /private/' + PRIVATE
+        samples = (
+            (ui_query_failure_line(payload, source='OtherTests.swift'), 'sourceOwnership'),
+            (ui_query_failure_line(payload, source='/private/' + PRIVATE + '/MirrorUITests.swift'), 'sourceOwnership'),
+            (ui_query_failure_line(payload, line='-1'), 'sourceFormat'),
+            (ui_query_failure_line(payload, line='0'), 'lineRange'),
+            (ui_query_failure_line(payload, line='10001'), 'lineRange'),
+            (ui_query_failure_line(payload, method='test' + PRIVATE), 'caseOwnership'),
+            (ui_query_failure_line(payload).replace(METHODS[0] + ']', METHODS[0] + '-broken]'), 'caseFormat'),
+        )
+        log = self.root / 'ui-query-ownership.log'
+        for failure, reason in samples:
+            with self.subTest(reason=reason, failure=failure):
+                log.write_text(failure + '\n')
+                output = self.capture(helper.diagnostics, log)
+                self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+                counts = self.notices(output, UI_FIRST_FAILURE_REJECTION_REASONS_NOTICE)[0]['reasonCounts']
+                self.assertEqual(counts[reason], 1)
+                self.assertEqual(sum(counts.values()), 1)
+                self.assertNotIn('queryFailureReason', output)
+                self.assertNotIn('::error::', output)
+        for before in ([], [started_line(METHODS[0])],
+                       [started_line(METHODS[0]), started_line(METHODS[1])],
+                       [started_line(METHODS[0]), case_line(METHODS[0])]):
+            output = self.capture(helper.report_ui_first_failure,
+                                  before + [ui_query_failure_line(payload, explicit=False)])
+            self.assertEqual(output, '')
+        output = self.capture(helper.report_ui_first_failure, [
+            ui_query_failure_line(payload).replace('.MirrorUITests ', '.OtherTests ')])
+        self.assertEqual(output, '')
+
+    def test_native_query_reason_keeps_first_unclassified_location_without_promoting_later_causes(self):
+        unknown = ui_query_failure_line('Native UI error: ' + PRIVATE, method=METHODS[2], line='284')
+        snapshot = ui_query_failure_line('Failed to get matching snapshots: ' + PRIVATE, method=METHODS[0], line='475')
+        multiple = ui_query_failure_line('Multiple matching elements found: ' + PRIVATE, method=METHODS[1], line='939')
+        for lines, expected_method, expected_line, expected_reason in (
+            ([unknown, snapshot, multiple], METHODS[2], 284, None),
+            ([snapshot, unknown, multiple], METHODS[0], 475, 'failedToGetMatchingSnapshot'),
+            ([multiple, snapshot, unknown], METHODS[1], 939, 'multipleMatchingElements'),
+        ):
+            with self.subTest(expected_reason=expected_reason):
+                output = self.capture(helper.report_ui_first_failure, lines)
+                expected = {'scope': 'stdoutOnly', 'method': expected_method,
+                            'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': expected_line,
+                            'failureKind': 'unclassified'}
+                if expected_reason is not None:
+                    expected['queryFailureReason'] = expected_reason
+                self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE), [expected])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 3}])
+
+    def test_history_xctfail_reason_maps_fixed_sentences_and_keeps_payload_private(self):
+        log = self.root / 'ui-history-reasons.log'
+        for explicit in (True, False):
+            for sentence, reason in HISTORY_FAILURE_SAMPLES:
+                with self.subTest(explicit=explicit, reason=reason):
+                    message = sentence + '. /private/' + PRIVATE + ' AX frame=(1,2,3,4) title=private'
+                    log.write_text('\n'.join([started_line(METHODS[1]),
+                        ui_failure_message_line(message, method=METHODS[1], kind='XCTFail', explicit=explicit),
+                        case_line(METHODS[1], event='failed')]) + '\n')
+                    output = self.capture(helper.diagnostics, log)
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                        'scope': 'stdoutOnly', 'method': METHODS[1],
+                        'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                        'assertionKind': 'XCTFail', 'failureReason': reason,
+                    }])
+                    self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [])
+                    for raw in (sentence, '/private/', 'AX frame=', 'title=', '::error::'):
+                        self.assertNotIn(raw, output)
+
+    def test_history_xctfail_reason_requires_exact_sentence_boundary_and_approved_ownership(self):
+        for sentence, _ in HISTORY_FAILURE_SAMPLES:
+            for message in (sentence, sentence + ': ' + PRIVATE, sentence + '.' + PRIVATE,
+                            sentence + '가. ' + PRIVATE, '다른 실패. ' + sentence + '. ' + PRIVATE):
+                output = self.capture(helper.report_ui_first_failure, [ui_failure_message_line(message, kind='XCTFail')])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [{
+                    'scope': 'stdoutOnly', 'method': METHODS[0],
+                    'sourceFile': 'Tests/MirrorUITests/MirrorUITests.swift', 'line': 475,
+                    'assertionKind': 'XCTFail',
+                }])
+            known = sentence + '. ' + PRIVATE
+            for kind in ('XCTAssertTrue', 'XCTAssertEqual'):
+                output = self.capture(helper.report_ui_first_failure, [ui_failure_message_line(known, kind=kind)])
+                self.assertNotIn('failureReason', output)
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE)[0]['assertionKind'], kind)
+            invalid = [ui_failure_message_line(known, source='OtherTests.swift', kind='XCTFail'),
+                       ui_failure_message_line(known, method='test' + PRIVATE, kind='XCTFail'),
+                       ui_failure_message_line(known, kind='XCTFail').replace('.MirrorUITests ', '.OtherTests ')]
+            output = self.capture(helper.report_ui_first_failure, invalid)
+            self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+            self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 3}])
+            for before in ([], [started_line(METHODS[0]), started_line(METHODS[1])],
+                           [started_line(METHODS[0]), case_line(METHODS[0])]):
+                output = self.capture(helper.report_ui_first_failure,
+                    before + [ui_failure_message_line(known, kind='XCTFail', explicit=False)])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE), [])
+                self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+
+    def test_query_and_history_reasons_do_not_emit_payload_events_or_write_actions_outputs(self):
+        private = ('/private/' + PRIVATE + ' AX frame=(1,2,3,4) UI row scroll owner: private '
+                   'Test run with 999 tests passed ' + started_line(METHODS[4])
+                   + ' ' + screenshot_line('detail', '999') + ' ::error::' + PRIVATE)
+        query = ui_query_failure_line('Failed to get matching snapshots: ' + private, method=METHODS[1])
+        history = ui_failure_message_line(HISTORY_FAILURE_SAMPLES[0][0] + '. ' + private,
+                                          method=METHODS[1], kind='XCTFail')
+        mixed = query + ' ' + viewport_line({'private': private})
+        log = self.root / 'ui-query-history-private.log'
+        log.write_text('\n'.join([mixed, query, history, 'error: safe unrelated compiler failure']) + '\n')
+        output_path = self.root / 'github-output'
+        summary_path = self.root / 'github-step-summary'
+        output_path.write_text('previous=value\n')
+        summary_path.write_text('previous summary\n')
+        with mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                mock.patch.object(helper.sys, 'argv', ['ci_results.py', 'diagnostics', str(log)]), \
+                mock.patch.object(helper, 'record') as record:
+            output = self.capture(helper.main)
+        self.assertEqual(self.notices(output, UI_UNCLASSIFIED_FAILURE_NOTICE)[0]['queryFailureReason'],
+                         'failedToGetMatchingSnapshot')
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_NOTICE)[0]['failureReason'],
+                         'historyApplicationNotForeground')
+        self.assertEqual(self.notices(output, UI_FIRST_FAILURE_REJECTED_NOTICE), [{'invalidCount': 1}])
+        self.assertEqual(self.notices(output, UI_VIEWPORT_REJECTED_NOTICE), [{'invalidCount': 1}])
+        for raw in ('/private/', 'AX frame=', 'UI row scroll owners:', 'UI stdout diagnostics:',
+                    'Swift Testing completion reports:', 'UI screenshot timing:', METHODS[4], 'executedTests',
+                    '"result": "pass"'):
             self.assertNotIn(raw, output)
         self.assertIn('::error::error: safe unrelated compiler failure', output)
         record.assert_not_called()

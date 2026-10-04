@@ -50,6 +50,23 @@ UI_XCTFAIL_REASON_PREFIXES = (
     ('대상 UI를 포함하는 스크롤 컨테이너가 없다', 'scrollContainerMissing'),
     ('UI 요소에 도달할 수 없다', 'unhittableOrDisabled'),
 )
+UI_QUERY_FAILURE_PREFIXES = (
+    (r'^Failed to get matching snapshots?(?:\s|[.:]|$)', 'failedToGetMatchingSnapshot'),
+    (r'^Multiple matching elements found(?:\s|[.:]|$)', 'multipleMatchingElements'),
+    (r'^(?:No matching elements found|No matches found)(?:\s|[.:]|$)', 'noMatchingElements'),
+    (r'^AX snapshot timed out(?:\s|[.:]|$)', 'axSnapshotTimedOut'),
+    (r'^Element query evaluation failed(?:\s|[.:]|$)', 'elementQueryEvaluationFailed'),
+    (r'^Application is not running(?:\s|[.:]|$)', 'applicationNotRunning'),
+    (r'^Unhandled XCTest exception(?:\s|[.:]|$)', 'unhandledXCTestException'),
+)
+UI_HISTORY_XCTFAIL_REASON_PREFIXES = (
+    ('이력 탐색 중 앱이 전경에서 실행되지 않는다', 'historyApplicationNotForeground'),
+    ('이력 제어의 유일한 상세 스크롤 소유자를 확인할 수 없다', 'historyScrollOwnerNotUnique'),
+    ('이력 스크롤 탐색의 기존 15초 예산을 초과했다', 'historyScrollDeadlineExceeded'),
+    ('이력의 기존 상세 스크롤 소유자가 사라지거나 표시되지 않는다', 'historyScrollOwnerUnavailable'),
+    ('이력 대상이 기존 상세 소유자 안에 없다', 'historyTargetOutsideOwner'),
+    ('기존 8회 실제 스크롤 안에 이력 대상에 도달하지 못했다', 'historyScrollLimitReached'),
+)
 UI_ANY_CASE_EVENT_PATTERN = re.compile(
     r"Test Case '[-+]\[([^\s\]\r\n]+) (test[A-Za-z0-9_]+)\]' "
     r'(started|passed|failed|skipped)(?=[\s.]|$)')
@@ -624,6 +641,11 @@ def report_ui_first_failure(lines):
                 unclassified_failure = {'scope': 'stdoutOnly', 'method': case[1],
                                         'sourceFile': UI_FAILURE_SOURCE_FILE, 'line': line_number,
                                         'failureKind': 'unclassified'}
+                # 이미 위치·사례를 검증한 XCTest 접두사만 분류한다. AX 값·경로·뒤쪽 원문은 버린다.
+                reason = next((reason for pattern, reason in UI_QUERY_FAILURE_PREFIXES
+                               if re.match(pattern, payload)), None)
+                if reason is not None:
+                    unclassified_failure['queryFailureReason'] = reason
             continue
         if first_failure is None:
             first_failure = {'scope': 'stdoutOnly', 'method': case[1],
@@ -633,6 +655,9 @@ def report_ui_first_failure(lines):
                 # 승인한 source·case의 고정 접두사만 enum으로 바꾼다. 뒤쪽 원문은 출력하지 않는다.
                 reason = next((reason for prefix, reason in UI_XCTFAIL_REASON_PREFIXES
                                if payload.startswith('failed - ' + prefix + ': ')), None)
+                if reason is None:
+                    reason = next((reason for prefix, reason in UI_HISTORY_XCTFAIL_REASON_PREFIXES
+                                   if payload.startswith('failed - ' + prefix + '. ')), None)
                 if reason is not None:
                     first_failure['failureReason'] = reason
     if first_failure is not None:
