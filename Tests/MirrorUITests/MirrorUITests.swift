@@ -1842,7 +1842,8 @@ final class MirrorUITests: XCTestCase {
                           file: StaticString = #filePath, line: UInt = #line) throws {
         lastActionDescription = "activate id=\(identifier)"
         let target = try requireElement(identifier, in: app, timeout: timeout, preferButtons: true, file: file, line: line)
-        try interact(with: target, in: app, observeValidationRecovery: observeValidationRecovery, file: file, line: line)
+        try interact(with: target, in: app, knownIdentifier: identifier,
+                     observeValidationRecovery: observeValidationRecovery, file: file, line: line)
     }
 
     @MainActor
@@ -1943,6 +1944,7 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func interact(with element: XCUIElement, in app: XCUIApplication,
+                          knownIdentifier: String? = nil,
                           observeValidationRecovery: Bool = false,
                           file: StaticString = #filePath, line: UInt = #line) throws {
         lastActionDescription = "interact"
@@ -1950,7 +1952,8 @@ final class MirrorUITests: XCTestCase {
         // 숨은 요소를 좌표로 누르거나 disabled 행동을 통과시키지 않는다.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true AND enabled == true"), object: element)
         _ = XCTWaiter.wait(for: [ready], timeout: 3)
-        let identifier = element.identifier
+        // 같은 identifier로 방금 조회한 대상은 문자열을 재사용한다. 직접 전달한 요소는 새로 읽는다.
+        let identifier = knownIdentifier ?? element.identifier
         lastActionDescription = "interact id=\(identifier)"
         // 38d7849 iPhone 실제 AX: 행 중심 y=434, 목록 하단 y=403인데 hittable=true였다.
         // 작업 행은 소유 목록의 표시 영역 안으로 실제 스크롤한 뒤 일반 tap을 수행한다.
