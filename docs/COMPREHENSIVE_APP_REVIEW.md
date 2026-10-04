@@ -282,3 +282,9 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 같은64e Mac Native 결과 ZIP11315304412의 API digest·ZIP CRC·unit context/build receipt 연결을 확인했다. PNG13장을 원본 바이트 그대로 추출해 CRC·IDAT를 확인하고 root와 독립 검토자가 전부 직접 봤다. 입력·저장·설정·목록/검색·일정·정리·주간 선택·상세/편집의 보이는 주요 동작에 새 겹침·잘림은 발견되지 않았다. export manifest가 없어 각 PNG를 특정 실패 시점에 귀속하지 않으며, 기본 글자 정적 화면 확인은 실제 세 실패·최대 글자·VoiceOver 수용을 대체하지 않는다.
 
 5dac 실제 준비 검사536개에서 새 회귀13개는 각각ok였지만 기존 UI build receipt 검사27개 하위 사례가 실패했다. 보조 mode 인자를 추가하면서 inline Python을 직접 호출하던 기존8인자와9인자 unpack이 불일치한 것이 원인이었다. 8인자는 normal로 호환하고 명시9인자의 normal/bounded만 수용한다. 인자·경로 정규화를 기존 고정오류 처리 안으로 옮겨 잘못된 인자도 원문 없이 거절한다. 기존 회귀의 호출·기대값, normal 시간 정책·receipt schema와 hash 검증은 유지한다. 실제 Git·합성 Products의 두 mode 검증·바뀐 바이너리 거절 및 bounded5초 예외/알 수 없는 mode의 비공개 오류·receipt 보존 회귀2개를 추가했다. 독립 소스 검토와 AST·Bash 문법·diff 검사만 완료했으며 전체 재검증은 후속 Actions로 수행한다.
+
+### 오류 문구의 읽기 대비
+
+64e Mac Native 원본 PNG의 입력 오류 문구는 정상 크기 callout에 기본 red를 사용했다. 해당 영역 배경은 source surface와 같은 RGB(243,242,238), 불투명 글자 픽셀844개의 가장 강한 대비도3.1866:1이었다. ICC TRC와 색순응을 반영해도3.1857:1로 정상 글자 목표4.5:1에 못 미쳤다. 이것을 다른 Adaptive contrast 실패의 원인으로 연결하지 않는다.
+
+기존 동적 색 생성기로 errorText를 밝은 #A8241B·어두운 #FFB4AB로 정의하고 입력·정리·계획·상세·마감·설정·메뉴 막대의 오류 문구8곳에 적용한다. surface/canvas/card의 sRGB 산술 대비는 밝은6.3912/6.7206/7.1596, 어두운11.0337/10.1187/8.6946이다. 문구·상태·역할·접근성 식별자·글꼴·배치·동작은 유지한다. 독립 소스 검토에서 확인된 MirrorApp의 기존 MirrorDesign 모듈 import 누락도 보완했다. 이 작은 색상 변경에는 값을 복제하는 테스트를 추가하지 않고 기존 Actions 앱 빌드·UI와 다음 원본 PNG로 실제 표시를 확인한다. 재질 합성·전체 접근성 감사·실기기 수용을 산술만으로 통과시키지 않는다.

@@ -573,7 +573,7 @@ struct MirrorCaptureView: View {
     private var captureActions: some View {
         VStack(spacing: 8) {
             if let problem = model.problem {
-                Text(problem).font(.callout).foregroundStyle(.red)
+                Text(problem).font(.callout).foregroundStyle(MirrorPalette.errorText)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(problem).accessibilityIdentifier("state.error")
@@ -1344,7 +1344,7 @@ struct MirrorReviewView: View {
         }
         if let problem = model.problem {
             VStack(alignment: .leading, spacing: 8) {
-                Text(problem).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                Text(problem).foregroundStyle(MirrorPalette.errorText).fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(problem).accessibilityIdentifier("state.error")
                 Button("최신 상태 확인") { Task { await model.refreshReviewCard() } }
                     .frame(minHeight: 44).accessibilityIdentifier("state.retry")
@@ -1480,7 +1480,7 @@ struct MirrorPlanPicker: View {
                         .disabled(!model.canRetryPlanPicker(request))
                         .frame(minHeight: 44).accessibilityIdentifier("plan.retry")
                 }
-                if let problem = model.problem { Text(problem).foregroundStyle(.red) }
+                if let problem = model.problem { Text(problem).foregroundStyle(MirrorPalette.errorText) }
             }
             .formStyle(.grouped)
             #if os(iOS)
@@ -1831,7 +1831,7 @@ struct MirrorTaskDetail: View {
                                     .font(.callout)
                             }
                             if let problem = model.problem {
-                                Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
+                                Text(problem).foregroundStyle(MirrorPalette.errorText).accessibilityLabel(problem).accessibilityIdentifier("state.error")
                             }
                         }
                     } else {
@@ -2008,7 +2008,7 @@ struct MirrorTaskDetail: View {
                             .accessibilityIdentifier("detail.feedback")
                     }
                     if let problem = model.problem {
-                        Text(problem).font(.callout).foregroundStyle(.red)
+                        Text(problem).font(.callout).foregroundStyle(MirrorPalette.errorText)
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityLabel(problem).accessibilityIdentifier("detail.actionError")
@@ -2154,7 +2154,7 @@ private struct MirrorDeadlineEditor: View {
                     Text("편집을 시작한 뒤 작업이나 실제 마감이 바뀌었어요. 입력한 값은 유지했어요. 취소하고 최신 마감을 확인한 뒤 다시 편집하세요.").font(.callout)
                 }
                 if let problem = model.problem {
-                    Text(problem).foregroundStyle(.red).accessibilityLabel(problem).accessibilityIdentifier("state.error")
+                    Text(problem).foregroundStyle(MirrorPalette.errorText).accessibilityLabel(problem).accessibilityIdentifier("state.error")
                 }
                 Button("실제 마감 저장") { save(retrying: false) }
                     .disabled(model.projectionPending || request.pendingSubmission != nil)

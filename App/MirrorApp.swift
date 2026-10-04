@@ -1,4 +1,5 @@
 import MirrorDomain
+import MirrorDesign
 import MirrorSystem
 import AppIntents
 import SwiftUI
@@ -248,7 +249,7 @@ struct MirrorMenuBarContent: View {
             } else if model.projectionPending {
                 Text("저장 결과를 확인하고 있어요")
             } else if let problem = model.problem {
-                Text(problem).foregroundStyle(.red)
+                Text(problem).foregroundStyle(MirrorPalette.errorText)
             } else if title.isEmpty, let feedback = model.feedback {
                 Text(feedback).font(.caption)
             }

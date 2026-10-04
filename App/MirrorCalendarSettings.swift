@@ -629,7 +629,7 @@ struct MirrorSettingsView: View {
         if let problem = model.problem {
             Section {
                 Label(problem, systemImage: "exclamationmark.circle")
-                    .foregroundStyle(.red).accessibilityIdentifier("state.error")
+                    .foregroundStyle(MirrorPalette.errorText).accessibilityIdentifier("state.error")
             }
         }
     }
