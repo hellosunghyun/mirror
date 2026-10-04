@@ -148,6 +148,58 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         columns = '\n'.join('    ' + '\t'.join(values[index:index + 3]) for index in range(0, len(values), 3))
         self.assertTrue(helper.supports_ui(public_help(columns)))
 
+    def test_zero_column_and_indented_headings_require_the_same_complete_scoped_list(self):
+        for indent in ('', '  ', '\t'):
+            with self.subTest(indent=repr(indent)):
+                text = ('Usage: simctl ui <device> <option> [<arguments>]\n'
+                        + indent + 'content_size\n\n'
+                        + '\n'.join(indent + '    ' + value for value in helper.CATEGORIES)
+                        + '\n' + indent + 'appearance\n' + indent + '    ' + PRIVATE)
+                metadata = helper.help_metadata(text)
+                self.assertTrue(metadata['supported'])
+                self.assertEqual(metadata['sectionCount'], 1)
+                self.assertEqual(metadata['headingIndent'], len(indent))
+                self.assertEqual(metadata['firstFollowingIndent'], len(indent) + 4)
+                self.assertEqual(metadata['firstBodyIndent'], len(indent) + 4)
+                self.assertEqual(metadata['knownCategoryCount'], 12)
+                self.assertEqual(metadata['wholeHelpTokensPresentCount'], 12)
+                self.assertNotIn(PRIVATE, json.dumps(metadata))
+
+    def test_zero_column_heading_does_not_merge_other_options_paragraphs_or_streams(self):
+        prefix = 'Usage: simctl ui <device> <option> [<arguments>]\ncontent_size\n'
+        first = '\n'.join('    ' + value for value in helper.CATEGORIES[:6])
+        last = '\n'.join('    ' + value for value in helper.CATEGORIES[6:])
+        complete = first + '\n' + last
+        for body in (first + '\nappearance\n' + last, first + '\n\n' + last,
+                     'appearance\n' + complete, '  appearance\n' + complete,
+                     complete + '\n    unknown-category', first + '\n  content_size\n' + last):
+            with self.subTest(body=body):
+                self.assertFalse(helper.supports_ui(prefix + body))
+        report, _ = helper.help_contract(prefix + first, prefix + last)
+        self.assertEqual(report['contractFrom'], 'none')
+        duplicate = helper.help_metadata(prefix + first + '\n  content_size\n' + last)
+        self.assertEqual(duplicate['sectionCount'], 2)
+        self.assertIsNone(duplicate['headingIndent'])
+        self.assertFalse(duplicate['categoryListComplete'])
+
+    def test_shape_metadata_distinguishes_no_section_outside_tokens_and_unindented_body(self):
+        categories = '\n'.join('    ' + value for value in helper.CATEGORIES)
+        outside = helper.help_metadata('appearance\n' + categories + '\n' + PRIVATE)
+        self.assertEqual(outside['sectionCount'], 0)
+        self.assertIsNone(outside['headingIndent'])
+        self.assertEqual(outside['wholeHelpTokensPresent'], list(helper.CATEGORIES))
+        self.assertEqual(outside['knownTokensPresentCount'], 0)
+        self.assertFalse(outside['supported'])
+        unindented = helper.help_metadata('content_size\n' + ', '.join(helper.CATEGORIES))
+        self.assertEqual(unindented['sectionCount'], 1)
+        self.assertEqual(unindented['headingIndent'], 0)
+        self.assertEqual(unindented['firstFollowingIndent'], 0)
+        self.assertIsNone(unindented['firstBodyIndent'])
+        self.assertEqual(unindented['wholeHelpTokensPresentCount'], 12)
+        self.assertEqual(unindented['knownTokensPresentCount'], 0)
+        self.assertFalse(unindented['categoryListComplete'])
+        self.assertNotIn(PRIVATE, json.dumps(outside))
+
     def test_category_contract_rejects_fragments_unknown_words_duplicates_and_cross_option_lists(self):
         values = helper.CATEGORIES
         lines = ['    ' + value for value in values]

@@ -64,22 +64,40 @@ def category_row(line):
     return tokens, 'bullet' if bullet else kind
 
 
+def fixed_category_presence(text):
+    return [value for value in CATEGORIES if re.search(r'(?<![\w-])' + re.escape(value) + r'(?![\w-])', text)]
+
+
 def category_listing(text):
     # 두 option, 두 문단 또는 두 채널의 부분 목록을 합쳐 지원 계약을 만들지 않는다.
-    sections = list(re.finditer(r'(?m)^([ \t]+)content_size[ \t]*$', text))
+    sections = list(re.finditer(r'(?m)^([ \t]*)content_size[ \t]*$', text))
+    whole_help = fixed_category_presence(text)
     result = {'knownCategories': [], 'knownCategoryCount': 0, 'categoryFormat': 'none',
-              'categoryListComplete': False, 'knownTokensPresent': [], 'knownTokensPresentCount': 0}
+              'categoryListComplete': False, 'knownTokensPresent': [], 'knownTokensPresentCount': 0,
+              'sectionCount': len(sections), 'headingIndent': None, 'firstBodyIndent': None,
+              'firstFollowingIndent': None, 'wholeHelpTokensPresent': whole_help,
+              'wholeHelpTokensPresentCount': len(whole_help)}
     if len(sections) != 1:
         return result
     section = sections[0]
-    block = []
+    result['headingIndent'] = len(section[1])  # tab도 한 문자로 센다. 시각적인 열 번호를 추정하지 않는다.
+    block, ambiguous_heading = [], False
     for line in text[section.end():].splitlines():
-        if line.strip() and len(line) - len(line.lstrip()) <= len(section[1]):
-            break
+        if line.strip():
+            indent = len(line) - len(line.lstrip())
+            if result['firstFollowingIndent'] is None:
+                result['firstFollowingIndent'] = indent
+            if indent <= len(section[1]):
+                break
+            # 들여쓰기 계층이 불분명한 다른 bare heading을 현재 option의 본문으로 흡수하지 않는다.
+            if re.fullmatch(r'[a-z][a-z0-9_-]*', line.strip()) and line.strip() not in CATEGORIES:
+                ambiguous_heading = True
+                break
+            if result['firstBodyIndent'] is None:
+                result['firstBodyIndent'] = indent
         block.append(line)
     # 등장 여부는 안전한 고정 token만 기록하며, 목록 문법이나 지원 계약의 증거로 사용하지 않는다.
-    present = [value for value in CATEGORIES if re.search(r'(?<![\w-])' + re.escape(value)
-                                                        + r'(?![\w-])', '\n'.join(block))]
+    present = fixed_category_presence('\n'.join(block))
     result.update(knownTokensPresent=present, knownTokensPresentCount=len(present))
     groups, group, indent = [], [], None
     for line in [*block, '']:
@@ -114,7 +132,8 @@ def category_listing(text):
                   else 'mixed' if formats else 'none')
     if len(candidates) == 1:
         rows, valid = candidates[0]
-        result['categoryListComplete'] = valid and len(rows) == len(CATEGORIES) and set(rows) == set(CATEGORIES)
+        result['categoryListComplete'] = (not ambiguous_heading and valid and len(rows) == len(CATEGORIES)
+                                          and set(rows) == set(CATEGORIES))
     return result
 
 
