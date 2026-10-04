@@ -2011,7 +2011,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func requireRow(_ title: String, in app: XCUIApplication) throws -> XCUIElement {
         let row = taskRow(title, in: app)
-        guard row.waitForExistence(timeout: 15) else {
+        guard row.exists || row.waitForExistence(timeout: 15) else {
             printFailurePrefix("저장된 작업 행을 찾지 못했다: \(title)")
             XCTFail("저장된 작업 행을 찾지 못했다: \(title)")
             throw UIHarnessError.missingElement(title)
