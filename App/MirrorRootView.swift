@@ -122,8 +122,11 @@ struct MirrorRootView: View {
         .onChange(of: navigation.selectedTaskID) { _, _ in retainBasePickerIfNeeded() }
         .modifier(MirrorDeadlineConfirmation(enabled: !isReviewPresented && model.picker(in: navigation) == nil && navigation.selectedTaskID == nil))
         .environment(navigation)
-        .onAppear { model.registerScene(navigation, windowRequestID: windowRequestID) }
-        .task { model.registerScene(navigation, windowRequestID: windowRequestID); await model.start() }
+        .onAppear {
+            model.registerScene(navigation, windowRequestID: windowRequestID)
+            model.setSceneActive(navigation, active: scenePhase == .active)
+        }
+        .task { await model.start() }
         .onChange(of: model.sceneNavigationGeneration) { _, _ in
             libraryNavigation = MirrorLibraryNavigationState()
             calendarNavigation = MirrorCalendarNavigationState()
