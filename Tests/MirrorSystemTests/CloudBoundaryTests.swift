@@ -171,6 +171,59 @@ struct CloudBoundaryTests {
         try await preserved.suspend()
     }
 
+    @Test("명시적 로컬 복귀 뒤 같은 프로세스의 서비스는 중지된 writer 대신 현재 원본을 연다",
+          arguments: [false, true])
+    func disableReplacesSuspendedProcessServices(exportBeforeDisable: Bool) async throws {
+        let configuration = Self.configuration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let originalServices = try await SystemCompositionRoot.open(configuration: configuration)
+        let originalStore = await originalServices.store
+        let instant = Date(timeIntervalSince1970: 1_790_000_000)
+        let context = try await originalStore.currentContext(at: instant)
+        let initialID = UUID()
+        let initial = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: "before-cloud-transition", source: .app,
+            context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .capture(taskID: initialID, content: try TaskContent(title: "연결 전 원본")))
+        let committed = await originalStore.execute(initial, at: instant)
+        #expect(committed.state == .locallyCommitted)
+        let original = try await originalStore.snapshot()
+        if exportBeforeDisable {
+            _ = try await originalStore.exportAndSuspend(exportedAt: instant)
+        } else {
+            try await originalStore.suspend()
+        }
+
+        // 명시적인 disable 전에는 캐시 조회만으로 중지된 writer를 다시 열지 않는다.
+        let stillSuspended = try await SystemCompositionRoot.open(configuration: configuration)
+        #expect(stillSuspended === originalServices)
+        await #expect(throws: StoreError.obsoleteEpoch) { _ = try await stillSuspended.store.snapshot() }
+        let cloud = CloudSyncService(localConfiguration: configuration,
+            setup: CloudSyncSetup(containerIdentifier: nil, appGroupIdentifier: nil))
+        let local = try await cloud.disable()
+        let reopened = try await SystemCompositionRoot.open(configuration: configuration)
+        let intentStore = await reopened.store
+        #expect(reopened !== originalServices)
+        #expect(intentStore !== originalStore)
+        #expect(try await reopened.tasks().map(\.taskID) == [initialID])
+        #expect(try await intentStore.snapshot().records == original.records)
+        let repeated = await intentStore.execute(initial, at: instant)
+        #expect(repeated.state == .alreadyApplied)
+        #expect(repeated.operationID == committed.operationID)
+
+        // 다음 Intent가 연 저장소의 새 원본은 disable이 앱에 돌려준 저장소에서도 보인다.
+        let nextID = UUID()
+        let next = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: "after-cloud-transition", source: .shortcut,
+            context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .capture(taskID: nextID, content: try TaskContent(title: "복귀 후 원본")))
+        let saved = await intentStore.execute(next, at: instant)
+        #expect(saved.state == .locallyCommitted)
+        #expect(Set(try await local.snapshot().tasks.map(\.taskID)) == Set([initialID, nextID]))
+        #expect(try await local.snapshot().records.count == original.records.count + 1)
+        try await intentStore.suspend()
+        try await local.suspend()
+        await SystemCompositionRoot.invalidate(directory: configuration.directory)
+    }
+
     @Test("일치하는 시작 pointer는 계정별 구성만 반환하고 pointer나 원본을 변경하지 않는다")
     func coldStartMatchingIdentityKeepsConfiguration() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MirrorCloudMatching-\(UUID().uuidString)")

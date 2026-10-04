@@ -347,7 +347,10 @@ public actor CloudSyncService {
         activeStore = nil; candidateStore = nil; pendingArchive = nil; pendingToken = nil; pendingLocalStore = nil
         fingerprint = nil; identityTokenArchive = nil; observations = []; runningEvents = [:]; observedStoreIDs = []
         currentStatus = .localOnly
-        return try await MirrorStore(configuration: localConfiguration)
+        let local = try await MirrorStore(configuration: localConfiguration)
+        // 명시적 로컬 복귀가 성공한 뒤에만 exportAndSuspend로 닫힌 프로세스 캐시를 버린다.
+        await SystemCompositionRoot.invalidate(directory: localConfiguration.directory)
+        return local
     }
     /// 저장의 핵심 경로는 로컬 계정 경계만 검사한다. 네트워크 실패로 원본 쓰기를 롤백하지 않는다.
     public func validateLocalIdentity() async -> Bool {
