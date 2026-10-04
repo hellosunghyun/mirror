@@ -471,8 +471,8 @@ struct MirrorSettingsView: View {
             .frame(maxWidth: .infinity)
             .background(MirrorPalette.canvas)
             .navigationTitle("설정")
+            .toolbar { settingsCloseToolbar }
         }
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() }.accessibilityIdentifier("settings.close") } }
             .fileExporter(isPresented: $exporting, document: MirrorArchiveDocument(data: model.archiveData ?? Data()), contentType: .json, defaultFilename: model.exportFileName) { result in
                 if case .failure = result { model.problem = "내보내기 파일을 저장하지 못했어요. 원본은 유지했어요." }
                 model.archiveData = nil
@@ -522,6 +522,14 @@ struct MirrorSettingsView: View {
         .frame(minWidth: 300, idealWidth: 580, minHeight: 500)
     }
 
+    @ToolbarContentBuilder
+    private var settingsCloseToolbar: some ToolbarContent {
+        ToolbarItem(id: "settings.close", placement: .cancellationAction) {
+            Button("닫기") { dismiss() }
+                .accessibilityIdentifier("settings.close")
+        }
+    }
+
     @ViewBuilder
     private var operationErrorSection: some View {
         if let problem = model.problem {
@@ -569,6 +577,7 @@ struct MirrorSettingsView: View {
         .background(MirrorPalette.canvas)
         .navigationTitle("진단 기록")
         .accessibilityIdentifier("settings.diagnostics.page")
+        .toolbar { settingsCloseToolbar }
     }
 
     private var archivePage: some View {
@@ -583,6 +592,7 @@ struct MirrorSettingsView: View {
         .background(MirrorPalette.canvas)
         .navigationTitle("내보내기와 복원")
         .accessibilityIdentifier("settings.archive.page")
+        .toolbar { settingsCloseToolbar }
     }
 
     private var deletionPage: some View {
@@ -597,6 +607,7 @@ struct MirrorSettingsView: View {
         .background(MirrorPalette.canvas)
         .navigationTitle("데이터 삭제")
         .accessibilityIdentifier("settings.deletion.page")
+        .toolbar { settingsCloseToolbar }
     }
 
     private var planningSection: some View {

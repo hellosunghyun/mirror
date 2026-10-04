@@ -1,5 +1,13 @@
 # Ad Hoc 빌드와 GitHub Release
 
+## 2026-10-04 릴리즈 요청의 검증 상태
+
+`b9101e3a5c84e80be682653ad0a1dcc0e3e60c78`의 [배포 실행 103](https://github.com/hellosunghyun/mirror/actions/runs/37152816846)은 최종 실패했다. SwiftPM·Mac 단위 테스트는 각각 206개, iPhone·iPad는 각각 203개가 통과했지만 실제 UI 검사는 Mac 15분·모바일 20분 제한으로 종료됐다. 최종 UI 결과가 없으므로 stdout의 부분 통과를 배포 게이트 통과로 사용하지 않는다. 두 archive와 두 게시 단계는 skipped이며 이 소스의 IPA·DMG는 생성되지 않았다.
+
+설정 분리 변경에서 닫기 toolbar가 NavigationStack 밖으로 이동한 소스 회귀를 보완한다. 설정 본화면과 진단·복원·삭제 페이지의 Form마다 같은 toolbar item과 기존 sheet-level dismiss를 명시한다. 기존 설정 페이지 닫힘·여섯 UI 사례·스크린샷·검증 및 배포 게이트는 유지하며 수정의 실제 효과는 새 Actions에서 확인한다. iPad 보조 일정의 실제 접근성 값과 UI 실패 원인은 아직 미확정이다.
+
+공개된 빌드 80의 IPA·공증 DMG는 이전 소스 `326fc23`의 산출물이며 이번 소스의 검증 결과로 대신하지 않는다. 최신 실패 진단 산출물 다운로드는 현재 환경에서 GitHub 저장소 호스트 `productionresultssa4.blob.core.windows.net`에 대한 Forbidden 응답으로 차단됐다. 환경 설정 초안에 필요한 호스트를 추가하되 실제 설정 적용과 다운로드 성공은 별도로 확인한다.
+
 사용자가 제공한 Ad Hoc 프로파일 적용과 각 push의 GitHub Release 게시를 승인했다. [배포 workflow](../.github/workflows/adhoc-release.yml)는 모든 push와 수동 실행을 처리한다. 각 실행의 검증을 보존하며 새 push로 이전 배포를 취소하지 않는다.
 
 macOS용 Developer ID 서명·공증 DMG도 같은 릴리스에 추가한다. 별도 Secret과 실제 검증 단계는 [macOS 배포 안내](MACOS_RELEASE.md)를 따른다.
