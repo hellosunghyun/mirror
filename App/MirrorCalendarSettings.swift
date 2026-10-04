@@ -569,10 +569,12 @@ struct MirrorSettingsView: View {
     private var settingsOverview: some View {
         Section {
             LabeledContent("저장 상태") {
-                Text(model.storageLabel).accessibilityIdentifier("settings.syncState")
+                Text(model.storageLabel).foregroundStyle(MirrorPalette.supportingText)
+                    .accessibilityIdentifier("settings.syncState")
             }
             LabeledContent("iCloud") {
-                Text(cloudStatusLabel(model.cloudSyncStatus)).accessibilityIdentifier("settings.cloudState")
+                Text(cloudStatusLabel(model.cloudSyncStatus)).foregroundStyle(MirrorPalette.supportingText)
+                    .accessibilityIdentifier("settings.cloudState")
             }
         }
     }
