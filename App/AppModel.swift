@@ -1646,12 +1646,19 @@ final class AppModel {
     }
     func enableNotifications(review: Bool, deadlines: Bool) async {
         guard let services else { return }
+        let identity = storeObservationID
         if review || deadlines {
             do {
                 let notifications = await services.notifications
-                notificationsAuthorized = try await notifications.requestAuthorization()
-                guard notificationsAuthorized else { problem = "알림이 허용되지 않았어요. 앱에서 직접 정리와 마감을 확인할 수 있어요."; return }
-            } catch { problem = "알림 권한을 확인하지 못했어요."; return }
+                guard storeObservationID == identity, self.services === services else { return }
+                let authorized = try await notifications.requestAuthorization()
+                guard storeObservationID == identity, self.services === services else { return }
+                notificationsAuthorized = authorized
+                guard authorized else { problem = "알림이 허용되지 않았어요. 앱에서 직접 정리와 마감을 확인할 수 있어요."; return }
+            } catch {
+                guard storeObservationID == identity, self.services === services else { return }
+                problem = "알림 권한을 확인하지 못했어요."; return
+            }
         }
         preferences.reviewNotifications = review; preferences.deadlineNotifications = deadlines
         savePreferences()
