@@ -633,6 +633,187 @@ class BatchResultGateTests(unittest.TestCase):
                         'cases': [{'method': case, 'terminal': 'notObserved',
                                    'lastProgress': {'phase': 'started', 'sequence': 1, 'captureOrdinal': 0}}]})
 
+    def disclosure_source_fixture(self, source_root):
+        source = source_root / helper.SOURCE
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('\n'.join((
+            '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {',
+            '        progress(.pickerStarted)',
+            '        let initialState = textValue(disclosure)',
+            '        recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)',
+            '        XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")',
+            '    }',
+        )))
+        return 5
+
+    def disclosure_log_fixture(self, source_root, case=None, **changes):
+        case = helper.CASES[0] if case is None else case
+        sequence = 19 if case == helper.CASES[0] else 70
+        value = {'schemaVersion': 1, 'method': case, 'phase': 'pickerStarted',
+                 'progressSequence': sequence, 'callerLine': 5, 'target': 'planDisclosure',
+                 'observationTiming': 'afterMismatch', 'role': 'disclosureTriangle',
+                 'valueKind': 'string', 'valueState': 'other', **changes}
+        assertion = self.query_failure_fixture(
+            'XCTAssertEqual failed: SYNTHETIC_PRIVATE_VALUE /private/synthetic/title',
+            bundle='MirrorMacBatchUITests', case=case, line=5, column=1, source_root=source_root)
+        return ([event(case, 'started', 'MirrorMacBatchUITests')] + progress_lines(case, sequence)
+                + [helper.DISCLOSURE_MARKER + json.dumps(value), assertion,
+                   event(case, 'failed', 'MirrorMacBatchUITests')])
+
+    def test_disclosure_failure_diagnostics_bind_after_mismatch_to_owned_failed_picker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            states = [('string', state) for state in ('folded', 'expanded', 'empty', 'placeholder', 'other')]
+            states += [('number', state) for state in ('binaryZero', 'binaryOne', 'other')]
+            states += [('nil', 'other'), ('other', 'other')]
+            for case in helper.CASES:
+                for index, (kind, state) in enumerate(states):
+                    role = ('disclosureTriangle', 'button', 'other')[index % 3]
+                    lines = self.disclosure_log_fixture(source_root, case, role=role, valueKind=kind, valueState=state)
+                    with self.subTest(case=case, kind=kind, state=state):
+                        reports = helper.disclosure_failure_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', source_root)
+                        self.assertEqual(len(reports), 1)
+                        self.assertEqual(reports[0], {'scope': 'partialFailureOnly', 'schemaVersion': 1,
+                            'method': case, 'phase': 'pickerStarted', 'progressSequence': 19 if case == helper.CASES[0] else 70,
+                            'callerLine': 5, 'target': 'planDisclosure', 'observationTiming': 'afterMismatch',
+                            'role': role, 'valueKind': kind, 'valueState': state,
+                            'sourceFile': helper.SOURCE, 'line': 5, 'column': 1, 'terminal': 'failed'})
+                        self.assertNotIn('SYNTHETIC_PRIVATE_VALUE', json.dumps(reports))
+                        self.assertNotIn('/private/synthetic/title', json.dumps(reports))
+                        self.assertNotIn(str(source_root), json.dumps(reports))
+                        with self.assertRaises(helper.BatchError):
+                            helper.validate_outcome({**EXPECTED, **reports[0]}, EXPECTED)
+
+    def test_disclosure_failure_diagnostics_reject_unknown_fields_types_and_incompatible_states(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            changes = ({'schemaVersion': True}, {'schemaVersion': 2}, {'method': 'testUnexpected'},
+                       {'phase': 'pickerVerified'}, {'progressSequence': True}, {'progressSequence': 18},
+                       {'progressSequence': 97}, {'callerLine': True}, {'callerLine': 0}, {'callerLine': 100001},
+                       {'target': 'SYNTHETIC_PRIVATE_TITLE'}, {'observationTiming': 'beforeMismatch'},
+                       {'role': 'SYNTHETIC_PRIVATE_ROLE'}, {'role': []}, {'valueKind': []},
+                       {'valueKind': 'SYNTHETIC_PRIVATE_KIND'}, {'valueState': 'SYNTHETIC_PRIVATE_VALUE'},
+                       {'valueKind': 'nil', 'valueState': 'empty'}, {'valueKind': 'other', 'valueState': 'folded'},
+                       {'valueKind': 'number', 'valueState': 'folded'}, {'valueState': 'binaryZero'},
+                       {'valueState': []}, {'extra': 'SYNTHETIC_PRIVATE_VALUE'})
+            for change in changes:
+                with self.subTest(change=change):
+                    value = '\n'.join(self.disclosure_log_fixture(source_root, **change))
+                    self.assertEqual(helper.disclosure_failure_diagnostics(value, 'MirrorMacBatchUITests', source_root), [])
+            lines = self.disclosure_log_fixture(source_root)
+            marker = lines[-3]
+            malformed = (marker[:-1], marker.replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1'),
+                         marker.replace('"schemaVersion": 1', '"schemaVersion": NaN'), marker.ljust(768),
+                         helper.DISCLOSURE_MARKER + '[]', helper.DISCLOSURE_MARKER + '{}',
+                         'SDK error: ' + marker, 'title="' + marker + '"')
+            for invalid in malformed:
+                with self.subTest(marker=invalid):
+                    value = '\n'.join(lines[:-3] + [invalid] + lines[-2:])
+                    self.assertEqual(helper.disclosure_failure_diagnostics(value, 'MirrorMacBatchUITests', source_root), [])
+            lines[-3] = marker.ljust(767)
+            self.assertEqual(len(helper.disclosure_failure_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', source_root)), 1)
+
+    def test_disclosure_failure_diagnostics_reject_wrong_source_call_and_assertion(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            lines = self.disclosure_log_fixture(source_root)
+            source_path = source_root / helper.SOURCE
+            original = source_path.read_text()
+            for changed in (original.replace('verifyPicker(', 'anotherPicker('),
+                            original.replace('progress(.pickerStarted)', 'progress(.pickerVerified)'),
+                            original.replace('let initialState = textValue(disclosure)', 'let initialState = textValue(other)'),
+                            original.replace('initialState: initialState', 'initialState: other'),
+                            original.replace('callerLine: #line + 1', 'callerLine: 5'),
+                            original.replace('XCTAssertEqual(initialState, "접힘"', 'XCTAssertEqual(initialState, "펼쳐짐"'),
+                            original + '\n' + original):
+                source_path.write_text(changed)
+                self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', source_root), [])
+            source_path.write_text(original)
+            assertion = lines[-2]
+            for invalid in (assertion.replace(':5:1:', ':4:1:'), assertion.replace(':5:1:', ':7:1:'),
+                            assertion.replace(':5:1:', ':5:99999:'), assertion.replace('XCTAssertEqual', 'XCTAssertTrue'),
+                            assertion.replace(helper.SOURCE, 'Tests/Other.swift'),
+                            assertion.replace(str(source_root), '/private/foreign'),
+                            assertion.replace('MirrorMacBatchUITests', 'MirrorIOSBatchUITests'),
+                            assertion.replace(helper.CASES[0], helper.CASES[1])):
+                value = '\n'.join(lines[:-2] + [invalid, lines[-1]])
+                self.assertEqual(helper.disclosure_failure_diagnostics(value, 'MirrorMacBatchUITests', source_root), [])
+            with mock.patch.object(helper.SUPPORT, 'read_regular', side_effect=OSError('SYNTHETIC_PRIVATE_VALUE')):
+                self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', source_root), [])
+
+    def test_disclosure_failure_diagnostics_require_same_active_phase_and_failed_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.disclosure_source_fixture(source_root)
+            lines = self.disclosure_log_fixture(source_root)
+            before, marker, assertion, terminal = lines[:-3], lines[-3], lines[-2], lines[-1]
+            invalid = ([marker] + before + [assertion, terminal], before + [assertion, marker, terminal],
+                       before + [assertion, terminal, marker], before + [marker, marker, assertion, terminal],
+                       before + [marker, assertion, assertion, terminal], before + [marker, assertion],
+                       before + [marker, terminal], before + [marker, assertion, terminal.replace('failed.', 'skipped.')],
+                       before + [marker, assertion, terminal.replace('failed.', 'passed.')],
+                       before[:-1] + [marker, assertion, terminal],
+                       before + [marker, progress_lines(helper.CASES[0], 20)[-1], assertion, terminal],
+                       [before[0], event(helper.CASES[1], 'started', 'MirrorMacBatchUITests')] + lines[1:],
+                       before + [marker, assertion, terminal.replace(helper.CASES[0], helper.CASES[1])])
+            for wrong in invalid:
+                self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(wrong), 'MirrorMacBatchUITests', source_root), [])
+            value = '\n'.join(lines)
+            self.assertEqual(helper.disclosure_failure_diagnostics(value, BUNDLE, source_root), [])
+            self.assertEqual(helper.disclosure_failure_diagnostics(value.replace('MirrorMacBatchUITests', BUNDLE),
+                                                                  'MirrorMacBatchUITests', source_root), [])
+            with mock.patch.object(helper, 'MAX_LOG', 8):
+                self.assertEqual(helper.disclosure_failure_diagnostics(value, 'MirrorMacBatchUITests', source_root), [])
+            self.assertEqual(helper.disclosure_failure_diagnostics(None, 'MirrorMacBatchUITests', source_root), [])
+            self.assertEqual(helper.disclosure_failure_diagnostics('\n'.join(before + [assertion, terminal]),
+                                                                  'MirrorMacBatchUITests', source_root), [])
+
+    def test_disclosure_failure_notice_is_mac_failure_only_and_preserves_existing_notices(self):
+        native_source = (ROOT / helper.SOURCE).read_text().splitlines()
+        actual_line = next(index for index, line in enumerate(native_source, 1)
+                           if line.strip() == 'XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")')
+        lines = self.disclosure_log_fixture(ROOT, callerLine=actual_line)
+        lines[-2] = lines[-2].replace(':5:1:', ':' + str(actual_line) + ':1:')
+        value = '\n'.join(lines)
+        actual = helper.disclosure_failure_diagnostics(value, 'MirrorMacBatchUITests')
+        self.assertEqual(len(actual), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            (directory / 'test.log').write_text(value)
+            output_path, summary_path = directory / 'github-output', directory / 'github-summary'
+            output_path.write_text('previous=value\n')
+            summary_path.write_text('previous summary\n')
+            for platform, enabled in (('macos', True), ('macos', False), ('ipad', True)):
+                expected = {**EXPECTED, 'platform': platform}
+                with mock.patch.object(helper, 'context_for', return_value={'bundle': 'MirrorMacBatchUITests'}), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output_path),
+                                                           'GITHUB_STEP_SUMMARY': str(summary_path)}), \
+                        mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                    helper.diagnostics(directory, expected, 'test', partial_failure=enabled)
+                messages = [call.args[0] for call in printed.call_args_list]
+                self.assertEqual(messages[0], '::notice::Batch UI source diagnostics: ' + json.dumps(
+                    {**expected, 'phase': 'test', 'scope': 'stdoutOnly',
+                     'locations': helper.failure_locations(value, 'MirrorMacBatchUITests')}, sort_keys=True))
+                self.assertEqual(messages[1], '::notice::Batch UI query failure diagnostics: ' + json.dumps(
+                    {**expected, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': [], 'locationCount': 0}, sort_keys=True))
+                notices = [message for message in messages if message.startswith('::notice::Batch UI disclosure failure diagnostics: ')]
+                self.assertEqual(len(notices), int(platform == 'macos' and enabled))
+                if notices:
+                    self.assertEqual(json.loads(notices[0].split(': ', 1)[1]),
+                                     {**expected, 'scope': 'partialFailureOnly', 'locations': actual, 'locationCount': 1})
+                if enabled:
+                    self.assertEqual(messages[2], '::notice::Batch UI partial progress diagnostics: ' + json.dumps(
+                        {**expected, 'scope': 'partialFailureOnly', **helper.partial_progress(value, 'MirrorMacBatchUITests')}, sort_keys=True))
+                write.assert_not_called()
+                self.assertEqual(output_path.read_text(), 'previous=value\n')
+                self.assertEqual(summary_path.read_text(), 'previous summary\n')
+                self.assertFalse((directory / 'safe-outcome.json').exists())
+                for private in ('SYNTHETIC_PRIVATE_VALUE', '/private/synthetic/title', str(ROOT)):
+                    self.assertNotIn(private, '\n'.join(messages))
+
     def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             source_root = Path(temporary).resolve()

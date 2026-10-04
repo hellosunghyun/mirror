@@ -26,6 +26,7 @@ SOURCE = 'Tests/MirrorBatchUITests/MirrorBatchUITests.swift'
 COUNT_FIELDS = {'totalTestCount': 2, 'passedTests': 2, 'failedTests': 0, 'skippedTests': 0}
 MAX_LOG = 64 * 1024 * 1024
 PROGRESS_MARKER = 'Batch UI progress: '
+DISCLOSURE_MARKER = 'Batch UI disclosure failure diagnostic: '
 
 
 class BatchError(Exception):
@@ -427,6 +428,90 @@ def partial_progress(log, bundle):
     return {'status': 'partial', 'cases': reports} if reports else unavailable
 
 
+def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
+    """실패 후 고정 관측을 같은 Mac 사례·진행·실제 접힘 assertion에만 연결한다."""
+    if (bundle != 'MirrorMacBatchUITests' or not isinstance(log, str)
+            or len(log.encode('utf-8')) > MAX_LOG or DISCLOSURE_MARKER.rstrip() not in log):
+        return []
+    if partial_progress(log, bundle).get('status') != 'partial':
+        return []
+    try:
+        source = SUPPORT.read_regular(source_root / SOURCE, SUPPORT.MAX_JSON).decode('utf-8').splitlines()
+    except (OSError, UnicodeError, SUPPORT.AdaptiveError):
+        return []
+    declaration = '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {'
+    if source.count(declaration) != 1:
+        return []
+    start = source.index(declaration)
+    end = next((index for index in range(start + 1, len(source))
+                if source[index].startswith('    private func ')), len(source))
+    expected_source = [
+        'let initialState = textValue(disclosure)',
+        'recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)',
+        'XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")',
+    ]
+    calls = [index + 1 for index in range(start + 2, end)
+             if [line.strip() for line in source[index - 2:index + 1]] == expected_source]
+    if len(calls) != 1 or 'progress(.pickerStarted)' not in [line.strip() for line in source[start:calls[0] - 2]]:
+        return []
+    caller_line = calls[0]
+    if SUPPORT.source_location(SOURCE, caller_line, 1, source_root) is None:
+        return []
+    fields = {'schemaVersion', 'method', 'phase', 'progressSequence', 'callerLine', 'target',
+              'observationTiming', 'role', 'valueKind', 'valueState'}
+    states = {'nil': ('other',), 'string': ('folded', 'expanded', 'empty', 'placeholder', 'other'),
+              'number': ('binaryZero', 'binaryOne', 'other'), 'other': ('other',)}
+    reports, active, progress, observation, location = [], None, None, None, None
+    for line in log.splitlines():
+        if DISCLOSURE_MARKER.rstrip() in line:
+            if (active is None or observation is not None or progress is None
+                    or progress['phase'] != 'pickerStarted' or not line.startswith(DISCLOSURE_MARKER)
+                    or len(line.encode('utf-8')) + 1 > 768):
+                return []
+            try:
+                value = SUPPORT.strict_json(line[len(DISCLOSURE_MARKER):])
+            except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
+                return []
+            if (not isinstance(value, dict) or set(value) != fields
+                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
+                    or value['method'] != active or value['phase'] != 'pickerStarted'
+                    or type(value['progressSequence']) is not int or not 1 <= value['progressSequence'] <= 96
+                    or value['progressSequence'] != progress['sequence']
+                    or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= 100_000
+                    or value['callerLine'] != caller_line or value['target'] != 'planDisclosure'
+                    or value['observationTiming'] != 'afterMismatch'
+                    or value['role'] not in ('disclosureTriangle', 'button', 'other')
+                    or not isinstance(value['valueKind'], str) or value['valueKind'] not in states
+                    or value['valueState'] not in states[value['valueKind']]):
+                return []
+            observation = value
+        elif line.startswith(PROGRESS_MARKER):
+            if observation is not None:
+                return []
+            progress = SUPPORT.strict_json(line[len(PROGRESS_MARKER):])
+        elif event := SUPPORT.UI_CASE_EVENT.match(line):
+            if event[3] == 'started':
+                active, progress, observation, location = event[2], None, None, None
+            else:
+                if observation is not None:
+                    if event[3] != 'failed' or location is None:
+                        return []
+                    reports.append({'scope': 'partialFailureOnly', **observation, 'sourceFile': SOURCE,
+                                    **location, 'terminal': 'failed'})
+                active, progress, observation, location = None, None, None, None
+        elif observation is not None and (failure := SUPPORT.UI_FAILURE_SOURCE.fullmatch(line)):
+            case = SUPPORT.UI_FAILURE_CASE.fullmatch(failure[4])
+            found = SUPPORT.source_location(failure[1], int(failure[2]),
+                                            int(failure[3]) if failure[3] else 1, source_root)
+            if (case is None or case[1] != bundle + '.' + CLASS or case[2] != active
+                    or found is None or found['file'] != SOURCE or found['line'] != caller_line
+                    or re.match(r'^XCTAssertEqual\s+failed(?=[:\s-]|$)', case[3]) is None
+                    or location is not None):
+                return []
+            location = {'line': found['line'], **({'column': found['column']} if failure[3] else {})}
+    return [] if observation is not None else reports
+
+
 def diagnostics(directory, expected, phase, partial_failure=False):
     require(phase in ('build', 'test'), 'invalidArguments')
     require(not partial_failure or phase == 'test', 'invalidArguments')
@@ -454,6 +539,12 @@ def diagnostics(directory, expected, phase, partial_failure=False):
             validate_source(SUPPORT.read_regular(ROOT / SOURCE, SUPPORT.MAX_JSON).decode('utf-8'))
             print('::notice::Batch UI partial progress diagnostics: ' + json.dumps(
                 {**expected, 'scope': 'partialFailureOnly', **partial_progress(log, context['bundle'])}, sort_keys=True))
+            if expected['platform'] == 'macos':
+                disclosure_reports = disclosure_failure_diagnostics(log, context['bundle'])
+                if disclosure_reports:
+                    print('::notice::Batch UI disclosure failure diagnostics: ' + json.dumps(
+                        {**expected, 'scope': 'partialFailureOnly', 'locations': disclosure_reports,
+                         'locationCount': len(disclosure_reports)}, sort_keys=True))
 
 
 def validate_source(source):

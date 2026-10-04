@@ -12,6 +12,16 @@ final class MirrorBatchUITests: XCTestCase {
         var uuid: String { String(identifier.dropFirst("task.row.".count)) }
     }
     private enum Surface: Equatable { case library, planner, none }
+    private struct ScrollTarget {
+        let identifier: String
+        let type: XCUIElement.ElementType
+        let frame: CGRect
+    }
+    private struct ScrollOwner {
+        let element: XCUIElement
+        let frame: CGRect
+        var area: CGFloat { frame.width * frame.height }
+    }
     private enum ReachableTarget: String {
         case unknown, captureOpen, captureSave, captureClose, destinationToday, destinationLibrary
         case librarySearch, librarySelectToggle, librarySelectAll, taskRow, taskSelection
@@ -32,6 +42,7 @@ final class MirrorBatchUITests: XCTestCase {
     }
     private var progressCase: ProgressCase?
     private var progressSequence = 0
+    private var progressPhase: ProgressPhase?
     private let unassigned = "미완료, 배치: 아직 정하지 않음"
     private let today = "미완료, 배치: 9월 30일 수요일에 하기"
     private let tomorrow = "미완료, 배치: 10월 1일 목요일에 하기"
@@ -123,6 +134,7 @@ final class MirrorBatchUITests: XCTestCase {
     private func progress(_ phase: ProgressPhase, ordinal: Int = 0) {
         guard let progressCase, (0...progressCase.captureCount).contains(ordinal), progressSequence < 96 else { return }
         progressSequence += 1
+        progressPhase = phase
         // 사용자 값과 AX 조회 없이 고정 경계만 한 번 쓴다. 중단되어도 print 버퍼에 남기지 않는다.
         let line = "Batch UI progress: {\"method\":\"\(progressCase.rawValue)\",\"phase\":\"\(phase.rawValue)\",\"sequence\":\(progressSequence),\"captureOrdinal\":\(ordinal)}\n"
         let data = Data(line.utf8)
@@ -386,7 +398,9 @@ final class MirrorBatchUITests: XCTestCase {
         _ = try unique(app.buttons.matching(identifier: "plan.cancel"))
         let disclosure = try plannerDisclosure(in: app)
         XCTAssertEqual(disclosure.label, "선택한 작업 \(selected.count)개")
-        XCTAssertEqual(textValue(disclosure), "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")
+        let initialState = textValue(disclosure)
+        recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)
+        XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists)
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "plan.task.")).count, 0)
         for id in ["plan.today", "plan.tomorrow"] {
@@ -419,6 +433,46 @@ final class MirrorBatchUITests: XCTestCase {
         #endif
         return try reachable(app.buttons.matching(identifier: "plan.tasksDisclosure"), surface: .planner,
                              missingTowardTop: true, target: .planDisclosure, in: app)
+    }
+
+    private func recordPlannerDisclosureFailureIfNeeded(_ element: XCUIElement, initialState: String,
+                                                        callerLine: Int) {
+        #if os(macOS)
+        guard initialState != "접힘", let progressCase, progressPhase == .pickerStarted else { return }
+        // 비교가 실패할 값임을 확인한 뒤 같은 요소를 다시 읽는다. 사후값은 원래 실패값을 대신하지 않는다.
+        let role: String
+        switch element.elementType {
+        case .disclosureTriangle: role = "disclosureTriangle"
+        case .button: role = "button"
+        default: role = "other"
+        }
+        let value = element.value
+        let kind: String
+        let state: String
+        if let text = value as? String {
+            kind = "string"
+            if text == "접힘" { state = "folded" }
+            else if text == "펼쳐짐" { state = "expanded" }
+            else if text.isEmpty { state = "empty" }
+            else if text == element.placeholderValue { state = "placeholder" }
+            else { state = "other" }
+        } else if let number = value as? NSNumber {
+            kind = "number"
+            state = number.doubleValue == 0 ? "binaryZero" : number.doubleValue == 1 ? "binaryOne" : "other"
+        } else {
+            kind = value == nil ? "nil" : "other"
+            state = "other"
+        }
+        let fields: [String: Any] = [
+            "schemaVersion": 1, "method": progressCase.rawValue, "phase": "pickerStarted",
+            "progressSequence": progressSequence, "callerLine": callerLine, "target": "planDisclosure",
+            "observationTiming": "afterMismatch", "role": role, "valueKind": kind, "valueState": state,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
+        let line = Data(("Batch UI disclosure failure diagnostic: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
+        guard line.count <= 768 else { return }
+        try? FileHandle.standardOutput.write(contentsOf: line)
+        #endif
     }
 
     private func reachableBatchFooter(in app: XCUIApplication) throws -> XCUIElement {
@@ -505,27 +559,32 @@ final class MirrorBatchUITests: XCTestCase {
         }
         for _ in 0..<12 {
             XCTAssertEqual(app.state, .runningForeground, file: file, line: line)
+            var observedTarget: ScrollTarget?
             if query.firstMatch.exists {
                 let element = try unique(query, timeout: 0)
                 let frame = element.frame
-                let windows = app.windows.containing(NSPredicate(format: "identifier == %@", element.identifier))
+                let identifier = element.identifier
+                if surface != .none {
+                    observedTarget = ScrollTarget(identifier: identifier, type: element.elementType, frame: frame)
+                }
+                let windows = app.windows.containing(NSPredicate(format: "identifier == %@", identifier))
                     .allElementsBoundByAccessibilityElement.filter { $0.exists && hasArea($0.frame) && $0.frame.contains(frame) }
                 if hasArea(frame), windows.count == 1, element.isHittable, element.isEnabled {
                     if surface == .none { return element }
-                    let owner = try scrollOwner(surface, in: app, target: target, file: file, line: line)
+                    let owner = try scrollOwner(surface, in: app, target: target, observedTarget: observedTarget, file: file, line: line)
                     if owner.frame.contains(frame) { return element }
                 }
             }
             guard Date() < deadline, surface != .none else { break }
-            let owner = try scrollOwner(surface, in: app, target: target, file: file, line: line)
+            let owner = try scrollOwner(surface, in: app, target: target, observedTarget: observedTarget, file: file, line: line)
             let towardTop: Bool
             if query.firstMatch.exists, hasArea(query.firstMatch.frame) {
                 towardTop = query.firstMatch.frame.minY < owner.frame.minY
             } else { towardTop = missingTowardTop }
             #if os(macOS)
-            owner.scroll(byDeltaX: 0, deltaY: towardTop ? 180 : -180)
+            owner.element.scroll(byDeltaX: 0, deltaY: towardTop ? 180 : -180)
             #else
-            if towardTop { owner.swipeDown() } else { owner.swipeUp() }
+            if towardTop { owner.element.swipeDown() } else { owner.element.swipeUp() }
             #endif
         }
         // 대상은 호출부의 고정 enum이다. 실제 identifier·제목·AX 값은 기록하지 않는다.
@@ -534,9 +593,7 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func scrollOwner(_ surface: Surface, in app: XCUIApplication, target: ReachableTarget,
-                             file: StaticString, line: UInt) throws -> XCUIElement {
-        let surfaces = app.scrollViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex
-            + app.collectionViews.allElementsBoundByIndex
+                             observedTarget: ScrollTarget?, file: StaticString, line: UInt) throws -> ScrollOwner {
         let predicate: NSPredicate
         switch surface {
         case .library:
@@ -547,17 +604,44 @@ final class MirrorBatchUITests: XCTestCase {
             XCTFail("batchScrollOwnerRequiresActualSurface target=\(target.rawValue)", file: file, line: line)
             throw HarnessFailure.missing
         }
-        let owners = surfaces.filter { owner in
-            owner.exists && owner.isHittable && hasArea(owner.frame)
-                && owner.descendants(matching: .any).matching(predicate).firstMatch.exists
-        }.sorted { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
+        let ownerPredicate = observedTarget.map { NSPredicate(format: "identifier == %@", $0.identifier) } ?? predicate
+        let windows = app.windows.containing(ownerPredicate).allElementsBoundByAccessibilityElement
+            .filter { $0.exists && hasArea($0.frame) }
+        guard windows.count == 1, let window = windows.first else {
+            XCTFail("batchActualScrollOwnerMissing target=\(target.rawValue)", file: file, line: line)
+            throw HarnessFailure.missing
+        }
+        let windowFrame = window.frame
+        let surfaces = window.scrollViews.containing(ownerPredicate).allElementsBoundByIndex
+            + window.tables.containing(ownerPredicate).allElementsBoundByIndex
+            + window.collectionViews.containing(ownerPredicate).allElementsBoundByIndex
+        let owners: [ScrollOwner] = surfaces.compactMap { owner in
+            guard owner.exists else { return nil }
+            let frame = owner.frame
+            guard hasArea(frame), hasArea(frame.intersection(windowFrame)) else { return nil }
+            let anchor: ScrollTarget
+            if let observedTarget { anchor = observedTarget }
+            else {
+                // 아직 생성되지 않은 lazy 대상을 위해 이 실제 surface의 기존 작업/선택 안내를 기준으로 삼는다.
+                let element = owner.descendants(matching: .any).matching(predicate).firstMatch
+                guard element.exists else { return nil }
+                anchor = ScrollTarget(identifier: element.identifier, type: element.elementType, frame: element.frame)
+            }
+            let exact = NSPredicate(format: "identifier == %@", anchor.identifier)
+            guard !anchor.identifier.isEmpty, hasArea(anchor.frame),
+                  owner.descendants(matching: anchor.type).matching(exact).count == 1,
+                  window.descendants(matching: anchor.type).matching(exact).count == 1,
+                  frame.minX <= anchor.frame.midX, anchor.frame.midX <= frame.maxX else { return nil }
+            // 스크롤 부모의 탭 지점은 요구하지 않는다. 최종 대상의 실제 탭 조건은 reachable에서 검사한다.
+            return ScrollOwner(element: owner, frame: frame)
+        }.sorted { $0.area < $1.area }
         guard let owner = owners.first else {
             XCTFail("batchActualScrollOwnerMissing target=\(target.rawValue)", file: file, line: line)
             throw HarnessFailure.missing
         }
         if owners.count > 1 {
-            let firstArea = owner.frame.width * owner.frame.height
-            let secondArea = owners[1].frame.width * owners[1].frame.height
+            let firstArea = owner.area
+            let secondArea = owners[1].area
             guard firstArea < secondArea else {
                 XCTFail("batchActualScrollOwnerAmbiguous target=\(target.rawValue)", file: file, line: line)
                 throw HarnessFailure.ambiguous
