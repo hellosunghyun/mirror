@@ -96,9 +96,15 @@ struct MirrorPresentationDynamicType: ViewModifier {
                     .dynamicTypeSize(size)
             }
             #else
-            content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope,
-                                                      fixtureMode: MirrorDynamicTypeFixture.requested))
-                .dynamicTypeSize(size)
+            if MirrorDynamicTypeFixture.requested == .system {
+                // 시스템 비교군은 시트에서도 단일 값 override 없이 실제 상속 값을 관측한다.
+                content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope,
+                                                          fixtureMode: .system))
+            } else {
+                content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope,
+                                                          fixtureMode: MirrorDynamicTypeFixture.requested))
+                    .dynamicTypeSize(size)
+            }
             #endif
         } else {
             content.dynamicTypeSize(size)
