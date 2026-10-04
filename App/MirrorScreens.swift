@@ -542,6 +542,9 @@ struct MirrorCaptureView: View {
                             Button("취소") { if !captureBusy { splitPreview = false } }.disabled(captureBusy)
                         } }
                 }.tint(MirrorPalette.accent)
+                    #if os(macOS)
+                    .frame(minWidth: 320, idealWidth: 460, minHeight: 320, idealHeight: 420)
+                    #endif
                     .interactiveDismissDisabled(captureBusy)
                     .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "captureSplit"))
             }
