@@ -165,6 +165,7 @@ jobs:
         with:
           name: native-failure-diagnostics-mac-${{ github.run_id }}-${{ github.run_attempt }}
           path: .build/ci-macos/ui-private-diagnostics
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
 

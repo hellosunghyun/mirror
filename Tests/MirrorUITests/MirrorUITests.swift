@@ -810,6 +810,55 @@ final class MirrorUITests: XCTestCase {
         }
         button.click()
     }
+
+    @MainActor
+    private func requireReviewWindow(in app: XCUIApplication) throws -> XCUIElement {
+        let windows = app.windows.containing(.button, identifier: "review.finish")
+            .containing(.button, identifier: "review.today")
+            .allElementsBoundByAccessibilityElement
+        guard app.state == .runningForeground, windows.count == 1 else {
+            XCTFail("정리의 실제 버튼 두 개를 소유한 창이 고유해야 한다.")
+            throw UIHarnessError.unexpectedElement("reviewWindowOwner")
+        }
+        // 결정 뒤 마지막 카드의 today 버튼이 사라져도 처음 확인한 실제 창에 묶어 둔다.
+        let window = windows[0]
+        guard window.exists else {
+            XCTFail("정리를 시작한 실제 창이 존재해야 한다.")
+            throw UIHarnessError.missingElement("reviewWindowOwner")
+        }
+        let frame = window.frame
+        guard [frame.minX, frame.minY, frame.width, frame.height].allSatisfy({ $0.isFinite }),
+              frame.width > 0, frame.height > 0 else {
+            XCTFail("정리 창에 유효한 표시 영역이 있어야 한다.")
+            throw UIHarnessError.unexpectedElement("reviewWindowGeometry")
+        }
+        for identifier in ["review.finish", "review.today"] {
+            let buttons = window.buttons.matching(identifier: identifier)
+            guard buttons.count == 1 else {
+                XCTFail("정리 창의 기준 버튼이 고유해야 한다.")
+                throw UIHarnessError.unexpectedElement("reviewWindowAnchor")
+            }
+            let button = buttons.element(boundBy: 0)
+            guard button.exists, button.elementType == .button, button.identifier == identifier else {
+                XCTFail("정리 창의 기준 버튼이 실제 역할과 식별자에 일치해야 한다.")
+                throw UIHarnessError.missingElement("reviewWindowAnchor")
+            }
+        }
+        return window
+    }
+
+    @MainActor
+    private func requireNoWindowElement(_ identifier: String, in window: XCUIElement,
+                                        onUnexpected: (@MainActor () -> Void)? = nil) throws {
+        let query = window.descendants(matching: .any).matching(identifier: identifier)
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count == 0"), object: query)
+        guard window.exists, XCTWaiter.wait(for: [gone], timeout: 15) == .completed, window.exists else {
+            onUnexpected?()
+            printFailurePrefix("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
+            XCTFail("UI 요소가 닫히거나 다음 상태로 진행하지 않았다: \(identifier)")
+            throw UIHarnessError.unexpectedElement(identifier)
+        }
+    }
     #endif
 
     @MainActor
@@ -821,12 +870,17 @@ final class MirrorUITests: XCTestCase {
         try activate("today.review", in: app)
         try waitForLabel(title, element: requireElement("review.card", in: app), in: app)
         try waitForLabel("이번에 정한 0개", element: requireElement("review.progress", in: app), in: app)
-        try requireNoElement("state.feedback", in: app, onUnexpected: {
-            #if os(macOS)
+        #if os(macOS)
+        // 다른 창의 전역 안내와 구분하되, 같은 창의 root 안내 누출도 함께 검사한다.
+        let reviewWindow = try requireReviewWindow(in: app)
+        try requireNoWindowElement("state.feedback", in: reviewWindow, onUnexpected: {
             self.recordReviewFeedbackFailure(in: app)
-            #endif
         })
+        try requireNoWindowElement("task.undo", in: reviewWindow)
+        #else
+        try requireNoElement("state.feedback", in: app)
         try requireNoElement("task.undo", in: app)
+        #endif
         // 정리 화면의 상세를 열고 닫아도 같은 카드와 미결정 상태로 돌아온다.
         try activate("review.detail", in: app)
         try waitForLabel(title, element: requireElement("detail.contentTitle", in: app), in: app)
@@ -837,13 +891,27 @@ final class MirrorUITests: XCTestCase {
         try activate("review.tomorrow", in: app)
         try requireNoElement("review.card", in: app)
         try waitForLabel("이번에 정한 1개", element: requireElement("review.progress", in: app), in: app)
+        #if os(macOS)
+        try waitForLabel("10월 1일 목요일에 하기로 보냈어요.",
+                         element: requireWindowElement("state.feedback", type: .any, in: reviewWindow), in: app)
+        XCTAssertEqual(try requireWindowElement("task.undo", type: .button, in: reviewWindow).label, "직전 결정 되돌리기")
+        try interact(with: requireWindowElement("task.undo", type: .button, in: reviewWindow), in: app,
+                     knownIdentifier: "task.undo", ownerWindow: reviewWindow)
+        #else
         try waitForLabel("10월 1일 목요일에 하기로 보냈어요.", element: requireElement("state.feedback", in: app), in: app)
         XCTAssertEqual(try requireElement("task.undo", in: app, preferButtons: true).label, "직전 결정 되돌리기")
         try activate("task.undo", in: app)
+        #endif
         try waitForLabel(title, element: requireElement("review.card", in: app), in: app)
         try waitForLabel("이번에 정한 0개", element: requireElement("review.progress", in: app), in: app)
+        #if os(macOS)
+        try waitForLabel("직전 변경을 되돌렸어요.",
+                         element: requireWindowElement("state.feedback", type: .any, in: reviewWindow), in: app)
+        try requireNoWindowElement("task.undo", in: reviewWindow)
+        #else
         try waitForLabel("직전 변경을 되돌렸어요.", element: requireElement("state.feedback", in: app), in: app)
         try requireNoElement("task.undo", in: app)
+        #endif
         try activate("review.finish", in: app)
         try requireNoElement("review.finish", in: app)
         _ = try requireElement("today.list", in: app)
@@ -2061,9 +2129,23 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func interact(with element: XCUIElement, in app: XCUIApplication,
                           knownIdentifier: String? = nil,
+                          ownerWindow: XCUIElement? = nil,
                           observeValidationRecovery: Bool = false,
                           file: StaticString = #filePath, line: UInt = #line) throws {
         lastActionDescription = "interact"
+        func ownsTarget(_ window: XCUIElement) -> Bool {
+            guard let knownIdentifier, !knownIdentifier.isEmpty, app.state == .runningForeground,
+                  window.exists, element.exists, element.elementType == .button,
+                  element.identifier == knownIdentifier,
+                  window.buttons.matching(identifier: knownIdentifier).count == 1 else { return false }
+            let frame = window.frame
+            return [frame.minX, frame.minY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        if let ownerWindow, !ownsTarget(ownerWindow) {
+            XCTFail("처음 확인한 정리 창이 실제 Undo 버튼을 계속 고유하게 소유해야 한다.", file: file, line: line)
+            throw UIHarnessError.unexpectedElement("reviewUndoOwner")
+        }
         // 원본 저장·projection 갱신 직후에는 action의 enabled/hittable 반영도 기다린다.
         // 숨은 요소를 좌표로 누르거나 disabled 행동을 통과시키지 않는다.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true AND enabled == true"), object: element)
@@ -2074,7 +2156,8 @@ final class MirrorUITests: XCTestCase {
         // 38d7849 iPhone 실제 AX: 행 중심 y=434, 목록 하단 y=403인데 hittable=true였다.
         // 작업 행은 소유 목록의 표시 영역 안으로 실제 스크롤한 뒤 일반 tap을 수행한다.
         let rowSurface = identifier.hasPrefix("task.row.")
-            ? scrollContainer(containing: element, in: app, requiringHittable: false, knownIdentifier: identifier) : nil
+            ? scrollContainer(containing: element, in: app, requiringHittable: false, knownIdentifier: identifier,
+                              ownerWindow: ownerWindow) : nil
         if identifier.hasPrefix("task.row."), rowSurface == nil {
             printFailurePrefix("작업 행을 포함하는 스크롤 컨테이너가 없다")
             XCTFail("작업 행을 포함하는 스크롤 컨테이너가 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
@@ -2098,7 +2181,7 @@ final class MirrorUITests: XCTestCase {
             } ?? false
             guard !element.isHittable || rowNeedsScroll else { break }
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
-            guard let surface = viewportSurface ?? scrollContainer(containing: element, in: app) else {
+            guard let surface = viewportSurface ?? scrollContainer(containing: element, in: app, ownerWindow: ownerWindow) else {
                 if observeValidationRecovery {
                     recordValidationRecoveryDiagnostic(for: element, identifier: identifier, in: app)
                 }
@@ -2125,6 +2208,14 @@ final class MirrorUITests: XCTestCase {
                 ? app.state == .runningForeground && $0.exists && $0.frame.contains(element.frame)
                 : rowCenterIsVisible(element, in: $0)
         } ?? true
+        if let ownerWindow {
+            let frame = element.frame
+            guard ownsTarget(ownerWindow), frame.width > 0, frame.height > 0,
+                  ownerWindow.frame.contains(frame) else {
+                XCTFail("같은 정리 창의 표시 영역 안에 있는 실제 Undo만 클릭해야 한다.", file: file, line: line)
+                throw UIHarnessError.unexpectedElement("reviewUndoOwner")
+            }
+        }
         guard element.isHittable && element.isEnabled && rowCenterIsInside else {
             printFailurePrefix("UI 요소에 도달할 수 없다")
             XCTFail("UI 요소에 도달할 수 없다: \(describe(element)). \(diagnostics(in: app))", file: file, line: line)
@@ -2389,9 +2480,11 @@ final class MirrorUITests: XCTestCase {
 
     @MainActor
     private func scrollContainer(containing element: XCUIElement, in app: XCUIApplication,
-                                 requiringHittable: Bool = true, knownIdentifier: String? = nil) -> XCUIElement? {
-        let surfaces = app.scrollViews.allElementsBoundByIndex
-            + app.tables.allElementsBoundByIndex + app.collectionViews.allElementsBoundByIndex
+                                 requiringHittable: Bool = true, knownIdentifier: String? = nil,
+                                 ownerWindow: XCUIElement? = nil) -> XCUIElement? {
+        let scope: XCUIElement = ownerWindow ?? app
+        let surfaces = scope.scrollViews.allElementsBoundByIndex
+            + scope.tables.allElementsBoundByIndex + scope.collectionViews.allElementsBoundByIndex
         let identifier = knownIdentifier ?? element.identifier
         if requiringHittable {
             return surfaces.first { candidate in
@@ -2399,7 +2492,7 @@ final class MirrorUITests: XCTestCase {
             }
         }
         // List의 AX 컨테이너와 탭할 행은 다르다. 행의 hittable/enabled는 interact에서 계속 검사한다.
-        let windowFrames = app.windows.allElementsBoundByIndex.map { $0.frame }
+        let windowFrames = ownerWindow.map { [$0.frame] } ?? app.windows.allElementsBoundByIndex.map { $0.frame }
         let rowCenterX = element.frame.midX
         var probes: [String] = []
         for candidate in surfaces {

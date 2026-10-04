@@ -270,3 +270,9 @@ Batch 소유 검토에서 실제 행은 AX에 있지만 아직 유효한 frame�
 64e 실제 Native 실패 결과에서는 전체 xcresult 안의 PNG를 정리 안내·제목 접기 시점에 정확히 연결할 export manifest가 없었다. 실패 경로에도 기존 build receipt와 현재 실행을 검증한 뒤, 두 실패 callback·실제 Failed 사례·SDK attachment name/testIdentifier가 모두 일치하는 화면만 별도 진단 artifact로 보존한다. 원본 export와 SDK 출력은 임시 폴더에서 정리하고 정제된 PNG·고정 manifest·해시만 남긴다. 원래 native 종료 코드와 공개 UI 통과 gate는 유지한다.
 
 실패 보조 receipt Git 조회만 각5초, SDK help/export는5/30초로 제한한다. 잘못된 사례·부분 callback·낡은 제품·중복 이름·경로·시간 초과와 원문 누출을 검사하는 회귀7개를 추가했다. 독립 소스 검토와 로컬 AST/diff 검사를 마쳤으며, 회귀 실행과 실제 SDK manifest 수용은 다음 Actions에서 확인한다. 이 변경은 실패 원인을 확정하거나 앱 UI 수용을 통과시킨 것이 아니다.
+
+### 정리 안내·되돌리기 검사의 실제 창 범위
+
+두 창이 열려 있으면 A에서 새 정리를 시작해도 B에는 기존 전역 저장 안내가 남을 수 있다. 새 정리의 안내/Undo는 세션에 속하므로 다른 창의 안내까지 없어야 한다는 기존 app-wide 부재 검사는 제품 계약보다 넓은 소스 반례다. Mac ReviewUndo에서 실제 finish/today Button을 함께 소유한 고유 창을 먼저 확인하고 초기 부재·결정 뒤 정확한 안내·직전 결정 Undo·복원 뒤 안내와 부재를 같은 창 전체에서 검사한다. sheet 안에만 제한하지 않아 같은 창의 root 안내 누출도 계속 실패한다.
+
+Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조작한다. 조회15초·준비3초·최대8회 실제 스크롤·최종 enabled/hittable과 원본 복원 assertion을 유지하고 스크롤 후보만 해당 창 안으로 한정한다. 다른 호출은 기본 nil로 기존 동작·추가 조회0이며 앱 코드나 다른 창의 안내는 바꾸지 않는다. 독립 소스 검토와 diff 검사를 마쳤으나 실제64e 실패가 이 반례 때문인지는 미확정이며 다음 Actions에서 확인한다. FR-011/026, Q-029/079와 다중 창 소유 계약에 연결한다.
