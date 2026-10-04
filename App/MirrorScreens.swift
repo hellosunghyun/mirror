@@ -921,10 +921,15 @@ struct MirrorLibraryView: View {
                         } label: {
                             Text(selecting ? "선택 마치기" : "선택")
                                 #if os(iOS)
-                                .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                .frame(minWidth: 44, minHeight: 48).contentShape(Rectangle())
                                 #endif
                         }
-                            .buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44)
+                            .buttonStyle(.borderless)
+                            #if os(iOS)
+                            .frame(minWidth: 44, minHeight: 48)
+                            #else
+                            .frame(minWidth: 44, minHeight: 44)
+                            #endif
                             .accessibilityLabel(selecting ? "여러 개 선택 마치기" : "여러 개 선택")
                             .accessibilityIdentifier("library.selectToggle")
                     }

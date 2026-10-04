@@ -288,3 +288,7 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 64e Mac Native 원본 PNG의 입력 오류 문구는 정상 크기 callout에 기본 red를 사용했다. 해당 영역 배경은 source surface와 같은 RGB(243,242,238), 불투명 글자 픽셀844개의 가장 강한 대비도3.1866:1이었다. ICC TRC와 색순응을 반영해도3.1857:1로 정상 글자 목표4.5:1에 못 미쳤다. 이것을 다른 Adaptive contrast 실패의 원인으로 연결하지 않는다.
 
 기존 동적 색 생성기로 errorText를 밝은 #A8241B·어두운 #FFB4AB로 정의하고 입력·정리·계획·상세·마감·설정·메뉴 막대의 오류 문구8곳에 적용한다. surface/canvas/card의 sRGB 산술 대비는 밝은6.3912/6.7206/7.1596, 어두운11.0337/10.1187/8.6946이다. 문구·상태·역할·접근성 식별자·글꼴·배치·동작은 유지한다. 독립 소스 검토에서 확인된 MirrorApp의 기존 MirrorDesign 모듈 import 누락도 보완했다. 이 작은 색상 변경에는 값을 복제하는 테스트를 추가하지 않고 기존 Actions 앱 빌드·UI와 다음 원본 PNG로 실제 표시를 확인한다. 재질 합성·전체 접근성 감사·실기기 수용을 산술만으로 통과시키지 않는다.
+
+### 보관함 선택 버튼의 실제 높이
+
+64e Batch Phone run37234885727/a1의 Two 사례는 실제 세 번 저장한 뒤 selectionStarted에서 librarySelectToggle 높이43.66666666666666pt를 관측해 기존44pt assertion에 실패했다. 이 버튼은 toolbar가 아니라 List 첫 Section의 MirrorActionGroup 안에 있고 label과 버튼의 최소44pt가 이미 적용돼 있었다. 압축·픽셀 정렬의 구체적 원인은 확정하지 않는다. iOS에서 해당 label의 contentShape와 버튼 외곽 최소높이를48pt로 맞춰 더 넓은 터치 영역을 확보하고, 폭44pt·Mac 최소44pt·borderless style·문구·선택 동작을 유지한다. 원래 테스트의 실제44pt·typed owner·고유창·전체포함·hittable/enabled·15초/12회 기준은 바꾸지 않는다. 같은 실행의 Twenty는 다섯 번 저장한 뒤 여섯 번째 입력 전 빈 값 대기에서 실패했으며, 원래 값이 관측되지 않아 이 높이 문제와 별개로 남긴다. 최소높이 변경의 실제 수용은 후속 Actions 측정으로 확인한다.
