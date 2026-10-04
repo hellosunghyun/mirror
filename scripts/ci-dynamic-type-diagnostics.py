@@ -32,6 +32,12 @@ GROUPED_CATEGORY_DECLARATIONS = (
 CATEGORY_TOKEN = re.compile(r'(?<![\w-])(?:' + '|'.join(map(re.escape, CATEGORIES)) + r')(?![\w-])')
 PROBE = 'UI dynamic type fixture: '
 AUDIT = 'UI dynamic type audit: '
+CHECKPOINT = '::notice::Dynamic Type checkpoint: '
+CHECKPOINTS = frozenset(('checkoutStarted', 'checkoutVerified', 'contextStarted', 'contextVerified',
+    'bootStatusStarted', 'bootStatusReturned', 'restoreJournalReadStarted', 'restoreJournalVerified',
+    'restoreSetStarted', 'restoreSetCompleted', 'restoreReadbackStarted', 'restoreReadbackVerified',
+    'restoreNotRequired'))
+IDENTITY_FIELDS = ('platform', 'appearance', 'commitSHA', 'buildNumber', 'runID', 'runAttempt')
 
 
 class Failure(A.AdaptiveError):
@@ -42,6 +48,34 @@ class Failure(A.AdaptiveError):
 def require(value, code):
     if not value:
         raise Failure(code)
+
+
+def checkpoint(report, phase):
+    require(phase in CHECKPOINTS, 'invalidCheckpoint')
+    report['phase'] = phase
+    # CLI가 검증한 고정 실행 정보만 내보낸다. 시작 단계는 소유 검증 완료나 성공 판정이 아니다.
+    fields = (*IDENTITY_FIELDS, 'action', 'mode')
+    if all(key in report for key in fields):
+        value = {key: report[key] for key in fields}
+        value.update(schemaVersion=1, scope='diagnosticOnly', phase=phase)
+        print(CHECKPOINT + json.dumps(value, sort_keys=True), flush=True)
+
+
+def verify_no_category_change(expected):
+    require(not (DIRECTORY / 'public').is_symlink(), 'unsafeSetupSummary')
+    setup = A.read_json(DIRECTORY / 'public/setup.json')
+    fields = {*IDENTITY_FIELDS, 'schemaVersion', 'scope', 'action', 'mode', 'status', 'phase',
+              'simulatorInitialState', 'bootStatusExitCode', 'bootStatusTimedOut'}
+    require(isinstance(setup, dict) and set(setup) == fields
+            and all(setup[key] == expected[key] for key in IDENTITY_FIELDS)
+            and type(setup['schemaVersion']) is int and setup['schemaVersion'] == 1
+            and setup['scope'] == 'diagnosticOnly' and setup['action'] == 'setup' and setup['mode'] is None
+            and setup['status'] == 'bootFailed' and setup['phase'] == 'bootStatusReturned'
+            and setup['simulatorInitialState'] in ('Booted', 'Shutdown')
+            and type(setup['bootStatusTimedOut']) is bool
+            and ((setup['bootStatusExitCode'] is None and setup['bootStatusTimedOut'] is True)
+                 or (type(setup['bootStatusExitCode']) is int and setup['bootStatusExitCode'] != 0
+                     and setup['bootStatusTimedOut'] is False)), 'unprovenCategoryChangeState')
 
 
 def category_row(line):
@@ -388,15 +422,22 @@ def execute(action, mode, expected, report):
                                                 'contractFrom': metadata['contractFrom']})
         return
     require(A.read_json(DIRECTORY / 'contract.json').get('supported') is True, 'missingPublicContract')
+    checkpoint(report, 'contextStarted')
     ctx, udid = context(expected)
+    checkpoint(report, 'contextVerified')
     if action == 'setup':
         receipt = A.verify_receipt(BUILD, expected)
         devices = A.strict_json(command(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], 'devices'))
         matches = [device for group in devices['devices'].values() for device in group if device.get('udid') == udid]
         require(len(matches) == 1 and matches[0].get('state') in ('Booted', 'Shutdown'), 'simulatorContextMismatch')
+        report['simulatorInitialState'] = matches[0]['state']
         if matches[0]['state'] == 'Shutdown':
             command(['xcrun', 'simctl', 'boot', udid], 'boot')
-        require(native(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'boot-status', 45) == 0, 'bootFailed')
+        checkpoint(report, 'bootStatusStarted')
+        boot_code = native(['xcrun', 'simctl', 'bootstatus', udid, '-b'], 'boot-status', 45)
+        report.update(bootStatusExitCode=boot_code, bootStatusTimedOut=boot_code is None)
+        checkpoint(report, 'bootStatusReturned')
+        require(boot_code == 0, 'bootFailed')
         before = category(command(['xcrun', 'simctl', 'ui', udid, 'content_size'], 'category-before'))
         A.write_json(DIRECTORY / 'restore.json', {'context': ctx, 'before': before, 'receipt': receipt}, exclusive=True)
         command(['xcrun', 'simctl', 'ui', udid, 'content_size', CATEGORIES[-1]], 'category-set')
@@ -404,12 +445,27 @@ def execute(action, mode, expected, report):
         require(after == CATEGORIES[-1], 'systemMaximumNotApplied')
         report.update(systemBefore=before, systemAfter=after, buildReceiptSHA256=receipt)
         return
-    saved = A.read_json(DIRECTORY / 'restore.json')
+    journal = DIRECTORY / 'restore.json'
+    if action == 'restore':
+        checkpoint(report, 'restoreJournalReadStarted')
+        require(not journal.is_symlink(), 'unsafeRestoreJournal')
+        if not journal.exists():
+            # 부재만으로 복구를 생략하지 않는다. 같은 실행의 bootstatus 실패만 변경 전임을 증명한다.
+            verify_no_category_change(expected)
+            report.update(restoreDisposition='notRequiredBeforeCategoryChange', systemRestored=False)
+            checkpoint(report, 'restoreNotRequired')
+            return
+    saved = A.read_json(journal)
     require(saved.get('context') == ctx and saved.get('before') in CATEGORIES, 'restoreContextMismatch')
     if action == 'restore':
+        checkpoint(report, 'restoreJournalVerified')
+        checkpoint(report, 'restoreSetStarted')
         command(['xcrun', 'simctl', 'ui', udid, 'content_size', saved['before']], 'category-restore')
+        checkpoint(report, 'restoreSetCompleted')
+        checkpoint(report, 'restoreReadbackStarted')
         require(category(command(['xcrun', 'simctl', 'ui', udid, 'content_size'], 'category-restored'))
                 == saved['before'], 'restoreMismatch')
+        checkpoint(report, 'restoreReadbackVerified')
         report['systemRestored'] = True
         return
     require(A.verify_receipt(BUILD, expected) == saved['receipt'], 'buildChanged')
@@ -454,12 +510,14 @@ def main(argv=None):
         require(len(args) in (1, 2) and args[0] in ('help', 'setup', 'run', 'collect', 'restore', 'cleanup')
                 and (len(args) == 2 and args[1] in MODES if args[0] in ('run', 'collect') else len(args) == 1), 'invalidAction')
         expected = A.identity('ipad', 'system')
+        mode = args[1] if len(args) == 2 else None
+        report.update(expected, action=args[0], mode=mode)
+        checkpoint(report, 'checkoutStarted')
         A.checkout_matches(expected)
+        checkpoint(report, 'checkoutVerified')
         require(not any(path.is_symlink() for path in (DIRECTORY, *DIRECTORY.parents)), 'unsafeDirectory')
         DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
         ready = True
-        mode = args[1] if len(args) == 2 else None
-        report.update(expected, action=args[0], mode=mode)
         execute(args[0], mode, expected, report)
         report['status'] = 'observed'
     except Failure as error:

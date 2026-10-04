@@ -643,10 +643,11 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
                 helper.observations('\n'.join(bad), 'system', 'failed')
 
     def test_restore_journal_precedes_mutation_and_uses_same_context_only(self):
-        ctx, sequence, saved = {'destination': 'fixed-context'}, [], {}
+        ctx, sequence = {'destination': 'fixed-context'}, []
+        write_json = helper.A.write_json
         def write(path, value, **kwargs):
             sequence.append('journal')
-            saved.update(value)
+            write_json(path, value, **kwargs)
         def command(args, name):
             sequence.append(name)
             if name == 'devices': return json.dumps({'devices': {'runtime': [{'udid': 'fixed-udid', 'state': 'Booted'}]}})
@@ -654,22 +655,206 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             if name == 'category-after': return helper.CATEGORIES[-1]
             if name == 'category-restored': return 'large'
             return ''
-        with mock.patch.object(helper.A, 'read_json', side_effect=lambda path:
-                               {'supported': True} if path.name == 'contract.json' else saved), \
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
                 mock.patch.object(helper, 'context', return_value=(ctx, 'fixed-udid')), \
                 mock.patch.object(helper.A, 'verify_receipt', return_value='fixed-receipt'), \
                 mock.patch.object(helper, 'native', return_value=0), mock.patch.object(helper.A, 'write_json', side_effect=write), \
                 mock.patch.object(helper, 'command', side_effect=command) as native:
+            write_json(Path(temp) / 'contract.json', {'supported': True})
             helper.execute('setup', None, EXPECTED, {})
             self.assertLess(sequence.index('journal'), sequence.index('category-set'))
-            helper.execute('restore', None, EXPECTED, {})
+            report = {}
+            helper.execute('restore', None, EXPECTED, report)
+            self.assertIs(report['systemRestored'], True)
             self.assertIn(mock.call(['xcrun', 'simctl', 'ui', 'fixed-udid', 'content_size', 'large'],
                                     'category-restore'), native.call_args_list)
+            saved = helper.A.read_json(Path(temp) / 'restore.json')
             saved['context'] = {'destination': PRIVATE}
+            write_json(Path(temp) / 'restore.json', saved)
             native.reset_mock()
             with self.assertRaises(helper.A.AdaptiveError):
                 helper.execute('restore', None, EXPECTED, {})
             native.assert_not_called()
+
+    def test_boot_failure_records_exit_or_timeout_without_category_mutation(self):
+        env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'hellosunghyun/mirror', 'RUNNER_OS': 'macOS'}
+        for state, code in (('Booted', 7), ('Shutdown', None)):
+            with self.subTest(state=state, code=code), tempfile.TemporaryDirectory() as temp, \
+                    mock.patch.object(helper, 'DIRECTORY', Path(temp).resolve()), mock.patch.dict(os.environ, env), \
+                    mock.patch.object(helper.A, 'identity', return_value=EXPECTED), \
+                    mock.patch.object(helper.A, 'checkout_matches'), \
+                    mock.patch.object(helper, 'context', return_value=({'destination': 'fixed'}, 'fixed-udid')), \
+                    mock.patch.object(helper.A, 'verify_receipt', return_value='fixed-receipt') as receipt, \
+                    mock.patch.object(helper, 'native', return_value=code) as native, \
+                    mock.patch.object(helper, 'command', side_effect=lambda args, name:
+                        json.dumps({'devices': {'runtime': [{'udid': 'fixed-udid', 'state': state}]}})
+                        if name == 'devices' else '') as command, contextlib.redirect_stdout(io.StringIO()) as output:
+                helper.A.write_json(Path(temp) / 'contract.json', {'supported': True})
+                self.assertEqual(helper.main(['setup']), 2)
+                report = helper.A.read_json(Path(temp) / 'public/setup.json')
+                self.assertEqual(report, {**EXPECTED, 'schemaVersion': 1, 'scope': 'diagnosticOnly',
+                                         'action': 'setup', 'mode': None, 'status': 'bootFailed',
+                                         'phase': 'bootStatusReturned', 'simulatorInitialState': state,
+                                         'bootStatusExitCode': code, 'bootStatusTimedOut': code is None})
+                self.assertEqual(helper.main(['restore']), 0)
+                restored = helper.A.read_json(Path(temp) / 'public/restore.json')
+                self.assertEqual(restored['restoreDisposition'], 'notRequiredBeforeCategoryChange')
+                self.assertIs(restored['systemRestored'], False)
+                receipt.assert_called_once_with(helper.BUILD, EXPECTED)
+                native.assert_called_once_with(['xcrun', 'simctl', 'bootstatus', 'fixed-udid', '-b'], 'boot-status', 45)
+                self.assertEqual([call.args[1] for call in command.call_args_list],
+                                 ['devices', 'boot'] if state == 'Shutdown' else ['devices'])
+                self.assertFalse((Path(temp) / 'restore.json').exists())
+                self.assertNotIn(temp, output.getvalue())
+                self.assertNotIn('fixed-udid', output.getvalue())
+
+    def test_absent_journal_requires_owned_completed_boot_failure(self):
+        original = {**EXPECTED, 'schemaVersion': 1, 'scope': 'diagnosticOnly', 'action': 'setup', 'mode': None,
+                    'status': 'bootFailed', 'phase': 'bootStatusReturned', 'simulatorInitialState': 'Booted',
+                    'bootStatusExitCode': 7, 'bootStatusTimedOut': False}
+        wrong = ({'runID': '11'}, {'runAttempt': '2'}, {'commitSHA': 'b' * 40}, {'buildNumber': '2'},
+                 {'platform': 'iphone'}, {'appearance': 'dark'}, {'scope': PRIVATE}, {'action': 'restore'},
+                 {'mode': 'pinned'}, {'schemaVersion': True}, {'status': 'diagnosticUnavailable'},
+                 {'phase': 'bootStatusStarted'}, {'simulatorInitialState': PRIVATE},
+                 {'bootStatusExitCode': 0}, {'bootStatusExitCode': True}, {'bootStatusExitCode': PRIVATE},
+                 {'bootStatusExitCode': None}, {'bootStatusTimedOut': True}, {'bootStatusTimedOut': 0},
+                 {'unexpected': PRIVATE})
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                mock.patch.object(helper, 'context', return_value=({'destination': 'fixed'}, 'fixed-udid')), \
+                mock.patch.object(helper, 'command') as command:
+            helper.A.write_json(Path(temp) / 'contract.json', {'supported': True})
+            public = Path(temp) / 'public'
+            public.mkdir()
+            path = public / 'setup.json'
+            for changes in ({}, {'bootStatusExitCode': None, 'bootStatusTimedOut': True}):
+                helper.A.write_json(path, {**original, **changes})
+                report = {}
+                helper.execute('restore', None, EXPECTED, report)
+                self.assertEqual(report['restoreDisposition'], 'notRequiredBeforeCategoryChange')
+                self.assertIs(report['systemRestored'], False)
+                self.assertEqual(report['phase'], 'restoreNotRequired')
+            for changes in wrong:
+                helper.A.write_json(path, {**original, **changes})
+                with self.subTest(changes=changes), self.assertRaises(helper.A.AdaptiveError):
+                    helper.execute('restore', None, EXPECTED, {})
+            path.unlink()
+            with self.assertRaises(FileNotFoundError):
+                helper.execute('restore', None, EXPECTED, {})
+            path.symlink_to(public / 'missing')
+            with self.assertRaises(OSError):
+                helper.execute('restore', None, EXPECTED, {})
+            path.unlink()
+            path.write_text('{')
+            with self.assertRaises(ValueError):
+                helper.execute('restore', None, EXPECTED, {})
+            path.unlink()
+            public.rmdir()
+            public.symlink_to(Path(temp) / 'missing-public', target_is_directory=True)
+            with self.assertRaises(helper.Failure) as caught:
+                helper.execute('restore', None, EXPECTED, {})
+            self.assertEqual(caught.exception.code, 'unsafeSetupSummary')
+            command.assert_not_called()
+
+    def test_existing_or_unsafe_journal_never_uses_boot_failure_noop(self):
+        ctx = {'destination': 'fixed'}
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                mock.patch.object(helper, 'context', return_value=(ctx, 'fixed-udid')), \
+                mock.patch.object(helper, 'verify_no_category_change') as no_change, \
+                mock.patch.object(helper, 'command', side_effect=['', 'large']) as command:
+            helper.A.write_json(Path(temp) / 'contract.json', {'supported': True})
+            journal = Path(temp) / 'restore.json'
+            helper.A.write_json(journal, {'context': ctx, 'before': 'large', 'receipt': 'fixed-receipt'})
+            report = {}
+            helper.execute('restore', None, EXPECTED, report)
+            self.assertIs(report['systemRestored'], True)
+            self.assertEqual([call.args[1] for call in command.call_args_list], ['category-restore', 'category-restored'])
+            self.assertNotIn('restoreDisposition', report)
+            command.reset_mock()
+            for raw in ('', '{', json.dumps({'context': {'destination': PRIVATE}, 'before': 'large'})):
+                journal.write_text(raw)
+                with self.subTest(raw=raw), self.assertRaises((helper.A.AdaptiveError, ValueError)):
+                    helper.execute('restore', None, EXPECTED, {})
+            journal.unlink()
+            journal.symlink_to(Path(temp) / 'missing')
+            with self.assertRaises(helper.Failure) as caught:
+                helper.execute('restore', None, EXPECTED, {})
+            self.assertEqual(caught.exception.code, 'unsafeRestoreJournal')
+            no_change.assert_not_called()
+            command.assert_not_called()
+
+    def test_setup_failure_after_journal_still_restores_original_category(self):
+        for failed_step in ('category-set', 'category-after'):
+            with self.subTest(failed_step=failed_step), tempfile.TemporaryDirectory() as temp, \
+                    mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                    mock.patch.object(helper, 'context', return_value=({'destination': 'fixed'}, 'fixed-udid')), \
+                    mock.patch.object(helper.A, 'verify_receipt', return_value='fixed-receipt'), \
+                    mock.patch.object(helper, 'native', return_value=0):
+                helper.A.write_json(Path(temp) / 'contract.json', {'supported': True})
+                def command(args, name):
+                    if name == 'devices':
+                        return json.dumps({'devices': {'runtime': [{'udid': 'fixed-udid', 'state': 'Booted'}]}})
+                    if name == failed_step:
+                        raise helper.Failure('nativeCommandFailed')
+                    return 'large' if name in ('category-before', 'category-restored') else ''
+                with mock.patch.object(helper, 'command', side_effect=command) as native, \
+                        mock.patch.object(helper, 'verify_no_category_change') as no_change:
+                    with self.assertRaises(helper.Failure):
+                        helper.execute('setup', None, EXPECTED, {})
+                    journal = Path(temp) / 'restore.json'
+                    self.assertEqual(helper.A.read_json(journal)['before'], 'large')
+                    native.reset_mock()
+                    report = {}
+                    helper.execute('restore', None, EXPECTED, report)
+                    self.assertIs(report['systemRestored'], True)
+                    self.assertEqual([call.args[1] for call in native.call_args_list],
+                                     ['category-restore', 'category-restored'])
+                    no_change.assert_not_called()
+
+    def test_restore_interruption_after_set_keeps_journal_and_failed_readback(self):
+        ctx = {'destination': 'fixed'}
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(helper, 'DIRECTORY', Path(temp)), \
+                mock.patch.object(helper, 'context', return_value=(ctx, 'fixed-udid')), \
+                mock.patch.object(helper, 'command', side_effect=['', helper.Failure('nativeCommandFailed')]) as command:
+            helper.A.write_json(Path(temp) / 'contract.json', {'supported': True})
+            journal = Path(temp) / 'restore.json'
+            helper.A.write_json(journal, {'context': ctx, 'before': 'large', 'receipt': 'fixed-receipt'})
+            before = journal.read_bytes()
+            report = {}
+            with self.assertRaises(helper.Failure):
+                helper.execute('restore', None, EXPECTED, report)
+            self.assertEqual(report['phase'], 'restoreReadbackStarted')
+            self.assertNotIn('systemRestored', report)
+            self.assertEqual(journal.read_bytes(), before)
+            self.assertEqual([call.args[1] for call in command.call_args_list], ['category-restore', 'category-restored'])
+
+    def test_checkpoints_flush_only_fixed_owned_fields_before_blocking_checkout(self):
+        env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'hellosunghyun/mirror', 'RUNNER_OS': 'macOS'}
+        with mock.patch.dict(os.environ, env), mock.patch.object(helper.A, 'identity', return_value=EXPECTED), \
+                mock.patch.object(helper.A, 'checkout_matches', side_effect=KeyboardInterrupt), \
+                mock.patch('builtins.print') as printed:
+            with self.assertRaises(KeyboardInterrupt):
+                helper.main(['restore'])
+            printed.assert_called_once()
+            self.assertIs(printed.call_args.kwargs['flush'], True)
+            value = json.loads(printed.call_args.args[0].removeprefix(helper.CHECKPOINT))
+            self.assertEqual(value, {**EXPECTED, 'schemaVersion': 1, 'scope': 'diagnosticOnly',
+                                     'action': 'restore', 'mode': None, 'phase': 'checkoutStarted'})
+        report = {**EXPECTED, 'action': 'restore', 'mode': None, 'stderr': PRIVATE, 'path': PRIVATE}
+        with mock.patch('builtins.print') as printed:
+            helper.checkpoint(report, 'contextStarted')
+            self.assertNotIn(PRIVATE, printed.call_args.args[0])
+            with self.assertRaises(helper.Failure):
+                helper.checkpoint(report, PRIVATE)
+            printed.assert_called_once()
+        with mock.patch.object(helper.A, 'read_json', return_value={'supported': True}), \
+                mock.patch.object(helper, 'context', side_effect=KeyboardInterrupt), \
+                mock.patch('builtins.print') as printed:
+            with self.assertRaises(KeyboardInterrupt):
+                helper.execute('restore', None, EXPECTED, report)
+            value = json.loads(printed.call_args.args[0].removeprefix(helper.CHECKPOINT))
+            self.assertEqual(value['phase'], 'contextStarted')
+            self.assertIs(printed.call_args.kwargs['flush'], True)
+            self.assertNotIn(PRIVATE, printed.call_args.args[0])
 
     def test_changed_build_is_rejected_before_any_second_arm_command(self):
         ctx = {'destination': 'fixed'}
@@ -705,7 +890,7 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             summary = (Path(temp) / 'public/help.json').read_text()
             self.assertNotIn(PRIVATE, output.getvalue() + summary)
             self.assertNotIn(temp, output.getvalue() + summary)
-            self.assertTrue(output.getvalue().startswith('::notice::Dynamic Type diagnostic: '))
+            self.assertTrue(output.getvalue().splitlines()[-1].startswith('::notice::Dynamic Type diagnostic: '))
             self.assertEqual(json.loads(summary)['scope'], 'diagnosticOnly')
             self.assertEqual(helper.main(['../../' + PRIVATE]), 2)
             self.assertNotIn(PRIVATE, output.getvalue())
