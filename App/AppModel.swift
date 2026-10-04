@@ -1728,15 +1728,25 @@ final class AppModel {
     }
     func requestCalendarAccess() async {
         guard let services else { return }
+        let identity = storeObservationID
         do {
             let calendar = await services.calendar
+            guard storeObservationID == identity, self.services === services else { return }
             let granted = try await calendar.requestFullAccess()
+            guard storeObservationID == identity, self.services === services else { return }
+            let access = await calendar.authorization()
+            guard storeObservationID == identity, self.services === services else { return }
+            let available = granted ? try await calendar.calendars() : []
+            guard storeObservationID == identity, self.services === services else { return }
             preferences.calendarEnabled = granted
-            calendarAccess = await calendar.authorization()
-            if granted { calendars = try await calendar.calendars(); calendarProblem = nil }
+            calendarAccess = access
+            if granted { calendars = available; calendarProblem = nil }
             else { calendars = []; clearCalendarDisplays(); calendarProblem = "캘린더 접근을 허용하지 않았어요. 할 일 날짜 배치는 계속 사용할 수 있어요." }
             savePreferences()
-        } catch { calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요." }
+        } catch {
+            guard storeObservationID == identity, self.services === services else { return }
+            calendarProblem = "일정을 불러오지 못했어요. 할 일 목록은 계속 사용할 수 있어요."
+        }
     }
     private var liveCalendarDisplays: [CalendarDisplayState] {
         calendarDisplays = calendarDisplays.filter { $0.value.value != nil }
