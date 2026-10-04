@@ -49,7 +49,7 @@ public struct StoreConfiguration: Sendable {
             appropriateFor: nil, create: true
         )
         let directory = base.appendingPathComponent("Mirror/local", isDirectory: true)
-        return StoreConfiguration(directory: directory, workspaceEpoch: try existingEpoch(in: directory), deviceID: deviceID)
+        return try localConfiguration(in: directory, deviceID: deviceID)
     }
 
     /// 서명/entitlement 누락을 별도 로컬 폴더로 숨기지 않는다.
@@ -58,15 +58,19 @@ public struct StoreConfiguration: Sendable {
             throw StoreError.appGroupUnavailable
         }
         let local = directory.appendingPathComponent("Mirror/local", isDirectory: true)
-        return StoreConfiguration(directory: local, workspaceEpoch: try existingEpoch(in: local), deviceID: deviceID)
+        return try localConfiguration(in: local, deviceID: deviceID)
     }
 
-    private static func existingEpoch(in directory: URL) throws -> String {
+    /// 두 로컬 진입점 모두 명시적 복원에서 보존한 공간 키와 세대를 함께 다시 연다.
+    static func localConfiguration(in directory: URL, deviceID: String) throws -> StoreConfiguration {
         let url = directory.appendingPathComponent("StorageIdentity.json")
-        guard FileManager.default.fileExists(atPath: url.path) else { return "local-v1" }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return StoreConfiguration(directory: directory, deviceID: deviceID)
+        }
         guard let object = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
+              let workspace = object["workspaceKey"] as? String, !workspace.isEmpty,
               let epoch = object["workspaceEpoch"] as? String, !epoch.isEmpty else { throw StoreError.invalidConfiguration }
-        return epoch
+        return StoreConfiguration(directory: directory, workspaceKey: workspace, workspaceEpoch: epoch, deviceID: deviceID)
     }
 }
 

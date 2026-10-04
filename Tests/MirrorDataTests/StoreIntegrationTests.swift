@@ -422,6 +422,73 @@ struct StoreIntegrationTests {
         #expect(originals.first?["operationID"] as? String == "future-record")
     }
 
+    @Test("다른 공간의 격리된 최대 Lamport는 명령을 막지 않고 같은 공간의 미지원 시계는 보존한다",
+          arguments: ["workspaceKey", "workspaceEpoch"])
+    func quarantinedForeignLamportDoesNotBlockCurrentWorkspace(differentField: String) async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        let initial = await store.execute(try capture(title: "유지할 기존 작업", context: context), at: context.capturedAt)
+        #expect(initial.state == .locallyCommitted)
+        let foreign = try OperationRecord.create(operationID: "quarantined-foreign-lamport",
+            workspaceKey: differentField == "workspaceKey" ? "foreign-space" : configuration.workspaceKey,
+            workspaceEpoch: differentField == "workspaceEpoch" ? "foreign-generation" : configuration.workspaceEpoch,
+            deviceID: UUID(uuidString: testDeviceID)!, lamport: Int64.max, recordedAt: context.capturedAt,
+            commandKind: .settings, mutations: [], settings: PlanningPolicy(timeZoneID: "UTC", revision: "foreign-policy"))
+        let future = try OperationRecord.create(operationID: "current-workspace-future-schema", schemaVersion: 99,
+            workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch,
+            deviceID: UUID(uuidString: testDeviceID)!, lamport: 4_000, recordedAt: context.capturedAt,
+            commandKind: .settings, mutations: [], settings: PlanningPolicy(timeZoneID: "UTC", revision: "future-policy"))
+        let rawRows: [[String: Any]] = try [foreign, future].map { record in
+            ["operationID": record.operationID, "payloadDigest": record.payloadDigest,
+             "payloadBase64": try CanonicalDigest.data(record).base64EncodedString(),
+             "taskIDs": record.affectedTaskIDs.map(\.uuidString), "workspaceKey": record.workspaceKey,
+             "workspaceEpoch": record.workspaceEpoch, "schemaVersion": record.schemaVersion,
+             "lamport": record.lamport, "quarantined": record.operationID == foreign.operationID]
+        }
+        let archive = try JSONSerialization.data(withJSONObject: ["formatVersion": 1,
+            "workspaceKey": configuration.workspaceKey, "workspaceEpoch": configuration.workspaceEpoch,
+            "sourceAccountScope": "local-only", "rawOperations": rawRows])
+        let imported = try await store.importArchive(archive)
+        #expect(imported.inserted == 2)
+        #expect(!imported.projectionPending)
+        let beforeCapture = try await store.snapshot()
+        #expect(beforeCapture.tasks.map(\.title) == ["유지할 기존 작업"])
+        #expect(beforeCapture.quarantinedCount == 2)
+        #expect(beforeCapture.policy.revision == "policy-v1")
+        let command = try capture(key: "after-foreign-lamport", title: "격리 뒤 새 작업", context: context)
+        let result = await store.execute(command, at: context.capturedAt)
+        #expect(result.state == .locallyCommitted)
+        let final = try await store.snapshot()
+        let newRecord = try #require(final.records.first { $0.operationID == result.operationID })
+        #expect(newRecord.lamport == 4_001)
+        #expect(Set(final.tasks.map(\.title)) == ["유지할 기존 작업", "격리 뒤 새 작업"])
+        #expect(final.records.contains(future))
+        #expect(final.quarantinedCount == 2)
+        let output = try await store.exportArchive(exportedAt: context.capturedAt)
+        let exported = try #require(try JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let exportedRows = try #require(exported["rawOperations"] as? [[String: Any]])
+        #expect(exportedRows.count == 4)
+        for record in [foreign, future] {
+            let row = try #require(exportedRows.first { $0["operationID"] as? String == record.operationID })
+            let expectedPayload = try CanonicalDigest.data(record).base64EncodedString()
+            #expect(row["payloadBase64"] as? String == expectedPayload)
+            #expect(row["payloadDigest"] as? String == record.payloadDigest)
+            #expect(row["workspaceKey"] as? String == record.workspaceKey)
+            #expect(row["workspaceEpoch"] as? String == record.workspaceEpoch)
+        }
+        try await store.suspend()
+        let reopened = try await MirrorStore(configuration: configuration)
+        let restarted = try await reopened.snapshot()
+        #expect(restarted.tasks == final.tasks)
+        #expect(Set(restarted.records) == Set(final.records))
+        #expect(restarted.quarantinedCount == 2)
+        let retry = await reopened.execute(command, at: context.capturedAt)
+        #expect(retry.state == .alreadyApplied)
+        #expect(retry.operationID == result.operationID)
+    }
+
     @Test("프로세스의 다른 초기 시간대는 저장한 최초 정책을 덮지 않는다")
     func bootstrapPolicySharedAcrossInstances() async throws {
         let firstConfiguration = temporaryConfiguration()
@@ -465,6 +532,76 @@ struct StoreIntegrationTests {
         let output = try await store.exportArchive(exportedAt: context.capturedAt)
         let exported = try #require(try JSONSerialization.jsonObject(with: output) as? [String: Any])
         #expect((exported["rawOperations"] as? [Any])?.count == 2)
+    }
+
+    @Test("같은 ID의 다른 작업 변형은 증분 조회·명령·재시작에서도 함께 격리한다")
+    func crossTaskDuplicateRemainsQuarantinedAcrossCommandAndRestart() async throws {
+        let configuration = temporaryConfiguration()
+        defer { try? FileManager.default.removeItem(at: configuration.directory) }
+        let store = try await MirrorStore(configuration: configuration)
+        let context = try fixedContext()
+        let first = try capture(key: "cross-task-decision", context: context)
+        let committed = await store.execute(first, at: context.capturedAt)
+        #expect(committed.state == .locallyCommitted)
+        let before = try await store.snapshot()
+        let task = try #require(before.tasks.first)
+        let original = try #require(before.records.first)
+        let reader = try await MirrorStore(configuration: configuration)
+        let displayed = try await reader.snapshot()
+        #expect(displayed.tasks == before.tasks)
+
+        let otherID = UUID()
+        let otherCapture = try capture(id: otherID, key: first.idempotencyKey, context: context)
+        let variant = try OperationRecord.create(operationID: original.operationID,
+            workspaceKey: original.workspaceKey, workspaceEpoch: original.workspaceEpoch,
+            deviceID: original.deviceID, lamport: original.lamport, recordedAt: original.recordedAt,
+            commandKind: .capture,
+            mutations: original.mutations.map { TaskMutation(taskID: otherID, value: $0.value) },
+            idempotencyKey: original.idempotencyKey, logicalCommandDigest: otherCapture.logicalDigest(),
+            undoValues: original.undoValues.map { TaskMutation(taskID: otherID, value: $0.value) })
+        let archive = try JSONSerialization.data(withJSONObject: ["formatVersion": 1,
+            "workspaceKey": configuration.workspaceKey, "workspaceEpoch": configuration.workspaceEpoch,
+            "sourceAccountScope": "local-only",
+            "operations": [try JSONSerialization.jsonObject(with: CanonicalDigest.data(variant))]])
+        let imported = try await store.importArchive(archive)
+        #expect(imported.inserted == 1)
+        #expect(imported.quarantined == 1)
+        let quarantined = try await store.snapshot()
+        let refreshed = try await reader.snapshot()
+        #expect(quarantined.tasks.isEmpty)
+        #expect(refreshed.tasks.isEmpty)
+        #expect(quarantined.quarantinedCount == 1)
+        #expect(refreshed.quarantinedCount == 1)
+        #expect(Set(quarantined.records) == [original, variant])
+        #expect(Set(refreshed.records) == [original, variant])
+
+        let edit = CommandEnvelope(requestID: "quarantined-edit-request", idempotencyKey: "quarantined-edit",
+            source: .app, context: context, workspaceEpoch: configuration.workspaceEpoch,
+            payload: .editContent(taskID: task.taskID, content: try TaskContent(title: "격리 후 저장하면 안 되는 수정"),
+                expectedContent: try #require(task.versions[.content]?.headsDigest)))
+        let rejected = await store.execute(edit, at: context.capturedAt)
+        #expect(rejected.state == .notFound)
+        #expect(rejected.operationID == nil)
+        let afterCommand = try await store.snapshot()
+        #expect(afterCommand.tasks.isEmpty)
+        #expect(Set(afterCommand.records) == [original, variant])
+        try await store.rebuild()
+        let rebuilt = try await store.snapshot()
+        #expect(rebuilt.tasks == afterCommand.tasks)
+        #expect(Set(rebuilt.records) == [original, variant])
+        try await reader.suspend()
+        try await store.suspend()
+        let reopened = try await MirrorStore(configuration: configuration)
+        let restarted = try await reopened.snapshot()
+        #expect(restarted.tasks.isEmpty)
+        #expect(restarted.quarantinedCount == 1)
+        #expect(Set(restarted.records) == [original, variant])
+        let output = try await reopened.exportArchive(exportedAt: context.capturedAt)
+        let exported = try #require(try JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let rows = try #require(exported["rawOperations"] as? [[String: Any]])
+        #expect(rows.count == 2)
+        let expectedPayloads = try Set([original, variant].map { try CanonicalDigest.data($0).base64EncodedString() })
+        #expect(Set(rows.compactMap { $0["payloadBase64"] as? String }) == expectedPayloads)
     }
 
     @Test("raw archive의 task index와 요청 키 위조는 저장 전에 거부한다")
@@ -674,6 +811,79 @@ struct StoreIntegrationTests {
         // domain epoch가 원래와 같아져도 별도 physical writer generation이 구 actor를 막는다.
         await #expect(throws: StoreError.obsoleteEpoch) { try await oldWriter.snapshot() }
         #expect(await final.execute(original, at: context.capturedAt).state == .alreadyApplied)
+    }
+
+    @Test("다른 공간을 복원한 뒤 공식 로컬 factory가 원래 공간과 명령을 다시 연다")
+    func restoredWorkspaceReopensThroughLocalFactory() async throws {
+        let sourceDirectory = temporaryConfiguration().directory
+        let localDirectory = temporaryConfiguration().directory
+        defer {
+            try? FileManager.default.removeItem(at: sourceDirectory)
+            try? FileManager.default.removeItem(at: localDirectory)
+        }
+        let sourceConfiguration = StoreConfiguration(directory: sourceDirectory, workspaceKey: "restored-personal-space",
+            workspaceEpoch: "restored-generation", deviceID: testDeviceID)
+        let localConfiguration = try StoreConfiguration.localConfiguration(in: localDirectory, deviceID: testDeviceID)
+        let source = try await MirrorStore(configuration: sourceConfiguration)
+        let local = try await MirrorStore(configuration: localConfiguration)
+        let context = try fixedContext()
+        let original = try capture(key: "restored-source", title: "원본 공간의 작업", context: context,
+                                   epoch: sourceConfiguration.workspaceEpoch)
+        let captured = await source.execute(original, at: context.capturedAt)
+        #expect(captured.state == .locallyCommitted)
+        let replaced = await local.execute(try capture(title: "교체할 기기 작업", context: context), at: context.capturedAt)
+        #expect(replaced.state == .locallyCommitted)
+        let expected = try await source.snapshot()
+        let expectedRecord = try #require(expected.records.first)
+        let archive = try await source.exportArchive(exportedAt: context.capturedAt)
+        let preview = try await local.previewArchive(archive)
+        #expect(preview.requiresWorkspaceConfirmation)
+        let restoration = try await local.restoreArchiveAsLocalWorkspace(archive, confirmed: true)
+        let restored = try await MirrorStore(configuration: restoration.newConfiguration)
+        let immediate = try await restored.snapshot()
+        #expect(immediate.tasks == expected.tasks)
+        #expect(immediate.records == expected.records)
+        try await restored.suspend()
+
+        // 앱과 App Group의 공식 진입점이 실제로 공유하는 factory에 저장 디렉터리만 주입한다.
+        let restartedConfiguration = try StoreConfiguration.localConfiguration(in: localDirectory, deviceID: testDeviceID)
+        #expect(restartedConfiguration.workspaceKey == sourceConfiguration.workspaceKey)
+        #expect(restartedConfiguration.workspaceEpoch == sourceConfiguration.workspaceEpoch)
+        #expect(restartedConfiguration.directory == localDirectory)
+        let reopened = try await MirrorStore(configuration: restartedConfiguration)
+        let restarted = try await reopened.snapshot()
+        #expect(restarted.tasks == expected.tasks)
+        #expect(restarted.records == expected.records)
+        let retry = await reopened.execute(original, at: context.capturedAt)
+        #expect(retry.state == .alreadyApplied)
+        #expect(retry.operationID == captured.operationID)
+        let newCommand = try capture(key: "after-restored-restart", title: "재시작 뒤 새 작업", context: context,
+                                     epoch: restartedConfiguration.workspaceEpoch)
+        let newResult = await reopened.execute(newCommand, at: context.capturedAt)
+        #expect(newResult.state == .locallyCommitted)
+        let final = try await reopened.snapshot()
+        #expect(Set(final.tasks.map(\.title)) == ["원본 공간의 작업", "재시작 뒤 새 작업"])
+        #expect(final.records.count == 2)
+        #expect(final.records.contains(expectedRecord))
+        #expect(final.records.allSatisfy { $0.workspaceKey == sourceConfiguration.workspaceKey
+            && $0.workspaceEpoch == sourceConfiguration.workspaceEpoch })
+    }
+
+    @Test("로컬 factory는 저장된 공간 키나 세대가 없으면 기본 공간으로 덮지 않는다",
+          arguments: ["workspaceKey", "workspaceEpoch"])
+    func localFactoryRejectsIncompleteStoredIdentity(missingField: String) throws {
+        let directory = temporaryConfiguration().directory
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var identity = ["workspaceKey": "restored-personal-space", "workspaceEpoch": "restored-generation"]
+        identity.removeValue(forKey: missingField)
+        let bytes = try JSONSerialization.data(withJSONObject: identity, options: [.sortedKeys])
+        let identityURL = directory.appendingPathComponent("StorageIdentity.json")
+        try bytes.write(to: identityURL, options: .atomic)
+        #expect(throws: StoreError.invalidConfiguration) {
+            try StoreConfiguration.localConfiguration(in: directory, deviceID: testDeviceID)
+        }
+        #expect(try Data(contentsOf: identityURL) == bytes)
     }
 
     @Test("복원 교체 중 종료는 같은 export로 재시도해 복구한다")

@@ -112,13 +112,17 @@ final class CoreDataPersistence: @unchecked Sendable {
         changeHub.stream(includeInitial: includeInitial)
     }
 
-    func operations(taskIDs: Set<String>? = nil) async throws -> [StoredOperation] {
+    func operations(taskIDs: Set<String>? = nil, operationIDs: Set<String> = []) async throws -> [StoredOperation] {
         try await perform(in: canonical) { context in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Operation")
             if let taskIDs {
-                request.predicate = NSCompoundPredicate(orPredicateWithSubpredicates: taskIDs.sorted().map {
+                var predicates = taskIDs.sorted().map {
                     NSPredicate(format: "taskIndex CONTAINS %@", "|\($0)|")
-                } + [NSPredicate(format: "taskIndex == %@", "")])
+                } + [NSPredicate(format: "taskIndex == %@", "")]
+                if !operationIDs.isEmpty {
+                    predicates.append(NSPredicate(format: "operationID IN %@", operationIDs.sorted()))
+                }
+                request.predicate = NSCompoundPredicate(orPredicateWithSubpredicates: predicates)
             }
             return try context.fetch(request).map(Self.operationDTO)
         }
@@ -292,9 +296,12 @@ final class CoreDataPersistence: @unchecked Sendable {
         }
     }
 
-    func maximumLamport() async throws -> Int64 {
+    func maximumLamport(workspaceKey: String, workspaceEpoch: String) async throws -> Int64 {
         try await perform(in: canonical) { context in
             let request = NSFetchRequest<NSManagedObject>(entityName: "Operation")
+            // 격리 보존한 다른 공간/세대의 원본은 현재 공간의 논리 시계를 올리지 않는다.
+            // 같은 공간의 미지원 schema는 계속 관측하여 새 버전 기록과의 인과 순서를 보존한다.
+            request.predicate = NSPredicate(format: "workspaceKey == %@ AND workspaceEpoch == %@", workspaceKey, workspaceEpoch)
             request.sortDescriptors = [NSSortDescriptor(key: "lamport", ascending: false)]
             request.fetchLimit = 1
             return (try context.fetch(request).first?.value(forKey: "lamport") as? NSNumber)?.int64Value ?? 0

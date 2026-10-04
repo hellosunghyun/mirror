@@ -246,7 +246,8 @@ public actor MirrorStore {
                 deviceID: UUID(uuidString: configuration.deviceID)!, currentContext: currentContext,
                 recordedAt: context.capturedAt,
                 tasks: Self.restrictUnsupportedTasks(report.tasks, unknownTaskIDs: decoded.unknownTaskIDs),
-                records: decoded.records, observedLamport: try await persistence.maximumLamport()
+                records: decoded.records, observedLamport: try await persistence.maximumLamport(
+                    workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch)
             )
             switch CommandValidator.prepare(envelope, snapshot: commandSnapshot) {
             case let .rejected(rejection):
@@ -831,11 +832,15 @@ public actor MirrorStore {
 
     private func relatedOperations(taskIDs: Set<String>) async throws -> [StoredOperation] {
         var related = taskIDs
+        var operationIDs: Set<String> = []
         while true {
-            let raw = try await persistence.operations(taskIDs: related)
+            let raw = try await persistence.operations(taskIDs: related, operationIDs: operationIDs)
             let expanded = related.union(raw.flatMap(\.taskIDs))
-            if expanded == related { return raw }
-            related = expanded // batch 원본의 일부만 재생하지 않는다.
+            let expandedOperationIDs = operationIDs.union(raw.map(\.operationID))
+            if expanded == related, expandedOperationIDs == operationIDs { return raw }
+            // batch와 같은 operationID의 다른 작업 변형도 함께 재생하여 전체 재생의 격리를 유지한다.
+            related = expanded
+            operationIDs = expandedOperationIDs
         }
     }
 
