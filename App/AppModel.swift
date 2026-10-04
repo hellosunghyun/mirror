@@ -1415,6 +1415,10 @@ final class AppModel {
         return CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: token, source: .app,
                                context: context, workspaceEpoch: configuration.workspaceEpoch, payload: payload)
     }
+    private func isCurrentCommandStore(_ submittedStore: MirrorStore, observationID: UUID) -> Bool {
+        guard let store, storeObservationID == observationID else { return false }
+        return store === submittedStore
+    }
 
     @discardableResult
     private func execute(_ envelope: CommandEnvelope, success: String,
@@ -1426,14 +1430,18 @@ final class AppModel {
            pending.ownership.envelope.idempotencyKey == envelope.idempotencyKey { return false }
         guard let store, !isSaving,
               !projectionPending || retryEnvelope.map({ PendingCommandIdentity.matches($0, envelope) }) == true else { return false }
+        // 시트 닫기는 허용하되, 계정 격리나 저장소 재연결 뒤 옛 응답으로 상태를 되살리지 않는다.
+        let observationID = storeObservationID
         isSaving = true; problem = nil
         defer { finishSaving() }
         if configuration?.cloudSync != nil, let cloud, !isUITesting {
             let valid = await cloud.validateLocalIdentity()
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
             if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
             guard valid else {
                 let status = await cloud.status()
+                guard isCurrentCommandStore(store, observationID: observationID) else { return false }
                 if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
                 if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
                 cloudSyncStatus = status
@@ -1445,13 +1453,17 @@ final class AppModel {
         let current: PlanningContext
         do { current = try PlanningContext.capture(at: now, timeZoneID: preferences.timeZoneID, policyRevision: preferences.policyRevision) }
         catch { problem = "계획 시간대를 확인해 주세요."; return false }
+        guard isCurrentCommandStore(store, observationID: observationID) else { return false }
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
         let result = await store.execute(envelope, context: current)
+        guard isCurrentCommandStore(store, observationID: observationID) else { return false }
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
         let updated = await handleResult(envelope, result: result, success: success,
+                                         store: store, observationID: observationID,
                                          expectedDetailOwner: expectedDetailOwner, expectedPlanPickerOwner: expectedPlanPickerOwner)
+        guard isCurrentCommandStore(store, observationID: observationID) else { return false }
         if let owner = expectedPlanPickerOwner {
             guard ownsPlanPickerDecision(owner) else { return false }
             if owner.retainsDecision(after: result, displayUpdated: updated) {
@@ -1465,12 +1477,15 @@ final class AppModel {
         } else if updated, planPickerDecision != nil {
             problem = "이전 날짜 배치의 저장 결과가 남아 있어요. 다시 확인해 주세요."
         }
+        guard isCurrentCommandStore(store, observationID: observationID) else { return false }
         return updated
     }
     private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String,
+                              store: MirrorStore, observationID: UUID,
                               expectedWidgetOwnership: WidgetDecisionOwnership? = nil,
                               expectedDetailOwner: (id: UUID, claim: DetailEditingClaim)? = nil,
                               expectedPlanPickerOwner: PlanPickerDecisionOwnership? = nil) async -> Bool {
+        guard isCurrentCommandStore(store, observationID: observationID) else { return false }
         if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
         if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
         if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
@@ -1499,6 +1514,7 @@ final class AppModel {
             case .persistenceFailed: outcome = .failure
             }
             let metrics = await services.metrics
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
             if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
             let activeTime: Int?
@@ -1510,6 +1526,7 @@ final class AppModel {
             try? await metrics.record(LocalMetric(kind: kind, at: now, surface: .app, outcome: outcome,
                                                   activeReviewMilliseconds: activeTime,
                                                   countBucket: result.affectedTaskIDs.isEmpty ? 0 : result.affectedTaskIDs.count == 1 ? 1 : result.affectedTaskIDs.count <= 5 ? 5 : 20))
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
             if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
         }
@@ -1518,6 +1535,7 @@ final class AppModel {
             retryEnvelope = nil
             projectionPending = false
             let refreshed = await refresh()
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
             if let owner = expectedDetailOwner, !isCurrentDetailEditing(ownerID: owner.id, claim: owner.claim) { return false }
             if let owner = expectedPlanPickerOwner, !ownsPlanPickerDecision(owner) { return false }
@@ -1583,6 +1601,7 @@ final class AppModel {
             problem = result.safeUserMessage
             retryEnvelope = nil
             await refresh()
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             return false
         case .notFound, .unavailable, .persistenceFailed:
             problem = result.safeUserMessage
@@ -1979,6 +1998,7 @@ final class AppModel {
     private func commitWidget(_ request: PlanPickerRequest, target: PlanTarget, acknowledgment: DeadlineAcknowledgment? = nil) async -> Bool {
         guard let services, let store, let state = request.widgetState, let card = state.card, !isSaving,
               let configuration else { return false }
+        let observationID = storeObservationID
         isSaving = true; problem = nil
         defer { finishSaving() }
         var envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: card.decisionToken, source: .widget,
@@ -2001,12 +2021,16 @@ final class AppModel {
                                                store: store, configuration: configuration)
         do {
             let widget = await services.widget
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             guard ownsWidgetDecision(ownership) else { return false }
             let result = try await widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
                                                   target: target, acknowledgment: acknowledgment, at: now)
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             guard ownsWidgetDecision(ownership) else { return false }
             let committed = await handleResult(envelope, result: result, success: "\(planLabel(target))로 보냈어요.",
+                                               store: store, observationID: observationID,
                                                expectedWidgetOwnership: ownership)
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             guard ownsWidgetDecision(ownership) else { return false }
             if ownership.retainsDecision(after: result, displayUpdated: committed) {
                 widgetDecision?.awaitingConfirmation = result.state == .requiresConfirmation
@@ -2014,8 +2038,10 @@ final class AppModel {
                 releaseWidgetDecision(ownership)
                 if committed, picker?.id == request.id { completedWidgetPickerID = request.id }
             }
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             return committed
         } catch {
+            guard isCurrentCommandStore(store, observationID: observationID) else { return false }
             guard ownsWidgetDecision(ownership) else { return false }
             problem = "위젯의 작업이나 저장소를 확인하지 못했어요. 대상 카드를 유지했어요. 다시 확인해 주세요."
             return false
