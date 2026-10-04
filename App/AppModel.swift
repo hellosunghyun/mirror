@@ -239,7 +239,7 @@ final class AppModel {
         let store: MirrorStore
         let configuration: StoreConfiguration
     }
-    @ObservationIgnored private var widgetDecision: PendingWidgetDecision?
+    private var widgetDecision: PendingWidgetDecision?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let systemPreferenceJournal = SystemPreferenceUpdateJournal(defaults: .standard)
     @ObservationIgnored private let preferenceKey = "Mirror.preferences.v1"
