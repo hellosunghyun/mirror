@@ -51,6 +51,26 @@ private func harness(twoTasks: Bool = true) async throws -> WidgetHarness {
                          context: context, first: first, second: second)
 }
 
+private func widgetDecisionEnvelope(_ state: WidgetReviewState, card: WidgetCard, target: PlanTarget,
+                                    acknowledgment: DeadlineAcknowledgment? = nil) -> CommandEnvelope {
+    CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: card.decisionToken, source: .widget,
+        context: card.context, workspaceEpoch: "local-v1",
+        payload: .setPlan(item: .init(taskID: card.taskID, expected: card.expected, acknowledgment: acknowledgment),
+            target: target, review: .init(cycleID: state.cycleID, sessionID: state.sessionID.uuidString,
+                                        cardID: card.cardID.uuidString, taskID: card.taskID)))
+}
+
+private func setWidgetHarnessDeadlines(_ h: WidgetHarness) async throws {
+    for task in try await h.store.snapshot().tasks {
+        let saved = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setDeadline(taskID: task.taskID,
+                deadline: .day(localDate: h.context.planningDay, timeZoneID: h.context.timeZoneID),
+                expectedDeadline: try #require(task.versions[.deadline]?.headsDigest))), at: fixedInstant)
+        #expect(saved.state == .locallyCommitted)
+    }
+}
+
 /// sleep으로 순서를 추측하지 않고 실제 gate 등록·진입·해제를 연결한다.
 private final class WidgetGateSignal: @unchecked Sendable {
     private let lock = NSLock()
@@ -348,6 +368,205 @@ struct SystemContractTests {
                                                target: .day(h.context.planningDay), at: fixedInstant.addingTimeInterval(26 * 60 * 60))
         #expect(result.state == .staleContext)
         #expect(try await h.store.snapshot().tasks.allSatisfy { $0.plan.target == .unassigned })
+        let observationID = UUID()
+        let owner = WidgetDecisionOwnership(requestID: UUID(), observationID: observationID, workspaceKey: "personal-v1",
+            envelope: widgetDecisionEnvelope(state, card: card, target: .day(h.context.planningDay)))
+        #expect(!owner.retainsDecision(after: result, displayUpdated: false))
+        #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: false,
+            saving: false, pendingCommand: owner.retainsDecision(after: result, displayUpdated: false)) == nil)
+        #expect(owner.isCurrent(owner, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        let replacement = WidgetDecisionOwnership(requestID: UUID(), observationID: observationID,
+            workspaceKey: "personal-v1", envelope: owner.envelope)
+        #expect(!owner.isCurrent(replacement, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        #expect(!owner.isCurrent(owner, observationID: UUID(), workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        #expect(!owner.isCurrent(owner, observationID: observationID, workspaceKey: "other", workspaceEpoch: "local-v1"))
+        #expect(!owner.isCurrent(owner, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "reset"))
+    }
+
+    @Test("외부 계획 변경과 이미 결정된 위젯 카드는 재시도 소유를 해제한다", .timeLimit(.minutes(1)))
+    func widgetDefinitiveRejectionsReleaseRetryOwnership() async throws {
+        let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
+        let card = try #require(state.card), target = PlanTarget.day(h.context.planningDay)
+        let envelope = widgetDecisionEnvelope(state, card: card, target: target)
+        let owner = WidgetDecisionOwnership(requestID: UUID(), observationID: UUID(), workspaceKey: "personal-v1", envelope: envelope)
+        let external = await h.store.execute(.init(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .app, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: card.taskID, expected: card.expected), target: target, review: nil)), at: fixedInstant)
+        #expect(external.state == .locallyCommitted)
+        let stale = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+            target: .day(try h.context.planningDay.addingDays(1)), at: fixedInstant)
+        #expect(stale.state == .staleSnapshot)
+        #expect(!owner.retainsDecision(after: stale, displayUpdated: false))
+        #expect(try await h.store.taskProjection(card.taskID)?.plan.target == target)
+
+        let fresh = try await h.widget.snapshot(at: fixedInstant), next = try #require(fresh.card)
+        let nextOwner = WidgetDecisionOwnership(requestID: UUID(), observationID: UUID(), workspaceKey: "personal-v1",
+            envelope: widgetDecisionEnvelope(fresh, card: next, target: target))
+        let committed = try await h.widget.commit(scopeKey: fresh.scopeKey, sessionID: fresh.sessionID, card: next,
+            target: target, at: fixedInstant)
+        #expect(committed.state == .locallyCommitted)
+        let decided = try await h.widget.commit(scopeKey: fresh.scopeKey, sessionID: fresh.sessionID, card: next,
+            target: .day(try h.context.planningDay.addingDays(2)), at: fixedInstant)
+        #expect(decided.state == .alreadyDecided)
+        #expect(!nextOwner.retainsDecision(after: decided, displayUpdated: false))
+        #expect(try await h.store.snapshot().records.filter { $0.idempotencyKey == next.decisionToken }.count == 1)
+
+        // notFound도 원본 생성 전의 확정 거절이다. 존재하지 않는 task ID를 새 대상으로 바꾸지 않는다.
+        let missingEnvelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString,
+            source: .widget, context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: UUID(), expected: card.expected), target: target, review: nil))
+        let missingOwner = WidgetDecisionOwnership(requestID: UUID(), observationID: UUID(), workspaceKey: "personal-v1",
+                                                  envelope: missingEnvelope)
+        let missing = await h.store.execute(missingEnvelope, at: fixedInstant)
+        #expect(missing.state == .notFound)
+        #expect(!missingOwner.retainsDecision(after: missing, displayUpdated: false))
+        #expect(!((try await h.store.snapshot()).records.contains { $0.idempotencyKey == missingEnvelope.idempotencyKey }))
+    }
+
+    @Test("마감 승인된 위젯 저장 장애는 같은 승인·토큰으로 재시도하고 원본 하나만 남긴다", .timeLimit(.minutes(1)))
+    func acknowledgedWidgetRetryPreservesOriginalCommand() async throws {
+        for failurePoint in [StoreFailurePoint.beforeCanonicalSave, .afterCanonicalSave] {
+            let h = try await harness(twoTasks: false)
+            try await setWidgetHarnessDeadlines(h)
+            let state = try await h.widget.snapshot(at: fixedInstant), card = try #require(state.card)
+            let target = PlanTarget.day(try h.context.planningDay.addingDays(1))
+            let acknowledgment = DeadlineAcknowledgment(taskID: card.taskID.uuidString,
+                deadlineRevision: try #require(card.expected.deadline), target: target)
+            let envelope = widgetDecisionEnvelope(state, card: card, target: target, acknowledgment: acknowledgment)
+            let owner = WidgetDecisionOwnership(requestID: UUID(), observationID: UUID(), workspaceKey: "personal-v1", envelope: envelope)
+            let failed = await h.store.execute(envelope, at: fixedInstant, failurePoint: failurePoint)
+            #expect(failed.state == (failurePoint == .beforeCanonicalSave ? .persistenceFailed : .committedProjectionPending))
+            #expect(owner.retainsDecision(after: failed, displayUpdated: false))
+            #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: false,
+                saving: false, pendingCommand: owner.retainsDecision(after: failed, displayUpdated: false)) == .pendingCommand)
+            guard case let .setPlan(item, retainedTarget, _) = owner.envelope.payload else {
+                Issue.record("위젯 명령을 유지해야 한다"); continue
+            }
+            #expect(item.acknowledgment == acknowledgment)
+            let retried = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+                target: retainedTarget, acknowledgment: item.acknowledgment, at: fixedInstant)
+            #expect(retried.state == (failurePoint == .beforeCanonicalSave ? .locallyCommitted : .alreadyApplied))
+            #expect(owner.retainsDecision(after: retried, displayUpdated: false))
+            #expect(!owner.retainsDecision(after: retried, displayUpdated: true))
+            #expect(WorkspaceChangeBlocker.current(detailEditing: false, capture: false, projectionPending: false,
+                saving: false, pendingCommand: owner.retainsDecision(after: retried, displayUpdated: true)) == nil)
+            let repeated = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+                target: retainedTarget, acknowledgment: item.acknowledgment, at: fixedInstant.addingTimeInterval(26 * 60 * 60))
+            #expect(repeated.state == .alreadyApplied)
+            let snapshot = try await h.store.snapshot()
+            #expect(snapshot.records.filter { $0.idempotencyKey == owner.envelope.idempotencyKey }.count == 1)
+            #expect(snapshot.tasks.first { $0.taskID == card.taskID }?.plan.target == target)
+        }
+    }
+
+    @Test("명시적 위젯 재시도는 같은 저장소 actor 재관측만 연결하고 재개설·다른 공간은 거절한다", .timeLimit(.minutes(1)))
+    func widgetRetryRebindsOnlySameLiveStore() async throws {
+        let h = try await harness(), state = try await h.widget.snapshot(at: fixedInstant)
+        let card = try #require(state.card), target = PlanTarget.day(h.context.planningDay)
+        let configuration = await h.store.configuration
+        let original = WidgetDecisionOwnership(requestID: UUID(), observationID: UUID(), workspaceKey: configuration.workspaceKey,
+            envelope: widgetDecisionEnvelope(state, card: card, target: target))
+        let failed = await h.store.execute(original.envelope, at: fixedInstant, failurePoint: .beforeCanonicalSave)
+        #expect(failed.state == .persistenceFailed)
+        #expect(original.retainsDecision(after: failed, displayUpdated: false))
+        let nextObservation = UUID()
+        let rebound = try #require(original.rebindingForRetry(observationID: nextObservation,
+            originalStore: h.store, currentStore: h.store, originalConfiguration: configuration, currentConfiguration: configuration))
+        #expect(rebound.envelope == original.envelope)
+        #expect(rebound.requestID == original.requestID)
+        #expect(rebound.isCurrent(rebound, observationID: nextObservation, workspaceKey: configuration.workspaceKey,
+                                  workspaceEpoch: configuration.workspaceEpoch))
+        #expect(!original.isCurrent(rebound, observationID: nextObservation, workspaceKey: configuration.workspaceKey,
+                                    workspaceEpoch: configuration.workspaceEpoch))
+        let reopened = try await MirrorStore(configuration: configuration)
+        #expect(original.rebindingForRetry(observationID: nextObservation, originalStore: h.store,
+            currentStore: reopened, originalConfiguration: configuration, currentConfiguration: configuration) == nil)
+        for changed in [
+            StoreConfiguration(directory: configuration.directory.appendingPathComponent("other"), deviceID: configuration.deviceID),
+            StoreConfiguration(directory: configuration.directory, workspaceKey: "other", deviceID: configuration.deviceID),
+            StoreConfiguration(directory: configuration.directory, workspaceEpoch: "reset", deviceID: configuration.deviceID),
+            StoreConfiguration(directory: configuration.directory, deviceID: configuration.deviceID,
+                cloudSync: .init(containerIdentifier: "test-container", accountScope: "test-account"))
+        ] {
+            #expect(original.rebindingForRetry(observationID: nextObservation, originalStore: h.store,
+                currentStore: h.store, originalConfiguration: configuration, currentConfiguration: changed) == nil)
+        }
+        let retried = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+                                                target: target, at: fixedInstant)
+        #expect(retried.state == .locallyCommitted)
+        #expect(!rebound.retainsDecision(after: retried, displayUpdated: true))
+        #expect(try await h.store.snapshot().records.filter { $0.idempotencyKey == original.envelope.idempotencyKey }.count == 1)
+    }
+
+    @Test("취소한 위젯 A의 확인은 앱 B의 마감 확인·자동 해제를 소비하거나 A를 변경하지 않는다", .timeLimit(.minutes(1)))
+    func deadlineConfirmationOwnsDisplayedTaskAndRequest() async throws {
+        let h = try await harness()
+        try await setWidgetHarnessDeadlines(h)
+        let state = try await h.widget.snapshot(at: fixedInstant), card = try #require(state.card)
+        let target = PlanTarget.day(try h.context.planningDay.addingDays(1))
+        let widgetEnvelope = widgetDecisionEnvelope(state, card: card, target: target)
+        let observationID = UUID()
+        let owner = WidgetDecisionOwnership(requestID: UUID(), observationID: observationID,
+                                            workspaceKey: "personal-v1", envelope: widgetEnvelope)
+        let widgetResult = try await h.widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
+                                                     target: target, at: fixedInstant)
+        #expect(widgetResult.state == .requiresConfirmation)
+        #expect(owner.retainsDecision(after: widgetResult, displayUpdated: false))
+        let other = try #require(try await h.store.snapshot().tasks.first { $0.taskID != card.taskID })
+        let appEnvelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: UUID().uuidString, source: .app,
+            context: h.context, workspaceEpoch: "local-v1",
+            payload: .setPlan(item: .init(taskID: other.taskID, expected: ExpectedVersions(other)), target: target, review: nil))
+        let appResult = await h.store.execute(appEnvelope, at: fixedInstant)
+        #expect(appResult.state == .requiresConfirmation)
+        #expect(owner.ownsConfirmation(widgetEnvelope, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        #expect(!owner.ownsConfirmation(appEnvelope, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        #expect(!owner.ownsConfirmation(widgetEnvelope, observationID: UUID(), workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        let targetPayload = widgetDecisionEnvelope(state, card: card, target: .day(try h.context.planningDay.addingDays(2))).payload
+        let differentTarget = CommandEnvelope(requestID: widgetEnvelope.requestID, idempotencyKey: widgetEnvelope.idempotencyKey,
+            source: .widget, context: widgetEnvelope.context, workspaceEpoch: "local-v1", payload: targetPayload)
+        #expect(!owner.ownsConfirmation(differentTarget, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+        let differentToken = CommandEnvelope(requestID: widgetEnvelope.requestID, idempotencyKey: UUID().uuidString,
+            source: .widget, context: widgetEnvelope.context, workspaceEpoch: "local-v1", payload: widgetEnvelope.payload)
+        #expect(!owner.ownsConfirmation(differentToken, observationID: observationID, workspaceKey: "personal-v1", workspaceEpoch: "local-v1"))
+
+        var confirmation = DeadlineConfirmationState()
+        confirmation.replace(with: widgetEnvelope)
+        confirmation.dismiss(widgetEnvelope)
+        let canceled = confirmation.take(widgetEnvelope)
+        #expect(canceled == widgetEnvelope)
+        confirmation.replace(with: appEnvelope)
+        confirmation.dismiss(widgetEnvelope)
+        let lateWidget = confirmation.take(widgetEnvelope)
+        #expect(lateWidget == nil)
+        #expect(confirmation.presented == appEnvelope)
+        confirmation.dismiss(appEnvelope)
+        let consumed = confirmation.take(appEnvelope)
+        let displayed = try #require(consumed)
+        let duplicate = confirmation.take(appEnvelope)
+        #expect(duplicate == nil)
+        #expect(displayed == appEnvelope)
+        confirmation.replace(with: appEnvelope)
+        let beforeDismiss = confirmation.take(appEnvelope)
+        confirmation.dismiss(appEnvelope)
+        #expect(beforeDismiss == appEnvelope)
+        #expect(confirmation.presented == nil)
+        confirmation.replace(with: widgetEnvelope)
+        confirmation.replace(with: nil)
+        let previousWorkspace = confirmation.take(widgetEnvelope)
+        #expect(previousWorkspace == nil)
+
+        let acknowledgment = DeadlineAcknowledgment(taskID: other.taskID.uuidString,
+            deadlineRevision: try #require(other.versions[.deadline]?.headsDigest), target: target)
+        let confirmed = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: displayed.idempotencyKey,
+            source: displayed.source, context: displayed.context, workspaceEpoch: displayed.workspaceEpoch,
+            payload: .setPlan(item: .init(taskID: other.taskID, expected: ExpectedVersions(other), acknowledgment: acknowledgment),
+                              target: target, review: nil))
+        let committed = await h.store.execute(confirmed, at: fixedInstant)
+        #expect(committed.state == .locallyCommitted)
+        let snapshot = try await h.store.snapshot()
+        #expect(snapshot.tasks.first { $0.taskID == card.taskID }?.plan.target == .unassigned)
+        #expect(snapshot.tasks.first { $0.taskID == other.taskID }?.plan.target == target)
+        #expect(!snapshot.records.contains { $0.idempotencyKey == widgetEnvelope.idempotencyKey })
     }
 
     @Test("부분 종료는 미검토를 보존한 채 오늘 표시로 전환한다", .timeLimit(.minutes(1)))

@@ -101,11 +101,13 @@ final class AppModel {
     private var workspaceChangeInProgress = false
     var workspaceChangeBlockedMessage: String? {
         switch WorkspaceChangeBlocker.current(detailEditing: isDetailEditing, capture: showCapture,
-                                              projectionPending: projectionPending, saving: isSaving) {
+                                              projectionPending: projectionPending, saving: isSaving,
+                                              pendingCommand: widgetDecision != nil) {
         case .detailEditing: "편집 중인 내용을 저장하거나 편집을 취소한 뒤 저장 공간을 바꿀 수 있어요."
         case .capture: "열린 입력을 저장하거나 닫은 뒤 저장 공간을 바꿀 수 있어요."
         case .projectionPending: "저장 결과를 먼저 다시 확인한 뒤 저장 공간을 바꿀 수 있어요."
         case .saving: "현재 저장을 마친 뒤 저장 공간을 바꿀 수 있어요."
+        case .pendingCommand: "위젯의 저장 결과를 다시 확인하거나 마감 확인을 취소한 뒤 저장 공간을 바꿀 수 있어요."
         case nil: nil
         }
     }
@@ -140,7 +142,11 @@ final class AppModel {
     var presentedCaptureCommittedToken: String?
     @ObservationIgnored private var menuBarCaptureSubmission: MenuBarCaptureSubmission?
     var menuBarCaptureCommittedReceipt: CaptureCommittedReceipt?
-    var confirmation: CommandEnvelope?
+    private var deadlineConfirmationState = DeadlineConfirmationState()
+    var confirmation: CommandEnvelope? {
+        get { deadlineConfirmationState.presented }
+        set { deadlineConfirmationState.replace(with: newValue) }
+    }
     var lastUndo: SafeUndo?
     var review: AppReviewSession?
     var reviewSummary: String?
@@ -226,7 +232,14 @@ final class AppModel {
     }
     @ObservationIgnored private var calendarDisplays: [UUID: CalendarDisplayReference] = [:]
     @ObservationIgnored private var calendarLoadID = UUID()
-    @ObservationIgnored private var widgetDecision: (request: PlanPickerRequest, target: PlanTarget)?
+    private struct PendingWidgetDecision {
+        let request: PlanPickerRequest
+        var ownership: WidgetDecisionOwnership
+        var awaitingConfirmation: Bool
+        let store: MirrorStore
+        let configuration: StoreConfiguration
+    }
+    @ObservationIgnored private var widgetDecision: PendingWidgetDecision?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let systemPreferenceJournal = SystemPreferenceUpdateJournal(defaults: .standard)
     @ObservationIgnored private let preferenceKey = "Mirror.preferences.v1"
@@ -837,6 +850,9 @@ final class AppModel {
     @discardableResult
     func closePlanPicker(requestID: UUID) -> Bool {
         guard !isSaving, pickerPresentationState.close(requestID: requestID) else { return false }
+        if let decision = widgetDecision, decision.request.id == requestID {
+            cancelWidgetConfirmation(decision.ownership.envelope)
+        }
         picker = nil
         return true
     }
@@ -1003,15 +1019,27 @@ final class AppModel {
         _ = await submit(.undo(operationID: candidate.id, expected: candidate.expected), success: "직전 변경을 되돌렸어요.")
     }
 
-    func confirmAfterDeadline() async {
-        if let decision = widgetDecision, confirmation != nil,
-           let card = decision.request.widgetState?.card, let digest = card.expected.deadline {
-            confirmation = nil
-            let acknowledgment = DeadlineAcknowledgment(taskID: card.taskID.uuidString, deadlineRevision: digest, target: decision.target)
-            _ = await commitWidget(decision.request, target: decision.target, acknowledgment: acknowledgment)
+    func dismissDeadlineConfirmation(_ displayed: CommandEnvelope) {
+        deadlineConfirmationState.dismiss(displayed)
+    }
+    func cancelDeadlineConfirmation(_ displayed: CommandEnvelope) {
+        deadlineConfirmationState.take(displayed)
+        cancelWidgetConfirmation(displayed)
+    }
+    func confirmAfterDeadline(_ displayed: CommandEnvelope) async {
+        guard !isSaving, let envelope = deadlineConfirmationState.take(displayed) else { return }
+        if envelope.source == .widget {
+            guard let decision = widgetDecision, decision.awaitingConfirmation, ownsWidgetDecision(decision.ownership),
+                  let configuration,
+                  decision.ownership.ownsConfirmation(envelope, observationID: storeObservationID,
+                      workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch),
+                  let card = decision.request.widgetState?.card, let digest = card.expected.deadline,
+                  case let .setPlan(_, target, _) = envelope.payload else { return }
+            let acknowledgment = DeadlineAcknowledgment(taskID: card.taskID.uuidString, deadlineRevision: digest, target: target)
+            _ = await commitWidget(decision.request, target: target, acknowledgment: acknowledgment)
             return
         }
-        guard let envelope = confirmation else { return }
+        guard envelope.source == .app else { return }
         let payload: CommandPayload
         switch envelope.payload {
         case let .setPlan(item, target, review):
@@ -1029,7 +1057,6 @@ final class AppModel {
             payload = .batchSetPlan(items: acknowledgedItems, target: target)
         default: return
         }
-        confirmation = nil
         let confirmed = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: envelope.idempotencyKey,
                                         source: .app, context: envelope.context, workspaceEpoch: envelope.workspaceEpoch, payload: payload)
         let pickerID = picker?.id
@@ -1195,7 +1222,16 @@ final class AppModel {
     }
 
     func retry() async {
-        if let widgetDecision { _ = await commitWidget(widgetDecision.request, target: widgetDecision.target) }
+        if var decision = widgetDecision,
+           case let .setPlan(item, target, _) = decision.ownership.envelope.payload {
+            guard !isSaving, let store, let configuration,
+                  let rebound = decision.ownership.rebindingForRetry(observationID: storeObservationID,
+                      originalStore: decision.store, currentStore: store, originalConfiguration: decision.configuration,
+                      currentConfiguration: configuration) else { return }
+            decision.ownership = rebound
+            widgetDecision = decision
+            _ = await commitWidget(decision.request, target: target, acknowledgment: item.acknowledgment)
+        }
         else if let retryEnvelope {
             if await execute(retryEnvelope, success: "이 기기에 저장했어요.") { _ = completeLibraryBatchPicker(retryEnvelope) }
         }
@@ -1237,7 +1273,9 @@ final class AppModel {
         let result = await store.execute(envelope, context: current)
         return await handleResult(envelope, result: result, success: success)
     }
-    private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String) async -> Bool {
+    private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String,
+                              expectedWidgetOwnership: WidgetDecisionOwnership? = nil) async -> Bool {
+        if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
         let feedbackSessionID: String?
         switch envelope.payload {
         case let .setPlan(_, _, decision): feedbackSessionID = decision?.sessionID
@@ -1277,7 +1315,9 @@ final class AppModel {
         case .locallyCommitted, .alreadyApplied:
             retryEnvelope = nil
             projectionPending = false
-            guard await refresh() else {
+            let refreshed = await refresh()
+            if let expectedWidgetOwnership, !ownsWidgetDecision(expectedWidgetOwnership) { return false }
+            guard refreshed else {
                 projectionPending = true; retryEnvelope = envelope
                 feedback = "저장했어요. 화면을 갱신하고 있어요."
                 feedbackReviewSessionID = feedbackSessionID
@@ -1692,27 +1732,72 @@ final class AppModel {
         }
     }
     private func commitWidget(_ request: PlanPickerRequest, target: PlanTarget, acknowledgment: DeadlineAcknowledgment? = nil) async -> Bool {
-        guard let services, let state = request.widgetState, let card = state.card, !isSaving,
+        guard let services, let store, let state = request.widgetState, let card = state.card, !isSaving,
               let configuration else { return false }
         isSaving = true; problem = nil
         defer { finishSaving() }
-        let envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: card.decisionToken, source: .widget,
+        var envelope = CommandEnvelope(requestID: UUID().uuidString, idempotencyKey: card.decisionToken, source: .widget,
                                        context: card.context, workspaceEpoch: configuration.workspaceEpoch,
                                        payload: .setPlan(item: PlanCommandItem(taskID: card.taskID, expected: card.expected, acknowledgment: acknowledgment),
                                                          target: target, review: request.review))
+        if let previous = widgetDecision {
+            guard ownsWidgetDecision(previous.ownership) else { return false }
+            if previous.request.id == request.id, previous.ownership.envelope.payload == envelope.payload {
+                // 마감 승인도 원래 명령의 일부다. 불확실한 저장 재시도에서 승인을 버리지 않는다.
+                envelope = previous.ownership.envelope
+            } else if !previous.awaitingConfirmation {
+                problem = "이전 위젯 저장 결과를 먼저 다시 확인해 주세요."
+                return false
+            }
+        }
+        let ownership = WidgetDecisionOwnership(requestID: request.id, observationID: storeObservationID,
+                                                workspaceKey: configuration.workspaceKey, envelope: envelope)
+        widgetDecision = PendingWidgetDecision(request: request, ownership: ownership, awaitingConfirmation: false,
+                                               store: store, configuration: configuration)
         do {
             let widget = await services.widget
+            guard ownsWidgetDecision(ownership) else { return false }
             let result = try await widget.commit(scopeKey: state.scopeKey, sessionID: state.sessionID, card: card,
                                                   target: target, acknowledgment: acknowledgment, at: now)
-            let committed = await handleResult(envelope, result: result, success: "\(planLabel(target))로 보냈어요.")
-            if committed { widgetDecision = nil; completedWidgetPickerID = request.id }
-            else { widgetDecision = (request, target) }
+            guard ownsWidgetDecision(ownership) else { return false }
+            let committed = await handleResult(envelope, result: result, success: "\(planLabel(target))로 보냈어요.",
+                                               expectedWidgetOwnership: ownership)
+            guard ownsWidgetDecision(ownership) else { return false }
+            if ownership.retainsDecision(after: result, displayUpdated: committed) {
+                widgetDecision?.awaitingConfirmation = result.state == .requiresConfirmation
+            } else {
+                releaseWidgetDecision(ownership)
+                if committed, picker?.id == request.id { completedWidgetPickerID = request.id }
+            }
             return committed
         } catch {
-            widgetDecision = (request, target)
+            guard ownsWidgetDecision(ownership) else { return false }
             problem = "위젯의 작업이나 저장소를 확인하지 못했어요. 대상 카드를 유지했어요. 다시 확인해 주세요."
             return false
         }
+    }
+    private func ownsWidgetDecision(_ ownership: WidgetDecisionOwnership) -> Bool {
+        guard let decision = widgetDecision, let store, let configuration,
+              ownership.isCurrent(decision.ownership, observationID: storeObservationID,
+                  workspaceKey: configuration.workspaceKey, workspaceEpoch: configuration.workspaceEpoch) else { return false }
+        return ownership.rebindingForRetry(observationID: storeObservationID, originalStore: decision.store,
+            currentStore: store, originalConfiguration: decision.configuration, currentConfiguration: configuration) == ownership
+    }
+    private func releaseWidgetDecision(_ ownership: WidgetDecisionOwnership) {
+        guard ownsWidgetDecision(ownership) else { return }
+        deadlineConfirmationState.take(ownership.envelope)
+        if retryEnvelope == ownership.envelope { retryEnvelope = nil }
+        widgetDecision = nil
+    }
+    private func cancelWidgetConfirmation(_ displayed: CommandEnvelope) {
+        guard let decision = widgetDecision, decision.awaitingConfirmation,
+              decision.ownership.envelope == displayed, let store, let configuration,
+              decision.ownership.rebindingForRetry(observationID: storeObservationID, originalStore: decision.store,
+                  currentStore: store, originalConfiguration: decision.configuration, currentConfiguration: configuration) != nil else { return }
+        // 같은 actor 재관측 뒤에도 명시적 취소는 미저장으로 확정된 이 확인만 정리한다.
+        deadlineConfirmationState.take(displayed)
+        if retryEnvelope == displayed { retryEnvelope = nil }
+        widgetDecision = nil
     }
     func finishWidgetPlan(_ request: PlanPickerRequest, resume: Bool) {
         guard completedWidgetPickerID == request.id, picker?.id == request.id, !isSaving, !projectionPending else { return }

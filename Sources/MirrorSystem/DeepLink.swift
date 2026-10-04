@@ -1,16 +1,19 @@
 import Foundation
 import Observation
 import MirrorDomain
+import MirrorData
 
 /// 명시적 공간 변경만 제한한다. 저장 결과 재확인과 자동 계정 격리는 별도 경로다.
 public enum WorkspaceChangeBlocker: Equatable, Sendable {
-    case detailEditing, capture, projectionPending, saving
+    case detailEditing, capture, projectionPending, saving, pendingCommand
 
-    public static func current(detailEditing: Bool, capture: Bool, projectionPending: Bool, saving: Bool) -> Self? {
+    public static func current(detailEditing: Bool, capture: Bool, projectionPending: Bool, saving: Bool,
+                               pendingCommand: Bool = false) -> Self? {
         if detailEditing { return .detailEditing }
         if capture { return .capture }
         if projectionPending { return .projectionPending }
         if saving { return .saving }
+        if pendingCommand { return .pendingCommand }
         return nil
     }
 }
@@ -236,6 +239,81 @@ public struct PlanPickerPresentationState: Equatable, Sendable {
         guard self.requestID == requestID else { return false }
         self.requestID = nil
         return true
+    }
+}
+
+/// 자동 alert 해제와 버튼 Task의 순서가 달라도 표시했던 요청만 소비한다.
+public struct DeadlineConfirmationState: Equatable, Sendable {
+    public private(set) var presented: CommandEnvelope?
+    private var dismissed: CommandEnvelope?
+
+    public init() {}
+
+    public mutating func replace(with envelope: CommandEnvelope?) {
+        presented = envelope
+        dismissed = nil
+    }
+
+    public mutating func dismiss(_ envelope: CommandEnvelope) {
+        guard presented == envelope else { return }
+        dismissed = envelope
+        presented = nil
+    }
+
+    @discardableResult
+    public mutating func take(_ envelope: CommandEnvelope) -> CommandEnvelope? {
+        guard presented == envelope || dismissed == envelope else { return nil }
+        presented = nil
+        dismissed = nil
+        return envelope
+    }
+}
+
+/// 위젯의 재시도·확인은 표시한 카드, 목표와 저장소 관측을 함께 소유한다.
+public struct WidgetDecisionOwnership: Equatable, Sendable {
+    public let requestID: UUID
+    public let observationID: UUID
+    public let workspaceKey: String
+    public let envelope: CommandEnvelope
+
+    public init(requestID: UUID, observationID: UUID, workspaceKey: String, envelope: CommandEnvelope) {
+        self.requestID = requestID
+        self.observationID = observationID
+        self.workspaceKey = workspaceKey
+        self.envelope = envelope
+    }
+
+    public func isCurrent(_ pending: Self?, observationID: UUID, workspaceKey: String, workspaceEpoch: String) -> Bool {
+        self == pending && self.observationID == observationID && self.workspaceKey == workspaceKey
+            && envelope.workspaceEpoch == workspaceEpoch
+    }
+
+    public func ownsConfirmation(_ displayed: CommandEnvelope, observationID: UUID,
+                                 workspaceKey: String, workspaceEpoch: String) -> Bool {
+        envelope.source == .widget && envelope == displayed
+            && isCurrent(self, observationID: observationID, workspaceKey: workspaceKey, workspaceEpoch: workspaceEpoch)
+    }
+
+    public func retainsDecision(after result: CommandResult, displayUpdated: Bool) -> Bool {
+        switch result.state {
+        case .staleContext, .staleSnapshot, .alreadyDecided, .notFound: false
+        case .locallyCommitted, .alreadyApplied: !displayUpdated
+        case .requiresConfirmation, .persistenceFailed, .committedProjectionPending, .unavailable: true
+        }
+    }
+
+    /// 명시적 재시도만 같은 actor·실제 공간에 관측 소유를 다시 연결할 수 있다.
+    /// 원래 actor를 강하게 보관하는 호출자에게 참조를 받아 주소 재사용을 허용하지 않는다.
+    public func rebindingForRetry(observationID: UUID, originalStore: MirrorStore, currentStore: MirrorStore,
+                                  originalConfiguration: StoreConfiguration, currentConfiguration: StoreConfiguration) -> Self? {
+        guard originalStore === currentStore,
+              workspaceKey == originalConfiguration.workspaceKey,
+              envelope.workspaceEpoch == originalConfiguration.workspaceEpoch,
+              originalConfiguration.workspaceKey == currentConfiguration.workspaceKey,
+              originalConfiguration.workspaceEpoch == currentConfiguration.workspaceEpoch,
+              originalConfiguration.directory.standardizedFileURL == currentConfiguration.directory.standardizedFileURL,
+              originalConfiguration.cloudSync == currentConfiguration.cloudSync else { return nil }
+        return Self(requestID: requestID, observationID: observationID, workspaceKey: workspaceKey, envelope: envelope)
     }
 }
 

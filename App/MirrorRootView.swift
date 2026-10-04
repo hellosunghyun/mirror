@@ -591,10 +591,13 @@ struct MirrorDeadlineConfirmation: ViewModifier {
     @Environment(AppModel.self) private var model
     let enabled: Bool
     func body(content: Content) -> some View {
-        content.alert("실제 마감 이후로 배치할까요?", isPresented: Binding(get: { enabled && model.confirmation != nil }, set: { if !$0 { model.confirmation = nil } })) {
-            Button("마감은 유지하고 배치") { Task { await model.confirmAfterDeadline() } }
-            Button("취소", role: .cancel) { model.confirmation = nil }
-        } message: { Text("선택한 계획이 실제 마감 뒤예요. 원래 마감은 변경하지 않아요.") }
+        let displayed = model.confirmation
+        return content.alert("실제 마감 이후로 배치할까요?", isPresented: Binding(
+            get: { enabled && displayed != nil && model.confirmation == displayed },
+            set: { if !$0, let displayed { model.dismissDeadlineConfirmation(displayed) } }), presenting: displayed) { envelope in
+            Button("마감은 유지하고 배치") { Task { await model.confirmAfterDeadline(envelope) } }
+            Button("취소", role: .cancel) { model.cancelDeadlineConfirmation(envelope) }
+        } message: { _ in Text("선택한 계획이 실제 마감 뒤예요. 원래 마감은 변경하지 않아요.") }
     }
 }
 
