@@ -1138,9 +1138,9 @@ esac
                 helper.case_progress_diagnostics(root, expected)
                 self.assertIn('sourceUnavailable', output.call_args[0][0])
 
-    def capture_save_failure_row(self, case=CASE, **extra):
+    def capture_save_failure_row(self, **extra):
         return helper.CAPTURE_SAVE_FAILURE_MARKER + json.dumps({
-            'schemaVersion': 1, 'case': helper.CASE_DIAGNOSTIC_NAMES[case], 'requestSequence': 1,
+            'schemaVersion': 1, 'case': helper.CASE_DIAGNOSTIC_NAMES[CASE], 'requestSequence': 1,
             'requestedElement': 'captureSave', 'boundary': 'reveal', 'exists': True,
             'enabled': True, 'hittable': False, 'windowOwnerCount': 1, 'ownerHasCaptureClose': True,
             'scrollCandidateCount': 2, 'scrollOwnerCount': 0,
