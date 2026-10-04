@@ -856,7 +856,67 @@ final class MirrorAdaptiveUITests: XCTestCase {
             "schemaVersion": 1, "case": diagnosticCase.rawValue, "requestSequence": diagnosticRequestSequence,
             "name": "mirror-adaptive-failure-capture-save", "status": "complete",
         ])
+        #if os(macOS)
+        captureSaveCoordinateDiagnostic(element, in: app, window: window, boundary: boundary,
+            observedExists: exists, observedEnabled: enabled, observedHittable: hittable, observedFrame: frame)
+        #endif
     }
+
+    #if os(macOS)
+    /// 첫 실패 PNG 뒤의 단일 호출이다. 원래 captured false assertion과 성공 진행 상태를 바꾸지 않는다.
+    @MainActor
+    private func captureSaveCoordinateDiagnostic(_ element: XCUIElement, in app: XCUIApplication,
+                                                window: XCUIElement, boundary: String,
+                                                observedExists: Bool, observedEnabled: Bool?,
+                                                observedHittable: Bool?, observedFrame: CGRect?) {
+        guard diagnosticCase == .captureValidation, diagnosticProgressPhase == .captureInputComplete,
+              diagnosticRequestedElement == .captureSave, element === diagnosticRequestedObject,
+              captureFailureScreenshotRecorded, boundary == "assertVisible",
+              observedExists, observedEnabled == true, observedHittable == false,
+              let frame = observedFrame, hasArea(frame),
+              app.state == .runningForeground, app.windows.count == 1, window.exists,
+              app.windows.containing(.button, identifier: "capture.save").count == 1,
+              app.buttons.matching(identifier: "capture.save").count == 1,
+              window.buttons.matching(identifier: "capture.save").count == 1,
+              window.buttons.matching(identifier: "capture.close").count == 1 else { return }
+        let windowFrame = window.frame
+        guard hasArea(windowFrame), windowFrame.contains(frame) else { return }
+        let inputs = window.textFields.matching(identifier: "capture.title").allElementsBoundByIndex
+            + window.textViews.matching(identifier: "capture.title").allElementsBoundByIndex
+        let feedback = window.descendants(matching: .any).matching(identifier: "capture.feedback")
+        guard inputs.count == 1, (inputs[0].value as? String) == "큰 글자로 입력", feedback.count == 0,
+              element.exists, element.isEnabled, !element.isHittable, element.frame == frame,
+              window.frame == windowFrame, app.state == .runningForeground else { return }
+
+        let requestSequence = diagnosticRequestSequence
+        func notice(_ phase: String, exists: Bool? = nil, matches: Bool? = nil) {
+            let fields: [String: Any] = [
+                "schemaVersion": 1, "scope": "alreadyFailedOnly", "case": "captureValidation",
+                "requestSequence": requestSequence, "requestedElement": "captureSave", "phase": phase,
+                "feedbackExists": exists.map { $0 as Any } ?? NSNull(),
+                "feedbackMatchesExpected": matches.map { $0 as Any } ?? NSNull(),
+            ]
+            guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+                  data.count <= 1_024 else { return }
+            let line = "::notice::UI adaptive capture save coordinate diagnostic: "
+                + String(decoding: data, as: UTF8.self) + "\n"
+            try? FileHandle.standardOutput.write(contentsOf: Data(line.utf8))
+        }
+        notice("attempted")
+        window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX - windowFrame.minX, dy: frame.midY - windowFrame.minY))
+            .click()
+        guard app.state == .runningForeground, app.windows.count == 1, window.exists,
+              window.frame == windowFrame, window.buttons.matching(identifier: "capture.close").count == 1 else {
+            notice("result")
+            return
+        }
+        // 대기 없는 단일 관측이다. false는 비동기 저장/AX 지연도 포함하므로 클릭 차단을 확정하지 않는다.
+        let feedbackExists = feedback.firstMatch.exists
+        let matches = feedbackExists && feedback.count == 1 && feedback.firstMatch.label == "보관함에 넣었어요."
+        notice("result", exists: feedbackExists, matches: matches)
+    }
+    #endif
 
     @MainActor
     private func assertMobileTarget(_ element: XCUIElement) throws {
