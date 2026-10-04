@@ -1565,13 +1565,54 @@ def main():
                    'xcodebuildExitCode': None if args.native_exit_code == -1 else args.native_exit_code})
 
 
-if __name__ == '__main__':
+def processing_failure_notice(error):
+    kind = 'unknown'
+    for error_type, fixed_kind in (
+            (subprocess.TimeoutExpired, 'timeout'),
+            (subprocess.CalledProcessError, 'commandFailed'),
+            (FileNotFoundError, 'fileNotFound'),
+            (PermissionError, 'permissionDenied'),
+            (json.JSONDecodeError, 'invalidJSON'),
+            (UnicodeError, 'invalidEncoding'),
+            ((struct.error, plistlib.InvalidFileException, zlib.error), 'invalidFormat'),
+            (ValueError, 'invalidValue'),
+            (TypeError, 'invalidType'),
+            (KeyError, 'missingKey'),
+            (AttributeError, 'missingAttribute'),
+            (RecursionError, 'recursionLimit'),
+            (OSError, 'osError'),
+            (subprocess.SubprocessError, 'subprocessError')):
+        if isinstance(error, error_type):
+            kind = fixed_kind
+            break
+    operation = 'unknown'
+    if isinstance(error, subprocess.TimeoutExpired):
+        command = error.cmd
+        # checkout의 완전한 세 명령과 일치할 때만 고정 단계를 표시한다.
+        if type(command) in (list, tuple) and len(command) in (3, 5, 9) \
+                and all(type(argument) is str for argument in command):
+            operation = {
+                ('git', 'rev-parse', 'HEAD'): 'head',
+                ('git', 'diff', '--quiet', 'HEAD', '--'): 'diff',
+                ('git', 'ls-files', '--others', '--exclude-standard', '--',
+                 'App', 'Sources', 'Extensions', 'Tests'): 'untracked',
+            }.get(tuple(command), 'unknown')
+    return {'exceptionKind': kind, 'operation': operation}
+
+
+def cli():
     try:
         main()
     except AdaptiveError as error:
         print('::error::' + str(error), file=sys.stderr)
         raise SystemExit(1) from None
     except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, struct.error,
-            plistlib.InvalidFileException, subprocess.SubprocessError, zlib.error):
+            plistlib.InvalidFileException, subprocess.SubprocessError, zlib.error) as error:
         print('::error::adaptiveProcessingFailed', file=sys.stderr)
+        print('::notice::Adaptive UI processing failure: ' + json.dumps(
+            processing_failure_notice(error), sort_keys=True), file=sys.stderr, flush=True)
         raise SystemExit(1) from None
+
+
+if __name__ == '__main__':
+    cli()

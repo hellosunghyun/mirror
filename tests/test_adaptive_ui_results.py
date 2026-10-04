@@ -87,6 +87,102 @@ class AdaptiveResultGateTests(unittest.TestCase):
             self.assertEqual(output.call_count, 2 if stage == 2 else 1)
             self.assertEqual(run.call_count, 0 if stage == 0 else 1)
 
+    def processing_failure(self, action):
+        with mock.patch.object(helper, 'main', side_effect=action), \
+                mock.patch('builtins.print') as printed, self.assertRaises(SystemExit) as failed:
+            helper.cli()
+        self.assertEqual(failed.exception.code, 1)
+        self.assertEqual(len(printed.call_args_list), 2)
+        self.assertEqual(printed.call_args_list[0].args, ('::error::adaptiveProcessingFailed',))
+        self.assertTrue(all(call.kwargs['file'] is helper.sys.stderr for call in printed.call_args_list))
+        notice = printed.call_args_list[1]
+        self.assertIs(notice.kwargs['flush'], True)
+        prefix = '::notice::Adaptive UI processing failure: '
+        self.assertTrue(notice.args[0].startswith(prefix))
+        self.assertNotIn(PRIVATE, '\n'.join(call.args[0] for call in printed.call_args_list))
+        payload = json.loads(notice.args[0][len(prefix):])
+        self.assertEqual(set(payload), {'exceptionKind', 'operation'})
+        return payload
+
+    def test_cli_checkout_timeouts_identify_only_the_exact_failed_operation(self):
+        for stage, operation in enumerate(('head', 'diff', 'untracked')):
+            calls = []
+
+            def git_command(command, **kwargs):
+                calls.append((command, kwargs))
+                if len(calls) == stage + 1:
+                    raise subprocess.TimeoutExpired(command, 5, output=PRIVATE, stderr=PRIVATE)
+                if command[1] == 'rev-parse':
+                    return 'a' * 40 + '\n'
+                return subprocess.CompletedProcess(command, 0)
+
+            with self.subTest(operation=operation), \
+                    mock.patch.object(helper.subprocess, 'check_output', side_effect=git_command), \
+                    mock.patch.object(helper.subprocess, 'run', side_effect=git_command):
+                payload = self.processing_failure(lambda: helper.checkout_matches({'commitSHA': 'a' * 40}))
+            self.assertEqual(payload, {'exceptionKind': 'timeout', 'operation': operation})
+            self.assertEqual(len(calls), stage + 1)
+            self.assertTrue(all(kwargs['timeout'] == 5 for _, kwargs in calls))
+
+    def test_cli_processing_failures_classify_without_rendering_private_exception_data(self):
+        class OpaqueValueError(ValueError):
+            def __str__(self):
+                raise AssertionError('exception text must not be read')
+
+        errors = (
+            (subprocess.CalledProcessError(1, ['git', 'rev-parse', 'HEAD'],
+                                           output=PRIVATE, stderr=PRIVATE), 'commandFailed'),
+            (FileNotFoundError(2, PRIVATE, '/private/' + PRIVATE), 'fileNotFound'),
+            (PermissionError(13, PRIVATE, '/private/' + PRIVATE), 'permissionDenied'),
+            (json.JSONDecodeError(PRIVATE, PRIVATE, 0), 'invalidJSON'),
+            (UnicodeDecodeError('utf-8', PRIVATE.encode(), 0, 1, PRIVATE), 'invalidEncoding'),
+            (struct.error(PRIVATE), 'invalidFormat'),
+            (helper.plistlib.InvalidFileException(PRIVATE), 'invalidFormat'),
+            (zlib.error(PRIVATE), 'invalidFormat'),
+            (OpaqueValueError(PRIVATE), 'invalidValue'),
+            (TypeError(PRIVATE), 'invalidType'),
+            (KeyError(PRIVATE), 'missingKey'),
+            (AttributeError(PRIVATE), 'missingAttribute'),
+            (RecursionError(PRIVATE), 'recursionLimit'),
+            (OSError(5, PRIVATE, '/private/' + PRIVATE), 'osError'),
+            (subprocess.SubprocessError(PRIVATE), 'subprocessError'),
+        )
+        for error, kind in errors:
+            with self.subTest(kind=kind):
+                self.assertEqual(self.processing_failure(error),
+                                 {'exceptionKind': kind, 'operation': 'unknown'})
+
+    def test_cli_timeout_commands_require_complete_plain_checkout_argv(self):
+        class OpaqueCommand:
+            def __str__(self):
+                raise AssertionError('command text must not be read')
+
+        commands = (PRIVATE, 'git rev-parse HEAD', ['/usr/bin/git', 'rev-parse', 'HEAD'],
+                    ['git', 'rev-parse', 'HEAD', PRIVATE], ['git', 'rev-parse', PRIVATE],
+                    [b'git', 'rev-parse', 'HEAD'], ['git', ['rev-parse'], 'HEAD'],
+                    OpaqueCommand(), None)
+        for command in commands:
+            error = subprocess.TimeoutExpired(command, 5, output=PRIVATE, stderr=PRIVATE)
+            self.assertEqual(self.processing_failure(error),
+                             {'exceptionKind': 'timeout', 'operation': 'unknown'})
+
+    def test_cli_keeps_success_expected_rejection_and_uncaught_exception_contracts(self):
+        with mock.patch.object(helper, 'main') as main, mock.patch('builtins.print') as printed:
+            self.assertIsNone(helper.cli())
+            main.assert_called_once_with()
+            printed.assert_not_called()
+        with mock.patch.object(helper, 'main', side_effect=helper.AdaptiveError('checkoutSHAMismatch')), \
+                mock.patch('builtins.print') as printed, self.assertRaises(SystemExit) as failed:
+            helper.cli()
+        self.assertEqual(failed.exception.code, 1)
+        printed.assert_called_once_with('::error::checkoutSHAMismatch', file=helper.sys.stderr)
+        unexpected = RuntimeError(PRIVATE)
+        with mock.patch.object(helper, 'main', side_effect=unexpected), \
+                mock.patch('builtins.print') as printed, self.assertRaises(RuntimeError) as failed:
+            helper.cli()
+        self.assertIs(failed.exception, unexpected)
+        printed.assert_not_called()
+
     def compiler_fixture(self, directory):
         root = Path(directory).resolve()
         path = root / 'App/Synthetic.swift'
