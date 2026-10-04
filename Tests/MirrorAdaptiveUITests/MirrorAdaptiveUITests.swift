@@ -449,18 +449,19 @@ final class MirrorAdaptiveUITests: XCTestCase {
 
     @MainActor
     private func configuration(in app: XCUIApplication, viewport: String, method: String = #function) throws {
+        #if os(macOS)
+        // 루트 AX 그룹 없이 기존 실제 버튼에서 읽은 환경값을 확인한다.
+        let applied = try unique(app.buttons.matching(identifier: "capture.open"), requestedElement: .appliedDynamicType)
+        XCTAssertEqual(applied.elementType, .button)
+        #else
         let applied = try find("ui.appliedDynamicType", requestedElement: .appliedDynamicType, in: app)
+        #endif
         try recordDynamicTypeFixture(applied, scope: "root")
         let appliedValue = applied.value
         let appliedString = appliedValue as? String
         let appliedLabel = applied.label
         configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: appliedLabel)
-        #if os(macOS)
-        // Mac의 contain 그룹 value는 빈 문자열이다. 실제 환경에서 만든 label을 확인한다.
-        XCTAssertEqual(appliedLabel, "글자 크기 환경: accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
-        #else
         XCTAssertEqual(appliedString, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
-        #endif
         XCTAssertEqual(app.state, .runningForeground)
         #if os(iOS)
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"

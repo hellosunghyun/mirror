@@ -66,18 +66,38 @@ private struct MirrorUITestingDynamicType: ViewModifier {
         #if DEBUG
         if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
            ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
+            #if os(macOS)
+            // Mac 루트의 검사용 AX 그룹만 분리한다. 실제 최대 글자 환경은 유지한다.
+            content.dynamicTypeSize(.accessibility5)
+            #else
             if MirrorDynamicTypeFixture.requested == .system {
                 content.modifier(MirrorAppliedDynamicType(fixtureMode: .system))
             } else {
                 content.modifier(MirrorAppliedDynamicType(fixtureMode: MirrorDynamicTypeFixture.requested))
                     .dynamicTypeSize(.accessibility5)
             }
+            #endif
         } else { content }
         #else
         content
         #endif
     }
 }
+
+#if DEBUG && os(macOS)
+/// 기존 버튼의 환경값만 붙인다. label·identifier·자식 관계와 입력 동작은 바꾸지 않는다.
+@MainActor
+struct MirrorRootDynamicTypeValue: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
+           ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
+            content.accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
+        } else { content }
+    }
+}
+#endif
 
 /// 시트를 여는 화면에서 읽은 글자 크기를 전달한다. 시스템 값과 검사용 override 모두 같은 경계를 지난다.
 struct MirrorPresentationDynamicType: ViewModifier {

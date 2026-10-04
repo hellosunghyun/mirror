@@ -139,6 +139,8 @@ Mac의 반복 snapshot 실패는 MainActor 동기 대기·잠금 역전의 독�
 
 Mac Adaptive의 첫 저장 버튼은 `388542f`와 `03c3708`에서 exists/enabled=true, hittable=false였고 실패 PNG에는 버튼 전체가 보였다. 기존 실패 관측과 PNG 뒤에만, 현재 단일 창·고유한 버튼·정확한 합성 제목·기존 안내 없음·변하지 않은 창과 버튼 영역을 다시 확인해 중앙 좌표를 한 번 클릭하는 보완 진단을 추가했다. 시도 여부와 같은 창의 고정 저장 안내 존재·일치 여부만 기록한다. 대기·재시도는 추가하지 않고 원래 false assertion과 전체 수용 게이트를 유지한다. 안내가 즉시 없더라도 비동기 저장·접근성 지연과 구분할 수 없으므로 클릭 차단으로 단정하지 않는다. 독립 정적 검토를 마쳤고 실제 이벤트 전달·원래 실패 보존은 다음 Actions에서 확인한다.
 
+Mac DEBUG 최대 글자 fixture는 검사용 루트 AX 그룹의 영향을 분리하기 위해 루트의 `.contain` probe만 제거한다. [Apple의 `.contain` 계약](https://developer.apple.com/documentation/swiftui/accessibilitychildbehavior/contain)은 접근성 요소 생성 또는 자식 관계 변경이므로, 이 그룹을 실제 앱 UI와 같은 구조로 간주하지 않는다. `.accessibility5` 적용은 유지하고 기존 `capture.open` 버튼에서 읽은 실제 환경값을 value로 제공한다. 버튼의 label·identifier·동작·영역은 그대로이며 Adaptive는 유일한 실제 Button의 문자열 value가 `accessibility5`인지 엄격히 확인한다. 값이 없거나 다른 경우 label·launch 요청값으로 대신하지 않는다. 기존 진단 parser는 value의 고정 enum과 일반 버튼 label의 분류를 그대로 수용하며 해당 조합을 기존 합성 회귀에 추가했다. 입력·정리 ScrollView와 다른 presentation probe, `.all` 감사와 issueHandler의 false, 실제 hittable·표준 조작·후속 저장 검증·시간 제한은 유지한다. root 그룹이 Mac hit-point 실패나 전체 창 감사 문제의 원인인지는 확정하지 않으며, 실제 Button value 노출·A5 전달·수용 결과와 컴파일·합성 회귀는 다음 Actions에서 확인한다. FR-025/030, Q-076/079에 연결한다.
+
 `20163c7` iPad 다크 검색 PNG를 직접 검토한 결과, 최대 글자에서 상태 안내의 되돌리기와 닫기 버튼이 항상 별도 행을 차지했다. 상태 메시지의 줄바꿈은 유지하고 버튼은 실제 필요 너비가 들어갈 때만 한 줄에 배치하며, 좁으면 세로로 돌아간다. 글꼴·44pt 터치 영역·오류/재시도·Undo 수명과 동작은 그대로다. 최신 소스에서 실제 fit 선택과 고유한 접근성 버튼 노출은 Actions 검증 대상으로 유지한다.
 
 | 흐름 | 기대하는 행동 | 유지할 보호 |

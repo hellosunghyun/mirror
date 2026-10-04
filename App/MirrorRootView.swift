@@ -354,6 +354,9 @@ struct MirrorRootView: View {
             }
                 .accessibilityIdentifier("capture.open")
                 .keyboardShortcut("n", modifiers: .command)
+                #if DEBUG && os(macOS)
+                .modifier(MirrorRootDynamicTypeValue())
+                #endif
             Button { settingsOpenAction.callAsFunction() } label: {
                 Label("설정", systemImage: "gearshape")
                     #if os(iOS)

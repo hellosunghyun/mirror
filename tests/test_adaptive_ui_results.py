@@ -509,6 +509,7 @@ class AdaptiveResultGateTests(unittest.TestCase):
         _, entries = self.progress_fixture()
         variations = ({}, {'valueKind': 'nil', 'castKind': 'nil', 'castName': None,
                            'environmentKind': 'empty', 'environmentName': None},
+                      {'environmentKind': 'unrecognized', 'environmentName': None},
                       {'valueKind': 'number', 'castKind': 'nil', 'castName': None},
                       {'valueKind': 'other', 'castKind': 'nil', 'castName': None},
                       {'castKind': 'empty', 'castName': None, 'environmentKind': 'unrecognized', 'environmentName': None},
