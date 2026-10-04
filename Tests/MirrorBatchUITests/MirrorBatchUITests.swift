@@ -398,7 +398,7 @@ final class MirrorBatchUITests: XCTestCase {
         _ = try unique(app.buttons.matching(identifier: "plan.cancel"))
         let disclosure = try plannerDisclosure(in: app)
         XCTAssertEqual(disclosure.label, "선택한 작업 \(selected.count)개")
-        let initialState = textValue(disclosure)
+        let initialState = plannerDisclosureState(disclosure)
         recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)
         XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")
         XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "plan.calendar").firstMatch.exists)
@@ -411,7 +411,7 @@ final class MirrorBatchUITests: XCTestCase {
         }
         try assertReachable(disclosure, in: app)
         performActivation(disclosure)
-        try waitValue("펼쳐짐", element: disclosure)
+        try waitPlannerDisclosureState("펼쳐짐", element: disclosure)
         for task in selected {
             let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\(task.uuid)"), surface: .planner, target: .planTask, in: app)
             XCTAssertEqual(title.label, task.title)
@@ -419,7 +419,7 @@ final class MirrorBatchUITests: XCTestCase {
         let folded = try plannerDisclosure(in: app)
         try assertReachable(folded, in: app)
         performActivation(folded)
-        try waitValue("접힘", element: folded)
+        try waitPlannerDisclosureState("접힘", element: folded)
         XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "plan.task.")).count, 0)
         progress(.pickerVerified)
     }
@@ -433,6 +433,34 @@ final class MirrorBatchUITests: XCTestCase {
         #endif
         return try reachable(app.buttons.matching(identifier: "plan.tasksDisclosure"), surface: .planner,
                              missingTowardTop: true, target: .planDisclosure, in: app)
+    }
+
+    private func plannerDisclosureState(_ element: XCUIElement) -> String {
+        #if os(macOS)
+        switch element.elementType {
+        case .disclosureTriangle:
+            // b9 실제 Mac 진단의 숫자 0을 반영한다. 다른 값이나 문자열 숫자는 수용하지 않는다.
+            guard let number = element.value as? NSNumber else { return "" }
+            if number == NSNumber(value: 0) { return "접힘" }
+            if number == NSNumber(value: 1) { return "펼쳐짐" }
+            return ""
+        case .button:
+            return textValue(element)
+        default:
+            return ""
+        }
+        #else
+        return textValue(element)
+        #endif
+    }
+
+    private func waitPlannerDisclosureState(_ expected: String, element: XCUIElement,
+                                            file: StaticString = #filePath, line: UInt = #line) throws {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { object, _ in
+            guard let element = object as? XCUIElement else { return false }
+            return self.plannerDisclosureState(element) == expected
+        }, object: element)
+        try requireCompleted(expectation, file: file, line: line)
     }
 
     private func recordPlannerDisclosureFailureIfNeeded(_ element: XCUIElement, initialState: String,

@@ -639,7 +639,7 @@ class BatchResultGateTests(unittest.TestCase):
         source.write_text('\n'.join((
             '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {',
             '        progress(.pickerStarted)',
-            '        let initialState = textValue(disclosure)',
+            '        let initialState = plannerDisclosureState(disclosure)',
             '        recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)',
             '        XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")',
             '    }',
@@ -724,7 +724,10 @@ class BatchResultGateTests(unittest.TestCase):
             original = source_path.read_text()
             for changed in (original.replace('verifyPicker(', 'anotherPicker('),
                             original.replace('progress(.pickerStarted)', 'progress(.pickerVerified)'),
-                            original.replace('let initialState = textValue(disclosure)', 'let initialState = textValue(other)'),
+                            original.replace('let initialState = plannerDisclosureState(disclosure)',
+                                             'let initialState = plannerDisclosureState(other)'),
+                            original.replace('let initialState = plannerDisclosureState(disclosure)',
+                                             'let initialState = textValue(disclosure)'),
                             original.replace('initialState: initialState', 'initialState: other'),
                             original.replace('callerLine: #line + 1', 'callerLine: 5'),
                             original.replace('XCTAssertEqual(initialState, "접힘"', 'XCTAssertEqual(initialState, "펼쳐짐"'),

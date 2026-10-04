@@ -446,7 +446,7 @@ def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
     end = next((index for index in range(start + 1, len(source))
                 if source[index].startswith('    private func ')), len(source))
     expected_source = [
-        'let initialState = textValue(disclosure)',
+        'let initialState = plannerDisclosureState(disclosure)',
         'recordPlannerDisclosureFailureIfNeeded(disclosure, initialState: initialState, callerLine: #line + 1)',
         'XCTAssertEqual(initialState, "접힘", "여러 제목을 처음에는 접어 빠른 날짜를 먼저 보여 준다.")',
     ]
