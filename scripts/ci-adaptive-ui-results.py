@@ -490,6 +490,7 @@ def progress_diagnostics(directory, expected):
 CASE_DIAGNOSTIC_MARKER = 'UI adaptive case diagnostic: '
 AUDIT_BOUNDARY_MARKER = 'UI adaptive audit boundary: '
 CAPTURE_SAVE_FAILURE_MARKER = 'UI adaptive capture save failure: '
+REVEAL_OWNER_MARKER = 'UI adaptive reveal owner diagnostic: '
 CASE_DIAGNOSTIC_NAMES = {
     'testMaximumTypeCaptureValidationAndRecovery': 'captureValidation',
     'testMaximumTypeReviewAndWeekPicker': 'reviewWeek',
@@ -514,7 +515,23 @@ CASE_REQUESTED_ELEMENTS = {
     'narrowMac': frozenset(('destinationLibrary', 'todayReview', 'settingsButton', 'taskRow',
                            'detailContentTitle', 'detailClose', 'detailPostponeTomorrow', 'taskComplete')),
 }
-CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary|capture\s+save\s+failure(?!\s+screenshot))\b')
+CASE_DIAGNOSTIC_SIGNAL = re.compile(r'\bUI\s+adaptive\s+(?:case\s+diagnostic|audit\s+boundary|reveal\s+owner\s+diagnostic|capture\s+save\s+failure(?!\s+screenshot))\b')
+
+
+def reveal_owner_fields(value, platform):
+    counts = ('candidateCount', 'areaCount', 'hittableCount', 'typedTargetCount', 'columnCount', 'intersectCount')
+    keys = {'schemaVersion', 'case', 'requestSequence', 'requestedElement', 'keyboardCount', 'keyboardFrame'} | set(counts)
+    if not (isinstance(value, dict) and set(value) == keys
+            and all(type(value[key]) is int and 0 <= value[key] <= 10_000 for key in counts)
+            and all(value[first] >= value[second] for first, second in zip(counts, counts[1:]))):
+        return False
+    count, frame = value['keyboardCount'], value['keyboardFrame']
+    if platform == 'macos':
+        return count is None and frame is None
+    return (type(count) is int and 0 <= count <= 10_000
+            and (frame is None or count == 1 and isinstance(frame, list) and len(frame) == 4
+                 and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
+                         for number in frame) and frame[2] >= 0 and frame[3] >= 0))
 
 
 def capture_save_failure_fields(value):
@@ -567,7 +584,8 @@ def xctest_case_diagnostics(log, expected, entries):
                 return None
             if event[1] != owner or event[2] not in cases:
                 return None
-            if event[3] != 'started' and 'captureSaveFailure' in reports.get(event[2], {}):
+            if event[3] != 'started' and any(key in reports.get(event[2], {})
+                                            for key in ('captureSaveFailure', 'revealOwnerFailure')):
                 if event[3] != 'failed':
                     return None
             active, sequence = (event[2], 0) if event[3] == 'started' else (None, 0)
@@ -579,6 +597,8 @@ def xctest_case_diagnostics(log, expected, entries):
         if len(text.encode('utf-8')) > 2048 or active is None:
             return None
         if 'captureSaveFailure' in reports.get(active, {}):
+            return None
+        if 'revealOwnerFailure' in reports.get(active, {}) and not text.startswith(CAPTURE_SAVE_FAILURE_MARKER):
             return None
         if progress_signal:
             if signal or active not in reports:
@@ -597,6 +617,7 @@ def xctest_case_diagnostics(log, expected, entries):
             continue
         marker = (CASE_DIAGNOSTIC_MARKER if text.startswith(CASE_DIAGNOSTIC_MARKER)
                   else CAPTURE_SAVE_FAILURE_MARKER if text.startswith(CAPTURE_SAVE_FAILURE_MARKER)
+                  else REVEAL_OWNER_MARKER if text.startswith(REVEAL_OWNER_MARKER)
                   else AUDIT_BOUNDARY_MARKER)
         if not text.startswith(marker) or text.count(marker) != 1:
             return None
@@ -628,6 +649,17 @@ def xctest_case_diagnostics(log, expected, entries):
                         or (report['auditBoundaries'] and report['auditBoundaries'][-1]['outcome'] == 'threw')):
                     return None
                 report.update({key: value[key] for key in ('requestSequence', 'requestedElement')})
+        elif marker == REVEAL_OWNER_MARKER:
+            report = reports.get(active)
+            if not (report is not None and sequence > 0 and reveal_owner_fields(value, expected['platform'])
+                    and type(value['requestSequence']) is int and value['requestSequence'] > 0
+                    and value['requestSequence'] == report['requestSequence']
+                    and isinstance(value['requestedElement'], str)
+                    and value['requestedElement'] == report['requestedElement']
+                    and value['requestedElement'] in case_requested_elements(active, expected['platform'])
+                    and (not report['auditBoundaries'] or report['auditBoundaries'][-1]['outcome'] == 'returned')):
+                return None
+            report['revealOwnerFailure'] = value
         elif marker == CAPTURE_SAVE_FAILURE_MARKER:
             report = reports.get(active)
             if not (report is not None and sequence > 0 and capture_save_failure_fields(value)
@@ -654,7 +686,7 @@ def xctest_case_diagnostics(log, expected, entries):
             audits.append({key: value[key] for key in ('auditSequence', 'outcome')})
     if len(reports) > len(cases):
         return None
-    if active is not None and 'captureSaveFailure' in reports.get(active, {}):
+    if active is not None and any(key in reports.get(active, {}) for key in ('captureSaveFailure', 'revealOwnerFailure')):
         return None
     return list(reports.values())
 

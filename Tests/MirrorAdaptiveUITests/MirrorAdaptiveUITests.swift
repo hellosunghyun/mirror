@@ -11,6 +11,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor private var diagnosticCase: DiagnosticCase?
     @MainActor private var diagnosticRequestSequence = 0
     @MainActor private var diagnosticRequestedElement: RequestedElement?
+    @MainActor private var diagnosticRequestedObject: XCUIElement?
     @MainActor private var diagnosticProgressPhase: ProgressPhase?
     @MainActor private var captureFailureScreenshotRecorded = false
     @MainActor private var diagnosticAuditSequence = 0
@@ -549,7 +550,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
             XCTFail("Adaptive UI lookup failure: nonUnique")
             throw HarnessFailure.missingElement
         }
-        return query.firstMatch
+        let element = query.firstMatch
+        diagnosticRequestedObject = element
+        return element
     }
 
     @MainActor
@@ -645,12 +648,18 @@ final class MirrorAdaptiveUITests: XCTestCase {
                 + app.tables.containing(ownerPredicate).allElementsBoundByIndex
                 + app.collectionViews.containing(ownerPredicate).allElementsBoundByIndex
             // 같은 관측의 경계를 재사용하며, 다음 반복과 스크롤 뒤에는 새로 읽는다.
+            var areaCount = 0, hittableCount = 0, typedTargetCount = 0, columnCount = 0
             let owners: [(surface: XCUIElement, bounds: CGRect, area: CGFloat)] = surfaces.compactMap { surface in
                 let bounds = surface.frame
-                guard hasArea(bounds) && surface.isHittable
-                    && surface.descendants(matching: elementType).matching(ownerPredicate).firstMatch.exists
-                    && bounds.minX <= frame.midX && frame.midX <= bounds.maxX
-                    && windows.contains(where: { $0.intersects(bounds) }) else { return nil }
+                guard hasArea(bounds) else { return nil }
+                areaCount += 1
+                guard surface.isHittable else { return nil }
+                hittableCount += 1
+                guard surface.descendants(matching: elementType).matching(ownerPredicate).firstMatch.exists else { return nil }
+                typedTargetCount += 1
+                guard bounds.minX <= frame.midX && frame.midX <= bounds.maxX else { return nil }
+                columnCount += 1
+                guard windows.contains(where: { $0.intersects(bounds) }) else { return nil }
                 return (surface, bounds, bounds.width * bounds.height)
             }
             let viewport = owners.min(by: { $0.area < $1.area })
@@ -666,6 +675,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
                 revealFailureMeasurement(frame: frame, viewport: viewportFrame, type: elementType,
                     hittable: hittable, insideWindow: insideWindow, insideOwner: insideOwner,
                     ownerCount: owners.count, deadlineExceeded: Date() >= deadline)
+                revealOwnerFailureMeasurement(element, in: app, counts: [surfaces.count, areaCount, hittableCount,
+                                                               typedTargetCount, columnCount, owners.count])
                 if identifier == "capture.save", elementType == .button {
                     captureSaveFailureMeasurement(element, in: app, boundary: "reveal",
                         observedHittable: hittable,
@@ -689,6 +700,36 @@ final class MirrorAdaptiveUITests: XCTestCase {
         }
         XCTFail("8회 이내 실제 스크롤로 추가검증 요소에 도달해야 한다.")
         throw HarnessFailure.unhittable
+    }
+
+    /// 이미 평가한 필터 개수와 실패 후 키보드 기하만 기록하며 원문 AX 값은 보존하지 않는다.
+    @MainActor
+    private func revealOwnerFailureMeasurement(_ element: XCUIElement, in app: XCUIApplication, counts: [Int]) {
+        guard let diagnosticCase, let diagnosticRequestedElement, counts.count == 6,
+              element === diagnosticRequestedObject,
+              counts.allSatisfy({ (0...10_000).contains($0) }) else { return }
+        var keyboardCount: Int? = nil
+        var keyboardFrame: [Double]? = nil
+        #if os(iOS)
+        let keyboards = app.keyboards.allElementsBoundByIndex
+        guard keyboards.count <= 10_000 else { return }
+        keyboardCount = keyboards.count
+        if keyboards.count == 1 {
+            let frame = keyboards[0].frame
+            let values = [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]
+            if values.allSatisfy({ $0.isFinite && abs($0) <= 100_000 }), frame.width >= 0, frame.height >= 0 {
+                keyboardFrame = values
+            }
+        }
+        #endif
+        emitMeasurement("UI adaptive reveal owner diagnostic:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "requestSequence": diagnosticRequestSequence, "requestedElement": diagnosticRequestedElement.rawValue,
+            "candidateCount": counts[0], "areaCount": counts[1], "hittableCount": counts[2],
+            "typedTargetCount": counts[3], "columnCount": counts[4], "intersectCount": counts[5],
+            "keyboardCount": keyboardCount.map { $0 as Any } ?? NSNull(),
+            "keyboardFrame": keyboardFrame.map { $0 as Any } ?? NSNull(),
+        ])
     }
 
     /// 실패 직전 이미 읽은 기하·조건만 기록한다. 제목·식별자·AX 원문과 추가 SDK 조회는 없다.
@@ -1112,6 +1153,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         diagnosticCase = value
         diagnosticRequestSequence = 0
         diagnosticRequestedElement = nil
+        diagnosticRequestedObject = nil
         diagnosticProgressPhase = nil
         captureFailureScreenshotRecorded = false
         diagnosticAuditSequence = 0
@@ -1127,6 +1169,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
         guard let diagnosticCase else { return }
         diagnosticRequestSequence += 1
         diagnosticRequestedElement = element
+        diagnosticRequestedObject = nil
         emitMeasurement("UI adaptive case diagnostic:", fields: [
             "schemaVersion": 1, "case": diagnosticCase.rawValue,
             "requestSequence": diagnosticRequestSequence, "requestedElement": element.rawValue,

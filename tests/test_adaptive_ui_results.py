@@ -1208,6 +1208,80 @@ esac
 
 
 
+    def reveal_owner_row(self, **extra):
+        return helper.REVEAL_OWNER_MARKER + json.dumps({
+            'schemaVersion': 1, 'case': 'captureValidation', 'requestSequence': 1,
+            'requestedElement': 'captureSave', 'candidateCount': 6, 'areaCount': 5,
+            'hittableCount': 4, 'typedTargetCount': 3, 'columnCount': 2, 'intersectCount': 1,
+            'keyboardCount': 1, 'keyboardFrame': [0, 550, 402, 324], **extra})
+
+    def test_reveal_owner_counts_preserve_mobile_keyboard_and_mac_unknown_geometry(self):
+        source, _ = self.progress_fixture()
+        for platform in ('iphone', 'ipad', 'macos'):
+            expected = {**EXPECTED, 'platform': platform}
+            owner = ('MirrorMacAdaptiveUITests' if platform == 'macos' else BUNDLE) + '.MirrorAdaptiveUITests'
+            fields = {'keyboardCount': None, 'keyboardFrame': None} if platform == 'macos' else {}
+            row = self.reveal_owner_row(**fields)
+            rows = [event(owner=owner), self.case_diagnostic_row(), self.progress_row(),
+                    self.case_diagnostic_row(sequence=1, element='captureSave'), row,
+                    self.capture_save_failure_row(scrollCandidateCount=6, scrollOwnerCount=1),
+                    event(owner=owner, state='failed')]
+            result = helper.xctest_case_diagnostics('\n'.join(rows), expected,
+                                                   helper.source_method_entries(source, platform))[0]
+            self.assertEqual(result['revealOwnerFailure'], json.loads(row[len(helper.REVEAL_OWNER_MARKER):]))
+            self.assertIn('captureSaveFailure', result)
+            self.assertNotIn(PRIVATE, json.dumps(result))
+
+    def test_reveal_owner_failure_accepts_current_task_postpone_request_only(self):
+        source, _ = self.progress_fixture()
+        case = 'testMaximumTypeSearchDetailCompletionAndUndo'
+        entries = helper.source_method_entries(source, 'iphone')
+        row = self.reveal_owner_row(case='searchDetailUndo', requestedElement='taskPostpone',
+                                    candidateCount=0, areaCount=0, hittableCount=0,
+                                    typedTargetCount=0, columnCount=0, intersectCount=0,
+                                    keyboardCount=0, keyboardFrame=None)
+        rows = [event(case=case), self.case_diagnostic_row(case=case), self.progress_row(case=case),
+                self.case_diagnostic_row(case=case, sequence=1, element='taskPostpone'), row,
+                event(case=case, state='failed')]
+        result = helper.xctest_case_diagnostics('\n'.join(rows), EXPECTED, entries)[0]
+        self.assertEqual(result['revealOwnerFailure']['intersectCount'], 0)
+        self.assertEqual(result['requestedElement'], 'taskPostpone')
+        self.assertIsNone(result['revealOwnerFailure']['keyboardFrame'])
+
+    def test_reveal_owner_counts_reject_private_types_bounds_and_increasing_filters(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row(),
+                  self.case_diagnostic_row(sequence=1, element='captureSave')]
+        bad = ({'label': PRIVATE}, {'case': PRIVATE}, {'requestedElement': PRIVATE},
+               {'requestSequence': True}, {'requestSequence': 2}, {'candidateCount': True},
+               {'candidateCount': -1}, {'candidateCount': 10_001}, {'areaCount': 7},
+               {'hittableCount': 6}, {'typedTargetCount': 5}, {'columnCount': 4}, {'intersectCount': 3},
+               {'keyboardCount': True}, {'keyboardCount': None}, {'keyboardCount': -1},
+               {'keyboardCount': 10_001}, {'keyboardCount': 0}, {'keyboardCount': 2},
+               {'keyboardFrame': [0, 0, -1, 10]}, {'keyboardFrame': [0, 0, 10, -1]},
+               {'keyboardFrame': [0, 0, True, 10]}, {'keyboardFrame': [0, 0, 10 ** 1000, 10]},
+               {'keyboardFrame': [0, 0, float('inf'), 10]}, {'keyboardFrame': [0, 0, 10]})
+        for fields in bad:
+            with self.subTest(fields=fields):
+                self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(
+                    prefix + [self.reveal_owner_row(**fields), event(state='failed')]), EXPECTED, entries))
+        duplicate = self.reveal_owner_row().replace('"areaCount": 5', '"areaCount": 5, "areaCount": 4')
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [duplicate, event(state='failed')]), EXPECTED, entries))
+
+    def test_reveal_owner_failure_requires_failed_terminal_and_no_later_activity(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        prefix = [event(), self.case_diagnostic_row(), self.progress_row(),
+                  self.case_diagnostic_row(sequence=1, element='captureSave')]
+        row = self.reveal_owner_row()
+        for suffix in ([], [event(state='passed')], [event(state='skipped')],
+                       [row, event(state='failed')],
+                       [self.case_diagnostic_row(sequence=2, element='captureTitle'), event(state='failed')],
+                       [self.progress_row(phase='launchComplete', sequence=2), event(state='failed')]):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row] + suffix), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix[:-1] + [row, event(state='failed')]), EXPECTED, entries))
+
     def failure_image_fixture(self, directory):
         root = Path(directory).resolve()
         source, _ = self.progress_fixture()
