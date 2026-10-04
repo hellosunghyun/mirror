@@ -200,6 +200,27 @@ class LiveSampleOwnershipTests(unittest.TestCase):
 
 
 class LiveSamplePrivacyTests(unittest.TestCase):
+    def test_failure_metadata_uses_types_and_internal_codes_without_copying_exception_content(self):
+        failures = [(json.JSONDecodeError(PRIVATE, PRIVATE, 0), 'jsonInvalid'),
+                    (UnicodeDecodeError('ascii', b'\xff', 0, 1, PRIVATE), 'textInvalid'),
+                    (PermissionError(PRIVATE), 'permissionDenied'),
+                    (FileNotFoundError(PRIVATE), 'fileUnavailable'),
+                    (subprocess.TimeoutExpired(PRIVATE, 3, output=PRIVATE, stderr=PRIVATE), 'processTimeout'),
+                    (subprocess.CalledProcessError(73, PRIVATE, output=PRIVATE, stderr=PRIVATE), 'processError'),
+                    (OSError(PRIVATE), 'osError'), (KeyError(PRIVATE), 'fieldMissing'),
+                    (TypeError(PRIVATE), 'typeInvalid'), (AttributeError(PRIVATE), 'attributeUnavailable'),
+                    (ValueError('receiptMismatch'), 'valueInvalid'),
+                    (helper.CheckFailure(PRIVATE), 'valueInvalid'),
+                    (helper.CheckFailure('receiptMismatch', PRIVATE), 'valueInvalid'),
+                    (RuntimeError(PRIVATE), 'unknown')]
+        for error, kind in failures:
+            with self.subTest(kind=kind):
+                result = helper.failure_details(error, PRIVATE)
+                self.assertEqual(result, {'stage': 'unknown', 'failureKind': kind})
+                self.assertNotIn(PRIVATE, json.dumps(result))
+        self.assertEqual(helper.failure_details(helper.CheckFailure('receiptMismatch'), 'receiptBefore'),
+                         {'stage': 'receiptBefore', 'failureKind': 'receiptMismatch'})
+
     def test_classification_exposes_fixed_counts_only_for_actual_main_thread_frames(self):
         text = '\n'.join((PRIVATE, 'Call graph:',
             '  10 Thread_0x123 DispatchQueue_1: com.apple.main-thread (serial)',
@@ -266,7 +287,7 @@ class LiveSamplePrivacyTests(unittest.TestCase):
 
 
 class LiveSampleWatchTests(unittest.TestCase):
-    def run_watch(self, directory, *, mode='observed', code=0):
+    def run_watch(self, directory, *, mode='observed', code=0, diagnostic=None):
         root, executable, _, environment, _ = receipt_fixture(directory)
         runner_temp = root / 'private-runner-temp'
         runner_temp.mkdir()
@@ -307,6 +328,10 @@ class LiveSampleWatchTests(unittest.TestCase):
                     '  10 Thread_0x123 DispatchQueue_1: com.apple.main-thread (serial)\n' + PRIVATE)
             return code
         rows = [[(17, 501, 101.0)], [(17, 501, 102.0 if mode == 'pidReused' else 101.0)]]
+        if mode == 'postRowsRaises':
+            rows[1] = subprocess.TimeoutExpired(PRIVATE, 3, output=PRIVATE, stderr=PRIVATE)
+        elif mode == 'postOwnerMissing':
+            rows[1] = []
         with mock.patch.dict(helper.os.environ, environment, clear=True), \
                 mock.patch.object(helper.signal, 'signal'), \
                 mock.patch.object(helper.os, 'getppid', return_value=42), \
@@ -319,7 +344,7 @@ class LiveSampleWatchTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output, \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
             try:
-                result = helper.watch(root, 42)
+                result = helper.watch(root, 42, diagnostic)
             finally:
                 self.assertTrue(directories)
                 self.assertTrue(all(not private.exists() for private in directories))
@@ -382,8 +407,62 @@ class LiveSampleWatchTests(unittest.TestCase):
             self.assertNotIn('frameCounts', result)
 
     def test_cleanup_also_runs_when_private_sample_creation_throws(self):
-        with tempfile.TemporaryDirectory() as directory, self.assertRaises(OSError):
-            self.run_watch(directory, mode='sampleRaises')
+        diagnostic = {}
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(OSError) as failure:
+            self.run_watch(directory, mode='sampleRaises', diagnostic=diagnostic)
+        self.assertEqual(helper.failure_details(failure.exception, diagnostic['stage']),
+                         {'stage': 'sample', 'failureKind': 'osError'})
+
+    def test_post_sample_failures_keep_owner_changed_native_exit_and_cleanup(self):
+        for mode, stage, kind in (('postRowsRaises', 'processListAfter', 'processTimeout'),
+                                  ('postOwnerMissing', 'processOwnerAfter', 'processOwnerUnavailable'),
+                                  ('buildChanged', 'receiptAfter', 'executableMismatch')):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                result = self.run_watch(directory, mode=mode, code=73)
+            self.assertEqual(result['status'], 'ownerChanged')
+            self.assertEqual(result['sampleExit'], 73)
+            self.assertEqual(result['stage'], stage)
+            self.assertEqual(result['failureKind'], kind)
+            self.assertNotIn('frameCounts', result)
+
+    def test_main_identifies_pre_sample_boundaries_without_relaxing_sampling_ownership(self):
+        for boundary, kind in (('receiptBefore', 'receiptMismatch'),
+                               ('processPathReader', 'permissionDenied'),
+                               ('processListBefore', 'processTimeout'),
+                               ('processOwnerBefore', 'processOwnerUnavailable'),
+                               ('temporaryDirectory', 'fieldMissing')):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as directory:
+                root, executable, _, environment, receipt = receipt_fixture(directory)
+                marker, log = root / 'ui-start.marker', root / 'ui.log'
+                marker.touch()
+                os.utime(marker, (100.0, 100.0))
+                log.write_text(event() + '\n' + PENDING + '\n')
+                if boundary == 'receiptBefore':
+                    receipt['configuration'] = PRIVATE
+                    (root / 'ui-build-receipt.json').write_text(json.dumps(receipt))
+                with mock.patch.dict(helper.os.environ, environment, clear=True), \
+                        mock.patch.object(helper.sys, 'platform', 'darwin'), \
+                        mock.patch.object(helper.sys, 'argv', ['helper', str(root), '42']), \
+                        mock.patch.object(helper.signal, 'signal'), \
+                        mock.patch.object(helper.os, 'getppid', return_value=42), \
+                        mock.patch.object(helper.os, 'getuid', return_value=501), \
+                        mock.patch.object(helper.time, 'monotonic', side_effect=[0.0, 0.0, 15.0, 15.0]), \
+                        mock.patch.object(helper, 'process_path_reader', return_value=lambda _: executable) as reader, \
+                        mock.patch.object(helper, 'process_rows', return_value=[(17, 501, 101.0)]) as rows, \
+                        mock.patch.object(helper, 'sample_once') as sample, \
+                        contextlib.redirect_stdout(io.StringIO()) as output, \
+                        contextlib.redirect_stderr(io.StringIO()) as errors:
+                    if boundary == 'processPathReader':
+                        reader.side_effect = PermissionError(PRIVATE)
+                    elif boundary == 'processListBefore':
+                        rows.side_effect = subprocess.TimeoutExpired(PRIVATE, 3, output=PRIVATE, stderr=PRIVATE)
+                    elif boundary == 'processOwnerBefore':
+                        rows.return_value = []
+                    helper.main()
+                expected = {'status': 'diagnosticUnavailable', 'stage': boundary, 'failureKind': kind}
+                self.assertEqual(output.getvalue(), '::notice::Mac live sample: ' + json.dumps(expected, sort_keys=True) + '\n')
+                self.assertEqual(errors.getvalue(), '')
+                sample.assert_not_called()
 
     def test_successful_native_exit_with_unrecognized_format_is_not_observed_evidence(self):
         for mode in ('unclassified', 'mainWithoutFrames'):
@@ -440,7 +519,8 @@ class LiveSampleWatchTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output, \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
             helper.main()
-        self.assertEqual(output.getvalue(), '::notice::Mac live sample: {"status": "diagnosticUnavailable"}\n')
+        self.assertEqual(output.getvalue(), '::notice::Mac live sample: '
+                         '{"failureKind": "valueInvalid", "stage": "arguments", "status": "diagnosticUnavailable"}\n')
         self.assertEqual(errors.getvalue(), '')
 
 

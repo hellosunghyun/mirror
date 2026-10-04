@@ -17,6 +17,34 @@ CASE = 'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday'
 PENDING = 'UI native query pending: settingsClose'
 COMPLETE = 'UI native query complete: settingsClose'
 EVENT = re.compile(r"Test Case '[-+]\[([A-Za-z0-9_.]+) (test[A-Za-z0-9_]+)\]' (started|passed|failed|skipped)(?=[\s.]|$)")
+STAGES = frozenset(('arguments', 'watchSetup', 'logRead', 'receiptBefore', 'processPathReader',
+                    'processListBefore', 'processOwnerBefore', 'queryBefore', 'temporaryDirectory',
+                    'sample', 'queryAfter', 'processListAfter', 'processOwnerAfter', 'receiptAfter', 'sampleRead'))
+CHECK_FAILURES = frozenset(('duplicateField', 'identityUnavailable', 'receiptUnavailable',
+                           'receiptMismatch', 'executableMismatch', 'processListUnavailable',
+                           'processOwnerUnavailable', 'startUnavailable', 'logUnavailable'))
+
+
+class CheckFailure(ValueError):
+    """이 helper가 직접 판정한 고정 검증 실패. 외부 예외 문자열과 구분한다."""
+
+
+def failure_details(error, stage):
+    # stage는 마지막 진입 경계이며 OS 원인 확정값이 아니다. 예외 원문은 읽거나 출력하지 않는다.
+    kind = 'unknown'
+    if (isinstance(error, CheckFailure) and len(error.args) == 1
+            and type(error.args[0]) is str and error.args[0] in CHECK_FAILURES):
+        kind = error.args[0]
+    else:
+        for error_type, value in ((json.JSONDecodeError, 'jsonInvalid'), (UnicodeError, 'textInvalid'),
+                (PermissionError, 'permissionDenied'), (FileNotFoundError, 'fileUnavailable'),
+                (subprocess.TimeoutExpired, 'processTimeout'), (subprocess.SubprocessError, 'processError'),
+                (OSError, 'osError'), (KeyError, 'fieldMissing'), (TypeError, 'typeInvalid'),
+                (AttributeError, 'attributeUnavailable'), (ValueError, 'valueInvalid')):
+            if isinstance(error, error_type):
+                kind = value
+                break
+    return {'stage': stage if type(stage) is str and stage in STAGES else 'unknown', 'failureKind': kind}
 
 
 class MarkerState:
@@ -50,7 +78,7 @@ def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError('duplicateField')
+            raise CheckFailure('duplicateField')
         result[key] = value
     return result
 
@@ -63,11 +91,11 @@ def verify_receipt(directory, environment):
                     ('commit', 'GITHUB_SHA'), ('build_number', 'GITHUB_RUN_NUMBER'))}}
     if not re.fullmatch(r'[0-9a-f]{40}', expected['commit']) or any(
             not re.fullmatch(r'[1-9][0-9]{0,19}', expected[key]) for key in ('run_id', 'run_attempt', 'build_number')):
-        raise ValueError('identityUnavailable')
+        raise CheckFailure('identityUnavailable')
     directory = Path(directory).resolve(strict=True)
     receipt_path, context_path = directory / 'ui-build-receipt.json', directory / 'unit-context.json'
     if any(path.is_symlink() or not path.is_file() for path in (receipt_path, context_path)):
-        raise ValueError('receiptUnavailable')
+        raise CheckFailure('receiptUnavailable')
     context_bytes = context_path.read_bytes()
     receipt = json.loads(receipt_path.read_bytes(), object_pairs_hook=unique_object)
     if (json.loads(context_bytes, object_pairs_hook=unique_object) != expected or receipt['context'] != expected
@@ -75,18 +103,18 @@ def verify_receipt(directory, environment):
             or receipt['configuration'] != 'Debug' or receipt['ui_scheme'] != 'MirrorMacUI'
             or receipt['code_signing_allowed'] is not False or receipt['code_coverage'] is not False
             or receipt['unit_context_sha256'] != hashlib.sha256(context_bytes).hexdigest()):
-        raise ValueError('receiptMismatch')
+        raise CheckFailure('receiptMismatch')
     products = (directory / 'DerivedData/Build/Products').resolve(strict=True)
     record = receipt['app']['executable']
     relative = Path(record['path'])
     if (relative.is_absolute() or '..' in relative.parts or record['path'] != record['resolved_path']
             or receipt['app']['build_number'] != expected['build_number']):
-        raise ValueError('executableMismatch')
+        raise CheckFailure('executableMismatch')
     executable = (products / relative).resolve(strict=True)
     if (not products.is_relative_to(directory) or not executable.is_relative_to(products)
             or not executable.is_file() or executable != products / relative
             or hashlib.sha256(executable.read_bytes()).hexdigest() != record['sha256']):
-        raise ValueError('executableMismatch')
+        raise CheckFailure('executableMismatch')
     return executable, record['sha256'], {key: expected[key] for key in ('commit', 'run_id', 'run_attempt', 'build_number')}
 
 
@@ -94,7 +122,7 @@ def process_rows():
     result = subprocess.run(['/bin/ps', '-axo', 'pid=,uid=,lstart='], capture_output=True,
                             timeout=3, env={**os.environ, 'LC_ALL': 'C', 'TZ': 'UTC'})
     if result.returncode:
-        raise ValueError('processListUnavailable')
+        raise CheckFailure('processListUnavailable')
     rows = []
     for line in result.stdout.decode('ascii', 'strict').splitlines():
         values = line.split(None, 2)
@@ -121,7 +149,7 @@ def select_process(rows, executable, started, uid, pid_path):
     candidates = [(pid, birth) for pid, owner, birth in rows
                   if pid > 0 and owner == uid and birth > started and pid_path(pid) == executable]
     if len(candidates) != 1:
-        raise ValueError('processOwnerUnavailable')
+        raise CheckFailure('processOwnerUnavailable')
     return candidates[0]
 
 
@@ -180,7 +208,9 @@ def sample_once(pid, directory, stopped):
             process.wait()
 
 
-def watch(directory, parent_pid):
+def watch(directory, parent_pid, diagnostic=None):
+    diagnostic = {} if diagnostic is None else diagnostic
+    diagnostic['stage'] = 'watchSetup'
     stopped = False
 
     def stop(signum, frame):
@@ -193,16 +223,16 @@ def watch(directory, parent_pid):
     log = directory / 'ui.log'
     marker = directory / 'ui-start.marker'
     if marker.is_symlink() or not marker.is_file():
-        raise ValueError('startUnavailable')
+        raise CheckFailure('startUnavailable')
     started = marker.stat().st_mtime
 
     def refresh():
         nonlocal position
         if log.is_symlink():
-            raise ValueError('logUnavailable')
+            raise CheckFailure('logUnavailable')
         if log.is_file():
             if log.stat().st_mtime < started or log.stat().st_size < position:
-                raise ValueError('logUnavailable')
+                raise CheckFailure('logUnavailable')
             with log.open('r', encoding='utf-8', errors='replace') as stream:
                 stream.seek(position)
                 while True:
@@ -213,33 +243,49 @@ def watch(directory, parent_pid):
                         break
                     state.feed(line, time.monotonic())
     while not stopped and os.getppid() == parent_pid:
+        diagnostic['stage'] = 'logRead'
         refresh()
         if state.done:
             return {'status': 'queryEndedBeforeSample'}
         if state.ready(time.monotonic()):
+            diagnostic['stage'] = 'receiptBefore'
             executable, digest, identity = verify_receipt(directory, os.environ)
+            diagnostic['stage'] = 'processPathReader'
             pid_path = process_path_reader()
-            owner = select_process(process_rows(), executable, started, os.getuid(), pid_path)
+            diagnostic['stage'] = 'processListBefore'
+            rows = process_rows()
+            diagnostic['stage'] = 'processOwnerBefore'
+            owner = select_process(rows, executable, started, os.getuid(), pid_path)
+            diagnostic['stage'] = 'queryBefore'
             refresh()
             if stopped or not state.ready(time.monotonic()):
                 return {'status': 'queryEndedBeforeSample', **identity}
+            diagnostic['stage'] = 'temporaryDirectory'
             temporary = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
             with tempfile.TemporaryDirectory(prefix='mirror-private-sample-', dir=temporary) as name:
                 private = Path(name)
                 os.chmod(private, 0o700)
+                diagnostic['stage'] = 'sample'
                 code = sample_once(owner[0], private, lambda: stopped)
+                diagnostic['stage'] = 'queryAfter'
                 refresh()
                 if stopped or not state.ready(time.monotonic()):
                     return {'status': 'queryEndedDuringSample', 'sampleExit': code, **identity}
                 try:
-                    same_owner = select_process(process_rows(), executable, started, os.getuid(), pid_path) == owner
+                    diagnostic['stage'] = 'processListAfter'
+                    rows = process_rows()
+                    diagnostic['stage'] = 'processOwnerAfter'
+                    same_owner = select_process(rows, executable, started, os.getuid(), pid_path) == owner
+                    diagnostic['stage'] = 'receiptAfter'
                     same_build = verify_receipt(directory, os.environ)[:2] == (executable, digest)
-                except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
-                    same_owner = same_build = False
+                except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
+                    return {'status': 'ownerChanged', 'sampleExit': code, **identity,
+                            **failure_details(error, diagnostic['stage'])}
                 if not same_owner or not same_build:
                     return {'status': 'ownerChanged', 'sampleExit': code, **identity}
                 if code != 0:
                     return {'status': 'sampleUnavailable', 'sampleExit': code, **identity}
+                diagnostic['stage'] = 'sampleRead'
                 output = private / 'sample.txt'
                 if output.is_symlink() or not output.is_file() or output.stat().st_size > 4 * 1024 * 1024:
                     return {'status': 'sampleFormatUnavailable', 'sampleExit': code, **identity}
@@ -252,13 +298,14 @@ def watch(directory, parent_pid):
 
 
 def main():
+    diagnostic = {'stage': 'arguments'}
     try:
         if sys.platform != 'darwin':
             result = {'status': 'platformUnavailable'}
         else:
-            result = watch(Path(sys.argv[1]).resolve(strict=True), int(sys.argv[2]))
-    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
-        result = {'status': 'diagnosticUnavailable'}
+            result = watch(Path(sys.argv[1]).resolve(strict=True), int(sys.argv[2]), diagnostic)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
+        result = {'status': 'diagnosticUnavailable', **failure_details(error, diagnostic['stage'])}
     print('::notice::Mac live sample: ' + json.dumps(result, sort_keys=True), flush=True)
 
 
