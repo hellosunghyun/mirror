@@ -101,6 +101,8 @@ jobs:
         id: test
         if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
         timeout-minutes: 15
+        env:
+          MIRROR_CI_LIVE_SAMPLE: ${{ (inputs.ui_appearance || 'system') == 'system' && '1' || '0' }}
         run: bash scripts/ci-apple-platform.sh macos ui
       - name: 중단 포함 실패 로그 진단
         if: ${{ failure() }}

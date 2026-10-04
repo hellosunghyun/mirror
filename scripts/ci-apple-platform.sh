@@ -437,12 +437,33 @@ touch "$result_dir/ui-start.marker"
 ui_execution_started_seconds=$SECONDS
 ci_phase='실제 UI 테스트'
 printf '%s\n' '::notice::UI execution start status=started' || true
+ci_live_sample_pid=''
+ci_live_sample_stop() {
+  if test -n "$ci_live_sample_pid"; then
+    # 이미 종료된 watcher의 PID가 재사용되어도 다른 프로세스에 신호를 보내지 않는다.
+    for ci_live_sample_running_pid in $(jobs -pr); do
+      if test "$ci_live_sample_running_pid" = "$ci_live_sample_pid"; then
+        kill "$ci_live_sample_pid" 2>/dev/null || true
+      fi
+    done
+    wait "$ci_live_sample_pid" 2>/dev/null || true
+    ci_live_sample_pid=''
+  fi
+}
+if test "$platform" = macos && test "$ui_appearance" = system && test "${MIRROR_CI_LIVE_SAMPLE-}" = 1; then
+  # 원문은 helper의 RUNNER_TEMP private 디렉터리에서만 보존 후 삭제한다.
+  python3 scripts/ci-mac-live-sample.py "$result_dir" "$$" 2>/dev/null &
+  ci_live_sample_pid=$!
+  trap ci_live_sample_stop EXIT
+fi
 if xcodebuild -project Mirror.xcodeproj -scheme "$ui_scheme" -configuration Debug \
   -sdk "$sdk" -destination "$destination" -jobs 2 \
   -derivedDataPath "$result_dir/DerivedData" -resultBundlePath "$result_dir/UI.xcresult" \
   -parallel-testing-enabled NO -enableCodeCoverage NO CURRENT_PROJECT_VERSION="$build_number" CODE_SIGNING_ALLOWED=NO test-without-building 2>&1 | tee "$result_dir/ui.log"; then
+  ui_execution_elapsed_seconds=$((SECONDS - ui_execution_started_seconds))
+  ci_live_sample_stop
   printf '%s\n' '::notice::UI diagnostic origin=uiCommandReturn' || true
-  printf '::notice::UI execution status=xcode_complete elapsed_seconds=%s\n' "$((SECONDS - ui_execution_started_seconds))"
+  printf '::notice::UI execution status=xcode_complete elapsed_seconds=%s\n' "$ui_execution_elapsed_seconds"
   ci_phase='UI 테스트 결과 요약'
   printf '%s\n' '::notice::UI xcresult extraction: {"origin":"uiCommandReturn","kind":"summary","state":"attempted"}' || true
   if xcrun xcresulttool get test-results summary --path "$result_dir/UI.xcresult" > "$result_dir/ui-summary.json"; then
@@ -522,8 +543,10 @@ PY
   fi
 else
   test_status=$?
+  ui_execution_elapsed_seconds=$((SECONDS - ui_execution_started_seconds))
+  ci_live_sample_stop
   printf '%s\n' '::notice::UI diagnostic origin=uiCommandReturn' || true
-  printf '::notice::UI execution status=failed exit_code=%s elapsed_seconds=%s\n' "$test_status" "$((SECONDS - ui_execution_started_seconds))"
+  printf '::notice::UI execution status=failed exit_code=%s elapsed_seconds=%s\n' "$test_status" "$ui_execution_elapsed_seconds"
   python3 scripts/ci_results.py diagnostics "$result_dir/ui.log" || true
   python3 scripts/ci-crash.py "$platform" "$result_dir" || true
   # 실패한 UI 실행도 실제 수와 실패/skip을 남긴다. underlying xcodebuild 실패는 그대로 반환한다.

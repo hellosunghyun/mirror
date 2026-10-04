@@ -1359,7 +1359,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func captureSettings(in app: XCUIApplication) throws {
         try activate("settings.button", in: app)
-        let close = try settingsCloseButton(in: app)
+        let close = try settingsCloseButton(in: app, observeInitialQuery: true)
         try recordUI("settings", in: app, identifiers: ["settings.syncState", "settings.cloudState"])
         try interact(with: close, in: app)
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: close)
@@ -1412,17 +1412,24 @@ final class MirrorUITests: XCTestCase {
     }
 
     @MainActor
-    private func settingsCloseButton(in app: XCUIApplication) throws -> XCUIElement {
+    private func settingsCloseButton(in app: XCUIApplication, observeInitialQuery: Bool = false) throws -> XCUIElement {
         #if os(macOS)
         let deadline = Date().addingTimeInterval(15)
         let buttons = app.buttons.matching(identifier: "settings.close")
+        var shouldObserveQuery = observeInitialQuery
         func hasArea(_ frame: CGRect) -> Bool {
             [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.width, frame.height].allSatisfy { $0.isFinite }
                 && frame.width > 0 && frame.height > 0
         }
         for attempt in 0..<12 {
             guard app.state == .runningForeground, Date() < deadline else { break }
-            guard buttons.element(boundBy: 0).waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow)),
+            // 최초 실제 조회의 시작·반환만 기록한다. 추가 AX 조회나 대기는 만들지 않는다.
+            let observeThisQuery = shouldObserveQuery
+            shouldObserveQuery = false
+            if observeThisQuery { print("UI native query pending: settingsClose") }
+            let buttonExists = buttons.element(boundBy: 0).waitForExistence(timeout: max(0, deadline.timeIntervalSinceNow))
+            if observeThisQuery { print("UI native query complete: settingsClose") }
+            guard buttonExists,
                   app.state == .runningForeground, Date() < deadline else { break }
             guard buttons.count == 1 else { break }
             let windows = app.windows.containing(.button, identifier: "settings.close")
