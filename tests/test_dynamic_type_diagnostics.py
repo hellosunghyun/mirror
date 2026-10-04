@@ -158,12 +158,43 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
                 metadata = helper.help_metadata(text)
                 self.assertTrue(metadata['supported'])
                 self.assertEqual(metadata['sectionCount'], 1)
-                self.assertEqual(metadata['headingIndent'], len(indent))
-                self.assertEqual(metadata['firstFollowingIndent'], len(indent) + 4)
-                self.assertEqual(metadata['firstBodyIndent'], len(indent) + 4)
+                self.assertEqual(metadata['headingIndent'], len(indent.expandtabs(8)))
+                self.assertEqual(metadata['firstFollowingIndent'], len((indent + '    ').expandtabs(8)))
+                self.assertEqual(metadata['firstBodyIndent'], len((indent + '    ').expandtabs(8)))
                 self.assertEqual(metadata['knownCategoryCount'], 12)
                 self.assertEqual(metadata['wholeHelpTokensPresentCount'], 12)
                 self.assertNotIn(PRIVATE, json.dumps(metadata))
+
+    def test_mixed_tab_and_space_indentation_preserves_one_complete_scoped_list(self):
+        prefix = 'Usage: simctl ui <device> <option> [<arguments>]\n    content_size\n'
+        for indents in (['\t'] * 12, ['\t'] * 6 + ['        '] * 6):
+            text = prefix + '\n'.join(indent + value for indent, value in zip(indents, helper.CATEGORIES))
+            metadata = helper.help_metadata(text)
+            self.assertTrue(metadata['supported'])
+            self.assertEqual(metadata['headingIndent'], 4)
+            self.assertEqual(metadata['firstFollowingIndent'], 8)
+            self.assertEqual(metadata['firstBodyIndent'], 8)
+            self.assertEqual(metadata['knownCategories'], list(helper.CATEGORIES))
+            self.assertEqual(metadata['categoryFormat'], 'standalone')
+            report, _ = helper.help_contract('', text)
+            self.assertEqual(report['contractFrom'], 'stderr')
+
+    def test_tab_stop_indentation_rejects_same_column_shallower_and_split_lists(self):
+        usage = 'Usage: simctl ui <device> <option> [<arguments>]\n'
+        for heading, body in (('        ', '\t'), ('\t', '    ')):
+            text = usage + heading + 'content_size\n' + '\n'.join(body + value for value in helper.CATEGORIES)
+            metadata = helper.help_metadata(text)
+            self.assertFalse(metadata['supported'])
+            self.assertEqual(metadata['headingIndent'], 8)
+            self.assertIsNone(metadata['firstBodyIndent'])
+            self.assertEqual(metadata['knownTokensPresentCount'], 0)
+        prefix = usage + '    content_size\n'
+        first = '\n'.join('\t' + value for value in helper.CATEGORIES[:6])
+        last = '\n'.join('        ' + value for value in helper.CATEGORIES[6:])
+        for separator in ('\n\n', '\n    appearance\n', '\n\tappearance\n'):
+            self.assertFalse(helper.supports_ui(prefix + first + separator + last))
+        report, _ = helper.help_contract(prefix + first, prefix + last)
+        self.assertEqual(report['contractFrom'], 'none')
 
     def test_zero_column_heading_does_not_merge_other_options_paragraphs_or_streams(self):
         prefix = 'Usage: simctl ui <device> <option> [<arguments>]\ncontent_size\n'

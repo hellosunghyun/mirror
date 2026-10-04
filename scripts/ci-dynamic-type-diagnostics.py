@@ -68,6 +68,12 @@ def fixed_category_presence(text):
     return [value for value in CATEGORIES if re.search(r'(?<![\w-])' + re.escape(value) + r'(?![\w-])', text)]
 
 
+def indentation_columns(line):
+    # 들여쓰기만 8열 tab stop으로 비교한다. 목록 본문의 tab 구분자는 그대로 둔다.
+    prefix = line[:len(line) - len(line.lstrip(' \t'))]
+    return len(prefix.expandtabs(8))
+
+
 def category_listing(text):
     # 두 option, 두 문단 또는 두 채널의 부분 목록을 합쳐 지원 계약을 만들지 않는다.
     sections = list(re.finditer(r'(?m)^([ \t]*)content_size[ \t]*$', text))
@@ -80,14 +86,14 @@ def category_listing(text):
     if len(sections) != 1:
         return result
     section = sections[0]
-    result['headingIndent'] = len(section[1])  # tab도 한 문자로 센다. 시각적인 열 번호를 추정하지 않는다.
+    result['headingIndent'] = indentation_columns(section[1])
     block, ambiguous_heading = [], False
     for line in text[section.end():].splitlines():
         if line.strip():
-            indent = len(line) - len(line.lstrip())
+            indent = indentation_columns(line)
             if result['firstFollowingIndent'] is None:
                 result['firstFollowingIndent'] = indent
-            if indent <= len(section[1]):
+            if indent <= result['headingIndent']:
                 break
             # 들여쓰기 계층이 불분명한 다른 bare heading을 현재 option의 본문으로 흡수하지 않는다.
             if re.fullmatch(r'[a-z][a-z0-9_-]*', line.strip()) and line.strip() not in CATEGORIES:
@@ -101,7 +107,7 @@ def category_listing(text):
     result.update(knownTokensPresent=present, knownTokensPresentCount=len(present))
     groups, group, indent = [], [], None
     for line in [*block, '']:
-        current = len(line) - len(line.lstrip())
+        current = indentation_columns(line)
         row = category_row(line)
         declaration = row is not None and row[1] == 'inlineDeclaration'
         if not line.strip() or declaration or indent is not None and current != indent:
