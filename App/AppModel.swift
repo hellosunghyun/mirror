@@ -124,7 +124,10 @@ final class AppModel {
     @ObservationIgnored private var widgetNextDestination: (resume: Bool, observationID: UUID)?
     var isLoading = true
     var isSaving = false
-    var feedback: String?
+    var feedback: String? {
+        didSet { feedbackReviewSessionID = nil }
+    }
+    private var feedbackReviewSessionID: String?
     var detailEditingFeedback: String?
     var problem: String? = nil {
         didSet { problemRevision += 1 }
@@ -142,6 +145,16 @@ final class AppModel {
     var lastUndo: SafeUndo?
     var review: AppReviewSession?
     var reviewSummary: String?
+    var currentReviewFeedback: String? {
+        guard let session = review else { return nil }
+        guard projectionPending || feedbackReviewSessionID == session.id else { return nil }
+        return feedback
+    }
+    var currentReviewUndo: SafeUndo? {
+        guard let session = review, let candidate = lastUndo,
+              records.first(where: { $0.operationID == candidate.id })?.reviewDecision?.sessionID == session.id else { return nil }
+        return candidate
+    }
     var preferences: MirrorPreferences
     var syncState: StoreSyncState = .localOnly
     var quarantinedCount = 0
@@ -367,7 +380,10 @@ final class AppModel {
             if !isUITesting, let bytes = defaults.data(forKey: sessionKey),
                let saved = try? JSONDecoder().decode(AppReviewSession.self, from: bytes),
                saved.context.planningDay == context?.planningDay,
-               saved.context.policyRevision == context?.policyRevision { review = saved }
+               saved.context.policyRevision == context?.policyRevision {
+                review = saved
+                refreshReviewCounts()
+            }
         } catch CloudSyncServiceError.accountTransitionRequired {
             stopCanonicalObservation()
             store = nil; services = nil
@@ -416,6 +432,7 @@ final class AppModel {
                 feedback = "날짜나 계획 시간대가 바뀌었어요. 현재 기준으로 다시 보여드려요."
             }
             context = next
+            refreshReviewCounts()
             selectedTaskIDs.formIntersection(Set(tasks.filter { $0.status == .open }.map(\.taskID)))
             if retryEnvelope == nil { projectionPending = false }
             if let pendingImportFeedback {
@@ -878,6 +895,7 @@ final class AppModel {
         if !includeNewInputs, mode == .manualResume, let review, !review.cards.isEmpty,
            weekly == nil || weekly == review.isWeekly {
             refreshUpcomingCards(renewCurrentCard: false)
+            refreshReviewCounts()
             persistSession()
             showReview = true
             return
@@ -903,11 +921,15 @@ final class AppModel {
     func finishReview() async {
         guard let session = review else { showReview = false; return }
         let weeklyStart = session.isWeekly ? (try? session.context.planningDay.mondayWeek().startDate) : nil
-        let remaining = session.cards.count
-        let summary = "이번 정리에서 오늘에 남긴 일 \(session.decidedToday)개 · 다른 때로 보낸 일 \(session.decidedElsewhere)개 · 아직 정하지 않은 일 \(remaining)개"
         let result = await submit(.reviewClose(ReviewClosure(cycleID: session.cycleID, sessionID: session.id,
                                                             weeklyCoverageStartDate: weeklyStart)), success: "오늘은 여기까지 정리했어요.")
-        if result { reviewSummary = summary; showReview = false; destination = .today }
+        if result, review?.id == session.id {
+            refreshUpcomingCards(renewCurrentCard: false)
+            guard let finished = review else { return }
+            reviewSummary = "이번 정리에서 오늘에 남긴 일 \(finished.decidedToday)개 · 다른 때로 보낸 일 \(finished.decidedElsewhere)개 · 아직 정하지 않은 일 \(finished.cards.count)개"
+            showReview = false
+            destination = .today
+        }
     }
     func refreshReviewCard() async {
         guard await refresh(), review != nil else { return }
@@ -920,6 +942,11 @@ final class AppModel {
         guard let candidate = lastUndo else { return }
         await undo(candidate)
     }
+    func undoReview(operationID: String, sessionID: String) async {
+        guard showReview, review?.id == sessionID,
+              let candidate = currentReviewUndo, candidate.id == operationID else { return }
+        await undo(candidate)
+    }
     func undo(_ original: OperationRecord) async {
         guard !original.undoValues.isEmpty else { return }
         let candidate = SafeUndo(id: original.operationID, expected: original.undoExpectations(),
@@ -927,14 +954,7 @@ final class AppModel {
         await undo(candidate)
     }
     private func undo(_ candidate: SafeUndo) async {
-        if await submit(.undo(operationID: candidate.id, expected: candidate.expected), success: "직전 변경을 되돌렸어요.") {
-            lastUndo = nil
-            if let taskID = candidate.taskID, let task = tasks.first(where: { $0.taskID == taskID }), review != nil {
-                review?.cards.insert(ReviewCard(id: UUID().uuidString, taskID: taskID,
-                                                expected: ExpectedVersions(task), decisionToken: UUID().uuidString), at: 0)
-                persistSession()
-            }
-        }
+        _ = await submit(.undo(operationID: candidate.id, expected: candidate.expected), success: "직전 변경을 되돌렸어요.")
     }
 
     func confirmAfterDeadline() async {
@@ -1172,6 +1192,13 @@ final class AppModel {
         return await handleResult(envelope, result: result, success: success)
     }
     private func handleResult(_ envelope: CommandEnvelope, result: CommandResult, success: String) async -> Bool {
+        let feedbackSessionID: String?
+        switch envelope.payload {
+        case let .setPlan(_, _, decision): feedbackSessionID = decision?.sessionID
+        case let .undo(operationID, _):
+            feedbackSessionID = records.first(where: { $0.operationID == operationID })?.reviewDecision?.sessionID
+        default: feedbackSessionID = nil
+        }
         if envelope.source == .app, result.state != .alreadyApplied, let services {
             let committed = result.state == .locallyCommitted || result.state == .committedProjectionPending
             let kind: LocalMetricKind
@@ -1207,11 +1234,41 @@ final class AppModel {
             guard await refresh() else {
                 projectionPending = true; retryEnvelope = envelope
                 feedback = "저장했어요. 화면을 갱신하고 있어요."
+                feedbackReviewSessionID = feedbackSessionID
                 return false
             }
             feedback = success
+            feedbackReviewSessionID = feedbackSessionID
             advanceReview(envelope, result: result)
-            recordUndo(envelope, result: result)
+            if case let .undo(originalID, _) = envelope.payload {
+                // projection 복구 재시도도 같은 후처리를 거친다. 다른 공간의 응답으로 Undo·정리 큐를 바꾸지 않는다.
+                if let configuration, envelope.workspaceEpoch == configuration.workspaceEpoch,
+                   let undoID = result.operationID,
+                   let appliedUndo = records.first(where: { $0.operationID == undoID }),
+                   appliedUndo.commandKind == .undo, appliedUndo.compensatesOperationID == originalID,
+                   appliedUndo.idempotencyKey == envelope.idempotencyKey,
+                   appliedUndo.workspaceKey == configuration.workspaceKey,
+                   appliedUndo.workspaceEpoch == configuration.workspaceEpoch {
+                    if lastUndo?.id == originalID { lastUndo = nil }
+                    if let original = records.first(where: { $0.operationID == originalID }),
+                       original.workspaceKey == configuration.workspaceKey,
+                       original.workspaceEpoch == configuration.workspaceEpoch,
+                       let decision = original.reviewDecision, review?.id == decision.sessionID,
+                       Set(result.affectedTaskIDs) == Set([decision.taskID]),
+                       let task = tasks.first(where: { $0.taskID == decision.taskID }),
+                       task.workspaceKey == configuration.workspaceKey, task.workspaceEpoch == configuration.workspaceEpoch,
+                       task.isProjectionComplete, task.status == .open,
+                       task.versions[.plan]?.headIDs == [undoID],
+                       review?.cards.contains(where: { $0.taskID == task.taskID }) == false {
+                        // 중복 응답은 기존 카드·토큰을 유지하고, 후속 계획 변경 뒤에는 과거 카드를 다시 넣지 않는다.
+                        review?.cards.insert(ReviewCard(id: UUID().uuidString, taskID: task.taskID,
+                                                       expected: ExpectedVersions(task), decisionToken: UUID().uuidString), at: 0)
+                        persistSession()
+                    }
+                }
+            } else {
+                recordUndo(envelope, result: result)
+            }
             if envelope.kind == .capture {
                 if envelope.idempotencyKey == menuBarCaptureToken {
                     switch envelope.payload {
@@ -1230,6 +1287,7 @@ final class AppModel {
             return true
         case .committedProjectionPending:
             projectionPending = true; feedback = "저장했어요. 화면을 갱신하고 있어요."
+            feedbackReviewSessionID = feedbackSessionID
             retryEnvelope = envelope
             return false
         case .requiresConfirmation: confirmation = envelope; return false
@@ -1246,15 +1304,48 @@ final class AppModel {
     }
 
     private func advanceReview(_ envelope: CommandEnvelope, result: CommandResult) {
-        guard case let .setPlan(item, target, decision) = envelope.payload,
+        guard case let .setPlan(item, _, decision) = envelope.payload,
               let decision, review?.id == decision.sessionID,
               review?.cards.first?.id == decision.cardID,
               Set(result.affectedTaskIDs) == Set([item.taskID]),
               review?.cards.first?.taskID == item.taskID else { return }
         review?.cards.removeFirst()
-        if target == .day(envelope.context.planningDay) { review?.decidedToday += 1 }
-        else { review?.decidedElsewhere += 1 }
         refreshUpcomingCards()
+        persistSession()
+    }
+    private func refreshReviewCounts() {
+        guard var session = review, let configuration else { return }
+        var decisions: [String: OperationRecord] = [:]
+        var conflictingIDs: Set<String> = []
+        for record in records {
+            guard record.workspaceKey == configuration.workspaceKey,
+                  record.workspaceEpoch == configuration.workspaceEpoch,
+                  record.commandKind == .setPlan,
+                  let decision = record.reviewDecision, decision.sessionID == session.id,
+                  decision.cycleID == session.cycleID else { continue }
+            if let previous = decisions[record.operationID], previous != record {
+                conflictingIDs.insert(record.operationID)
+            } else {
+                decisions[record.operationID] = record
+            }
+        }
+        var countedTaskIDs: Set<UUID> = []
+        var today = 0
+        var elsewhere = 0
+        for task in tasks {
+            guard task.workspaceKey == configuration.workspaceKey,
+                  task.workspaceEpoch == configuration.workspaceEpoch, task.isProjectionComplete,
+                  let winningID = task.versions[.plan]?.winningOperationID,
+                  !conflictingIDs.contains(winningID),
+                  let record = decisions[winningID], record.reviewDecision?.taskID == task.taskID,
+                  countedTaskIDs.insert(task.taskID).inserted else { continue }
+            if task.plan.target == .day(session.context.planningDay) { today += 1 }
+            else { elsewhere += 1 }
+        }
+        guard session.decidedToday != today || session.decidedElsewhere != elsewhere else { return }
+        session.decidedToday = today
+        session.decidedElsewhere = elsewhere
+        review = session
         persistSession()
     }
     private func refreshUpcomingCards(renewCurrentCard: Bool = true) {

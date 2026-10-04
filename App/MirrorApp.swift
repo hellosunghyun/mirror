@@ -71,12 +71,33 @@ private struct MirrorUITestingDynamicType: ViewModifier {
     }
 }
 
+/// 시트를 여는 화면에서 읽은 글자 크기를 전달한다. 시스템 값과 검사용 override 모두 같은 경계를 지난다.
+struct MirrorPresentationDynamicType: ViewModifier {
+    let size: DynamicTypeSize
+    let scope: String
+
+    @ViewBuilder func body(content: Content) -> some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
+           ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
+            content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope))
+                .dynamicTypeSize(size)
+        } else {
+            content.dynamicTypeSize(size)
+        }
+        #else
+        content.dynamicTypeSize(size)
+        #endif
+    }
+}
+
 #if DEBUG
 private struct MirrorAppliedDynamicType: ViewModifier {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    var identifier = "ui.appliedDynamicType"
     func body(content: Content) -> some View {
         content.accessibilityElement(children: .contain)
-            .accessibilityIdentifier("ui.appliedDynamicType")
+            .accessibilityIdentifier(identifier)
             .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
             .accessibilityLabel(appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경")
     }
@@ -219,9 +240,18 @@ struct MirrorCommands: Commands {
                 .disabled(searchLibrary == nil)
         }
         CommandGroup(after: .undoRedo) {
-            Button("미러의 직전 작업 되돌리기") { Task { await model.undo() } }
+            Button(model.showReview ? "직전 정리 결정 되돌리기" : "미러의 직전 작업 되돌리기") {
+                if model.showReview {
+                    if let candidate = model.currentReviewUndo, let sessionID = model.review?.id {
+                        Task { await model.undoReview(operationID: candidate.id, sessionID: sessionID) }
+                    }
+                } else {
+                    Task { await model.undo() }
+                }
+            }
                 .keyboardShortcut("z", modifiers: .command)
-                .disabled(model.lastUndo == nil || model.isTextEditing || model.isDetailEditing || model.isSaving)
+                .disabled((model.showReview ? model.currentReviewUndo == nil : model.lastUndo == nil)
+                          || model.isTextEditing || model.isDetailEditing || model.isSaving || model.projectionPending)
         }
         CommandMenu("정리") {
             Button(model.review?.cards.isEmpty == false ? "이어서 정리" : "오늘 정리") { model.beginReview(mode: .manualResume) }

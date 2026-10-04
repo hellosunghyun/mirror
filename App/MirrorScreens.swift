@@ -307,6 +307,7 @@ struct MirrorCaptureView: View {
     let request: CapturePresentationRequest
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var title = ""
     @State private var note = ""
     @State private var sourceURL = ""
@@ -454,6 +455,7 @@ struct MirrorCaptureView: View {
                     }.navigationTitle("줄마다 나누기")
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { splitPreview = false } } }
                 }.tint(MirrorPalette.accent)
+                    .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "captureSplit"))
             }
             .sheet(isPresented: $showDatePicker, onDismiss: {
                 if model.capturePresentation(for: request.ownerSceneID) == request { focusedField = .title }
@@ -465,6 +467,7 @@ struct MirrorCaptureView: View {
                         showDatePicker = false
                         focusedField = .title
                     }
+                    .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "captureDate"))
                 }
             }
         }
@@ -1008,11 +1011,13 @@ struct MirrorReviewView: View {
                 cardFocused = false
                 Task { @MainActor in await Task.yield(); cardFocused = true }
             }
-            .onChange(of: model.feedback) { _, message in
+            .onChange(of: model.currentReviewFeedback) { _, message in
                 if let message { AccessibilityNotification.Announcement(message).post() }
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: model.currentCard?.id)
-            .sheet(item: Binding(get: { model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })) { MirrorPlanPicker(request: $0) }
+            .sheet(item: Binding(get: { model.selectedTaskID == nil ? model.picker : nil }, set: { if $0 == nil { model.picker = nil } })) {
+                MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
+            }
             .sheet(item: Binding(get: { model.showReview ? model.selectedTaskID.map(MirrorDetailRequest.init(id:)) : nil }, set: {
                 guard $0 == nil, model.showReview, !model.isSaving else { return }
                 if let id = model.selectedTaskID, (detailDraftTaskID == id || model.isDetailEditing) { detailCloseRequestedID = id }
@@ -1021,6 +1026,7 @@ struct MirrorReviewView: View {
                 NavigationStack {
                     if let task = model.tasks.first(where: { $0.taskID == detail.id }) { MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID, selectionRequested: $detailSelectionRequested) }
                 }
+                .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "detail"))
             }
             .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil && model.selectedTaskID == nil))
         }
@@ -1142,19 +1148,20 @@ struct MirrorReviewView: View {
     }
 
     @ViewBuilder private var reviewFeedback: some View {
-        if model.feedback != nil || model.lastUndo != nil {
+        if model.currentReviewFeedback != nil || model.currentReviewUndo != nil {
             let layout = dynamicTypeSize.isAccessibilitySize
                 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                 : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
             layout {
-                if let feedback = model.feedback {
+                if let feedback = model.currentReviewFeedback {
                     Text(feedback).font(.callout).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("state.feedback")
                 }
-                if model.lastUndo != nil {
-                    Button("되돌리기") { Task { await model.undo() } }
+                if let undo = model.currentReviewUndo, let sessionID = model.review?.id {
+                    Button("되돌리기") { Task { await model.undoReview(operationID: undo.id, sessionID: sessionID) } }
                         .frame(minHeight: 44)
+                        .disabled(model.projectionPending)
                         .accessibilityLabel("직전 결정 되돌리기")
                         .accessibilityIdentifier("task.undo")
                 }
@@ -1181,6 +1188,7 @@ struct MirrorReviewView: View {
             if let session = model.review {
                 Text("이번에 정한 \(session.decidedToday + session.decidedElsewhere)개")
                     .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("review.progress")
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -1813,8 +1821,12 @@ struct MirrorTaskDetail: View {
             showNotes = false; showHistory = false; discardRequestedID = nil; showDiscardConfirmation = false; closeRequestedID = nil
             draftTaskID = hasUnsavedChanges ? task.taskID : nil
         }
-        .sheet(isPresented: $showDeadline) { MirrorDeadlineEditor(task: task) }
-        .sheet(item: $model.picker) { MirrorPlanPicker(request: $0) }
+        .sheet(isPresented: $showDeadline) {
+            MirrorDeadlineEditor(task: task).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "deadline"))
+        }
+        .sheet(item: $model.picker) {
+            MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
+        }
         .modifier(MirrorDeadlineConfirmation(enabled: model.picker == nil))
     }
     private var statusLabel: String {

@@ -66,6 +66,7 @@ struct MirrorRootView: View {
                     MirrorTaskDetail(task: task, closeRequestedID: $detailCloseRequestedID, draftTaskID: $detailDraftTaskID, selectionRequested: $detailSelectionRequested)
                 }
             }
+            .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "detail"))
             .inspectorColumnWidth(min: 280, ideal: 340, max: 380)
         }
         .environment(\.mirrorTaskSelection, { id in requestTaskSelection(id) })
@@ -75,10 +76,19 @@ struct MirrorRootView: View {
         .focusedSceneValue(\.mirrorLibrarySearch, MirrorLibrarySearchAction(model: model, navigation: libraryNavigation))
         #endif
         .tint(MirrorPalette.accent)
-        .sheet(item: capturePresentation) { request in MirrorCaptureView(request: request) }
-        .sheet(isPresented: $model.showSettings) { MirrorSettingsView() }
-        .sheet(isPresented: $model.showReview) { MirrorReviewView() }
-        .sheet(item: basePicker, onDismiss: { model.finishWidgetPickerDismissal() }) { MirrorPlanPicker(request: $0) }
+        .sheet(item: capturePresentation) { request in
+            MirrorCaptureView(request: request)
+                .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "capture"))
+        }
+        .sheet(isPresented: $model.showSettings) {
+            MirrorSettingsView().modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "settings"))
+        }
+        .sheet(isPresented: $model.showReview) {
+            MirrorReviewView().modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "review"))
+        }
+        .sheet(item: basePicker, onDismiss: { model.finishWidgetPickerDismissal() }) {
+            MirrorPlanPicker(request: $0).modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "plan"))
+        }
         .modifier(MirrorDeadlineConfirmation(enabled: !model.showReview && model.picker == nil && model.selectedTaskID == nil))
         .task { await model.start() }
         .onChange(of: model.sceneNavigationGeneration) { _, _ in
@@ -341,11 +351,13 @@ struct MirrorRootView: View {
                 let layout = dynamicTypeSize.isAccessibilitySize
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
                     : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
-                layout {
-                    statusMessage
-                    statusActions
+                if !model.showReview {
+                    layout {
+                        statusMessage
+                        statusActions
+                    }
+                    .buttonStyle(.borderless)
                 }
-                .buttonStyle(.borderless)
                 if let systemProblem = model.systemProblem { Text(systemProblem).font(.caption).foregroundStyle(.secondary) }
                 if let cleanupProblem = model.cleanupProblem { Text(cleanupProblem).font(.caption).foregroundStyle(.secondary) }
             }.padding(.horizontal, 20).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)

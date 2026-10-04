@@ -11,6 +11,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor private var diagnosticCase: DiagnosticCase?
     @MainActor private var diagnosticRequestSequence = 0
     @MainActor private var diagnosticAuditSequence = 0
+    @MainActor private var diagnosticAuditIssueSequence = 0
 
     @MainActor
     func testMaximumTypeCaptureValidationAndRecovery() throws {
@@ -442,8 +443,15 @@ final class MirrorAdaptiveUITests: XCTestCase {
         // 의도된 예외 목록은 비어 있다. 진단 probe·시스템 문제도 실제 근거 없이 무시하지 않는다.
         // XCTest가 보고한 모든 종류의 accessibility issue를 그대로 실패로 남긴다.
         diagnosticAuditSequence += 1
+        diagnosticAuditIssueSequence = 0
         do {
-            try app.performAccessibilityAudit(for: .all)
+            // Xcode 27 공개 SDK의 issueHandler·issue.element 계약을 사용한다.
+            // Apple 설명에서 true만 무시를 뜻한다. 진단 여부와 관계없이 항상 false를 반환한다.
+            // https://developer.apple.com/videos/play/wwdc2023/10035/
+            try app.performAccessibilityAudit(for: .all) { issue in
+                self.recordAuditIssue(issue)
+                return false
+            }
             recordAuditBoundary(.returned)
         } catch {
             recordAuditBoundary(.threw)
@@ -749,12 +757,45 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private func record(_ stage: String, in app: XCUIApplication) throws {
         XCTAssertEqual(app.state, .runningForeground)
         XCTAssertTrue(app.windows.firstMatch.exists)
+        let scope: PresentationScope?
+        switch stage {
+        case "max-capture", "max-validation", "max-recovery", "max-capture-plan": scope = .capture
+        case "max-review": scope = .review
+        case "max-week": scope = .plan
+        case "max-detail", "max-completion", "max-undo", "narrow-detail": scope = .detail
+        default: scope = nil
+        }
+        if let scope { try assertPresentationDynamicType(scope, in: app) }
         screenshotSequence += 1
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "mirror-adaptive-\(stage)-\(screenshotSequence)"
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    @MainActor
+    private func assertPresentationDynamicType(_ scope: PresentationScope, in app: XCUIApplication) throws {
+        let query = app.descendants(matching: .any).matching(identifier: "ui.appliedDynamicType." + scope.rawValue)
+        guard query.firstMatch.waitForExistence(timeout: 15), query.count == 1 else {
+            XCTFail("표시한 시트의 실제 글자 크기 환경을 고유한 요소로 확인해야 한다.")
+            throw HarnessFailure.configuration
+        }
+        let probe = query.firstMatch
+        #if os(macOS)
+        let matches = probe.label == "글자 크기 환경: accessibility5"
+        #else
+        let matches = probe.value as? String == "accessibility5"
+        #endif
+        emitMeasurement("UI adaptive presentation configuration:", fields: [
+            "scope": scope.rawValue, "maximumTypeApplied": matches,
+        ])
+        guard matches else {
+            XCTFail("루트뿐 아니라 입력·정리·날짜·상세 시트도 최대 글자 크기를 사용해야 한다.")
+            throw HarnessFailure.configuration
+        }
+    }
+
+    private enum PresentationScope: String { case capture, review, plan, detail }
 
     @MainActor
     private func configurationMeasurement(method: String, value: Any?, string: String?, label: String) {
@@ -887,12 +928,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
         case windowResizeVerified
     }
 
-    // 아래 관측은 고정 사례와 조회 요청·SDK 반환 경계만 기록한다. AX·입력 원문은 읽지 않는다.
+    // 경계 관측은 고정 코드만 기록한다. audit 콜백도 식별자·SDK 설명을 고정 코드로 변환한다.
     @MainActor
     private func beginCaseDiagnostics(_ value: DiagnosticCase) {
         diagnosticCase = value
         diagnosticRequestSequence = 0
         diagnosticAuditSequence = 0
+        diagnosticAuditIssueSequence = 0
         emitMeasurement("UI adaptive case diagnostic:", fields: [
             "schemaVersion": 1, "case": value.rawValue,
             "requestSequence": 0, "requestedElement": NSNull(),
@@ -918,6 +960,103 @@ final class MirrorAdaptiveUITests: XCTestCase {
         ])
     }
 
+    @MainActor
+    private func recordAuditIssue(_ issue: XCUIAccessibilityAuditIssue) {
+        guard let diagnosticCase else { return }
+        diagnosticAuditIssueSequence += 1
+        let kind: AuditIssueKind
+        switch issue.compactDescription {
+        case "Parent/Child mismatch": kind = .parentChildMismatch
+        case "Element has no description": kind = .missingDescription
+        default: kind = .other
+        }
+        let element = issue.element
+        let identifier: AuditElementIdentifier = element.map { auditElementIdentifier($0.identifier) } ?? .none
+        let type: AuditElementType = element.map { auditElementType($0.elementType) } ?? .none
+        // label/value/frame/debugDescription/detailedDescription과 알 수 없는 식별자는 출력하지 않는다.
+        emitMeasurement("UI adaptive audit issue:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "auditSequence": diagnosticAuditSequence, "issueSequence": diagnosticAuditIssueSequence,
+            "issueKind": kind.rawValue, "elementPresent": element != nil,
+            "elementIdentifier": identifier.rawValue, "elementType": type.rawValue, "ignored": false,
+        ])
+    }
+
+    @MainActor
+    private func auditElementIdentifier(_ identifier: String) -> AuditElementIdentifier {
+        switch identifier {
+        case "ui.appliedDynamicType": .appliedDynamicType
+        case "ui.appliedDynamicType.capture": .captureDynamicType
+        case "ui.appliedDynamicType.review": .reviewDynamicType
+        case "ui.appliedDynamicType.plan": .planDynamicType
+        case "ui.appliedDynamicType.detail": .detailDynamicType
+        case "capture.open": .captureOpen
+        case "capture.close": .captureClose
+        case "capture.title": .captureTitle
+        case "capture.note": .captureNote
+        case "capture.url": .captureURL
+        case "capture.more": .captureMore
+        case "capture.save": .captureSave
+        case "capture.feedback": .captureFeedback
+        case "capture.planChoices": .capturePlanChoices
+        case "capture.planSummary": .capturePlanSummary
+        case "capture.planToday": .capturePlanToday
+        case "capture.planTomorrow": .capturePlanTomorrow
+        case "capture.planOther": .capturePlanOther
+        case "today.list": .todayList
+        case "today.review": .todayReview
+        case "destination.today": .destinationToday
+        case "destination.calendar": .destinationCalendar
+        case "destination.library": .destinationLibrary
+        case "settings.button": .settingsButton
+        case "library.search": .librarySearch
+        case "library.list": .libraryList
+        case "library.batchFooter": .libraryBatchFooter
+        case "library.batchPlan": .libraryBatchPlan
+        case "review.card": .reviewCard
+        case "review.detail": .reviewDetail
+        case "review.today": .reviewToday
+        case "review.tomorrow": .reviewTomorrow
+        case "review.thisWeek": .reviewThisWeek
+        case "review.nextWeek": .reviewNextWeek
+        case "review.other": .reviewOther
+        case "review.finish": .reviewFinish
+        case "plan.today": .planToday
+        case "plan.tomorrow": .planTomorrow
+        case "plan.cancel": .planCancel
+        case "detail.close": .detailClose
+        case "detail.contentTitle": .detailContentTitle
+        case "detail.title": .detailTitle
+        case "detail.plan": .detailPlan
+        case "detail.history": .detailHistory
+        case "detail.postponeTomorrow": .detailPostponeTomorrow
+        case "task.complete": .taskComplete
+        case "task.undo": .taskUndo
+        case "state.error": .stateError
+        case "state.feedback": .stateFeedback
+        default: .other
+        }
+    }
+
+    @MainActor
+    private func auditElementType(_ type: XCUIElement.ElementType) -> AuditElementType {
+        switch type {
+        case .application: .application
+        case .window: .window
+        case .sheet: .sheet
+        case .button: .button
+        case .textField: .textField
+        case .textView: .textView
+        case .staticText: .staticText
+        case .scrollView: .scrollView
+        case .table: .table
+        case .collectionView: .collectionView
+        case .image: .image
+        case .disclosureTriangle: .disclosureTriangle
+        default: .other
+        }
+    }
+
     private enum DiagnosticCase: String {
         case captureValidation
         case reviewWeek
@@ -927,6 +1066,26 @@ final class MirrorAdaptiveUITests: XCTestCase {
     }
 
     private enum AuditOutcome: String { case returned, threw }
+
+    private enum AuditIssueKind: String { case parentChildMismatch, missingDescription, other }
+
+    private enum AuditElementIdentifier: String {
+        case none, other, appliedDynamicType
+        case captureDynamicType, reviewDynamicType, planDynamicType, detailDynamicType
+        case captureOpen, captureClose, captureTitle, captureNote, captureURL, captureMore, captureSave, captureFeedback
+        case capturePlanChoices, capturePlanSummary, capturePlanToday, capturePlanTomorrow, capturePlanOther
+        case todayList, todayReview, destinationToday, destinationCalendar, destinationLibrary, settingsButton
+        case librarySearch, libraryList, libraryBatchFooter, libraryBatchPlan
+        case reviewCard, reviewDetail, reviewToday, reviewTomorrow, reviewThisWeek, reviewNextWeek, reviewOther, reviewFinish
+        case planToday, planTomorrow, planCancel
+        case detailClose, detailContentTitle, detailTitle, detailPlan, detailHistory, detailPostponeTomorrow
+        case taskComplete, taskUndo, stateError, stateFeedback
+    }
+
+    private enum AuditElementType: String {
+        case none, other, application, window, sheet, button, textField, textView, staticText
+        case scrollView, table, collectionView, image, disclosureTriangle
+    }
 
     private enum RequestedElement: String {
         case appliedDynamicType
