@@ -137,6 +137,83 @@ public final class CapturePresentationCoordinator {
     }
 }
 
+/// 설정은 한 창에서만 표시하며 공간 전환 뒤에도 같은 presentation을 유지한다.
+public struct SettingsPresentationRequest: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let ownerSceneID: UUID
+
+    public init(ownerSceneID: UUID, id: UUID = UUID()) {
+        self.id = id
+        self.ownerSceneID = ownerSceneID
+    }
+}
+
+public struct SettingsPresentationState: Equatable, Sendable {
+    public private(set) var request: SettingsPresentationRequest?
+
+    public init() {}
+
+    public func presentation(for ownerSceneID: UUID) -> SettingsPresentationRequest? {
+        guard request?.ownerSceneID == ownerSceneID else { return nil }
+        return request
+    }
+
+    @discardableResult
+    public mutating func open(ownerSceneID: UUID) -> Bool {
+        if let request { return request.ownerSceneID == ownerSceneID }
+        request = SettingsPresentationRequest(ownerSceneID: ownerSceneID)
+        return true
+    }
+
+    @discardableResult
+    public mutating func close(presentationID: UUID, ownerSceneID: UUID) -> Bool {
+        guard request?.id == presentationID, request?.ownerSceneID == ownerSceneID else { return false }
+        request = nil
+        return true
+    }
+}
+
+/// 입력과 별개로 설정 owner의 수명만 공유한다. 설정 내용과 삭제 확인은 한 창에만 노출한다.
+@Observable
+@MainActor
+public final class SettingsPresentationCoordinator {
+    private var state = SettingsPresentationState()
+    @ObservationIgnored private weak var owner: CaptureSceneOwner?
+
+    public init() {}
+
+    public var request: SettingsPresentationRequest? {
+        // 해제된 owner도 원본 state 읽기를 거쳐 다음 변경의 Observation을 유지한다.
+        let request = state.request
+        guard let owner, request?.ownerSceneID == owner.id else { return nil }
+        return request
+    }
+
+    public func presentation(for ownerSceneID: UUID) -> SettingsPresentationRequest? {
+        let request = request
+        guard request?.ownerSceneID == ownerSceneID else { return nil }
+        return request
+    }
+
+    @discardableResult
+    public func open(owner newOwner: CaptureSceneOwner) -> Bool {
+        if let stale = state.request, owner == nil {
+            state.close(presentationID: stale.id, ownerSceneID: stale.ownerSceneID)
+        }
+        if let owner, owner !== newOwner { return false }
+        guard state.open(ownerSceneID: newOwner.id) else { return false }
+        owner = newOwner
+        return true
+    }
+
+    @discardableResult
+    public func close(presentationID: UUID, ownerSceneID: UUID) -> Bool {
+        guard state.close(presentationID: presentationID, ownerSceneID: ownerSceneID) else { return false }
+        owner = nil
+        return true
+    }
+}
+
 /// URL은 화면 탐색만 표현한다. 이를 받는 것만으로 명령을 실행하지 않는다.
 public enum MirrorRoute: Equatable, Sendable {
     case capture

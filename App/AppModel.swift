@@ -115,7 +115,8 @@ final class AppModel {
         }
     }
     var canChangeWorkspace: Bool { workspaceChangeBlockedMessage == nil }
-    var showSettings = false
+    private let settingsPresentationCoordinator = SettingsPresentationCoordinator()
+    var showSettings: Bool { settingsPresentationCoordinator.request != nil }
     var showReview = false
     var picker: PlanPickerRequest?
     var completedWidgetPickerID: UUID?
@@ -680,6 +681,19 @@ final class AppModel {
         presentedCaptureSubmission = nil; presentedCaptureCommittedToken = nil
         destination = .today
         return true
+    }
+    func settingsPresentation(for ownerSceneID: UUID) -> SettingsPresentationRequest? {
+        settingsPresentationCoordinator.presentation(for: ownerSceneID)
+    }
+    func openSettings(owner: CaptureSceneOwner) {
+        guard settingsPresentationCoordinator.open(owner: owner) else {
+            feedback = "다른 창에서 설정을 열고 있어요. 그 창에서 설정을 마무리해 주세요."
+            return
+        }
+    }
+    @discardableResult
+    func closeSettings(_ request: SettingsPresentationRequest) -> Bool {
+        settingsPresentationCoordinator.close(presentationID: request.id, ownerSceneID: request.ownerSceneID)
     }
     func finishOnboarding() { preferences.onboardingComplete = true; savePreferences() }
 

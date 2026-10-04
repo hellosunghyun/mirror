@@ -280,8 +280,15 @@ private struct MirrorCaptureOpenFocusedKey: FocusedValueKey {
 private struct MirrorLibrarySearchFocusedKey: FocusedValueKey {
     typealias Value = MirrorLibrarySearchAction
 }
+private struct MirrorSettingsOpenFocusedKey: FocusedValueKey {
+    typealias Value = MirrorSettingsOpenAction
+}
 
 extension FocusedValues {
+    var mirrorSettingsOpen: MirrorSettingsOpenAction? {
+        get { self[MirrorSettingsOpenFocusedKey.self] }
+        set { self[MirrorSettingsOpenFocusedKey.self] = newValue }
+    }
     var mirrorLibrarySearch: MirrorLibrarySearchAction? {
         get { self[MirrorLibrarySearchFocusedKey.self] }
         set { self[MirrorLibrarySearchFocusedKey.self] = newValue }
@@ -297,6 +304,7 @@ struct MirrorCommands: Commands {
     let model: AppModel
     @FocusedValue(\.mirrorCaptureOpen) private var openCapture
     @FocusedValue(\.mirrorLibrarySearch) private var searchLibrary
+    @FocusedValue(\.mirrorSettingsOpen) private var openSettings
     var body: some Commands {
         CommandGroup(after: .newItem) {
             Button("할 일 일단 넣기") { openCapture?.callAsFunction() }
@@ -329,7 +337,9 @@ struct MirrorCommands: Commands {
             Button("오늘은 여기까지") { Task { await model.finishReview() } }.disabled(model.review == nil || model.isDetailEditing)
         }
         CommandGroup(replacing: .appSettings) {
-            Button("미러 설정…") { model.showSettings = true }.keyboardShortcut(",", modifiers: .command)
+            Button("미러 설정…") { openSettings?.callAsFunction() }
+                .keyboardShortcut(",", modifiers: .command)
+                .disabled(openSettings == nil)
         }
     }
 }

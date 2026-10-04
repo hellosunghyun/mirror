@@ -7,6 +7,18 @@ import SwiftUI
 import UIKit
 #endif
 
+nonisolated struct MirrorSettingsOpenAction: Equatable, Sendable {
+    let model: AppModel
+    let owner: CaptureSceneOwner
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.model === rhs.model && lhs.owner === rhs.owner
+    }
+
+    @MainActor
+    func callAsFunction() { model.openSettings(owner: owner) }
+}
+
 @MainActor
 struct MirrorRootView: View {
     @Environment(AppModel.self) private var model
@@ -74,13 +86,14 @@ struct MirrorRootView: View {
         #if os(macOS)
         .focusedSceneValue(\.mirrorCaptureOpen, captureOpenAction)
         .focusedSceneValue(\.mirrorLibrarySearch, MirrorLibrarySearchAction(model: model, navigation: libraryNavigation))
+        .focusedSceneValue(\.mirrorSettingsOpen, settingsOpenAction)
         #endif
         .tint(MirrorPalette.accent)
         .sheet(item: capturePresentation) { request in
             MirrorCaptureView(request: request)
                 .modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "capture"))
         }
-        .sheet(isPresented: $model.showSettings) {
+        .sheet(item: settingsPresentation) { _ in
             MirrorSettingsView().modifier(MirrorPresentationDynamicType(size: dynamicTypeSize, scope: "settings"))
         }
         .sheet(isPresented: $model.showReview) {
@@ -238,7 +251,7 @@ struct MirrorRootView: View {
             }
             .accessibilityIdentifier("capture.open")
             .keyboardShortcut("n", modifiers: .command)
-            Button { model.showSettings = true } label: {
+            Button { settingsOpenAction.callAsFunction() } label: {
                 Label("설정", systemImage: "gearshape")
                     .labelStyle(.iconOnly)
                     .frame(minWidth: 44, minHeight: 44)
@@ -314,7 +327,7 @@ struct MirrorRootView: View {
                 }
                 .accessibilityIdentifier("capture.open")
                 .keyboardShortcut("n", modifiers: .command)
-                Button { model.showSettings = true } label: {
+                Button { settingsOpenAction.callAsFunction() } label: {
                     Label("설정", systemImage: "gearshape")
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
@@ -332,7 +345,7 @@ struct MirrorRootView: View {
             }
                 .accessibilityIdentifier("capture.open")
                 .keyboardShortcut("n", modifiers: .command)
-            Button { model.showSettings = true } label: {
+            Button { settingsOpenAction.callAsFunction() } label: {
                 Label("설정", systemImage: "gearshape")
                     #if os(iOS)
                     .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -423,6 +436,18 @@ struct MirrorRootView: View {
     }
     private var captureOpenAction: MirrorCaptureOpenAction {
         MirrorCaptureOpenAction(model: model, owner: sceneOwner)
+    }
+    private var settingsOpenAction: MirrorSettingsOpenAction {
+        MirrorSettingsOpenAction(model: model, owner: sceneOwner)
+    }
+    private var settingsPresentation: Binding<SettingsPresentationRequest?> {
+        let displayedRequest = model.settingsPresentation(for: sceneExposureID)
+        return Binding(get: {
+            model.settingsPresentation(for: sceneExposureID)
+        }, set: { presented in
+            guard presented == nil, let displayedRequest else { return }
+            model.closeSettings(displayedRequest)
+        })
     }
     private var capturePresentation: Binding<CapturePresentationRequest?> {
         // Binding 생성 시의 요청을 닫는다. 오래된 false setter는 새 요청을 해제하지 못한다.

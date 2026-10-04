@@ -438,6 +438,107 @@ struct SystemNavigationTests {
         #expect(coordinator.request == nil)
     }
 
+    @Test("설정은 한 창에서만 보이고 다른 창의 열기와 닫기는 기존 요청을 바꾸지 못한다")
+    func settingsOtherOwnerCannotPresentOrDismiss() throws {
+        let owner = UUID(), other = UUID()
+        var state = SettingsPresentationState()
+        let openedOwner = state.open(ownerSceneID: owner)
+        #expect(openedOwner)
+        let request = try #require(state.request)
+        #expect(state.presentation(for: owner) == request)
+        #expect(state.presentation(for: other) == nil)
+        let openedOther = state.open(ownerSceneID: other)
+        #expect(!openedOther)
+        let closedOther = state.close(presentationID: request.id, ownerSceneID: other)
+        #expect(!closedOther)
+        let closedUnknown = state.close(presentationID: UUID(), ownerSceneID: owner)
+        #expect(!closedUnknown)
+        #expect(state.request == request)
+        let closedOwner = state.close(presentationID: request.id, ownerSceneID: owner)
+        #expect(closedOwner)
+        #expect(state.request == nil)
+        let openedNextOwner = state.open(ownerSceneID: other)
+        #expect(openedNextOwner)
+        #expect(state.presentation(for: owner) == nil)
+        #expect(state.presentation(for: other)?.ownerSceneID == other)
+    }
+
+    @Test("열린 설정 재호출은 유지하고 다시 연 설정은 이전 닫기로 해제하지 못한다")
+    func settingsReopeningRejectsStaleDismissal() throws {
+        let owner = UUID()
+        var state = SettingsPresentationState()
+        let openedInitial = state.open(ownerSceneID: owner)
+        #expect(openedInitial)
+        let first = try #require(state.request)
+        let openedSameOwner = state.open(ownerSceneID: owner)
+        #expect(openedSameOwner)
+        #expect(state.request == first)
+        let closedInitial = state.close(presentationID: first.id, ownerSceneID: owner)
+        #expect(closedInitial)
+        let closedAgain = state.close(presentationID: first.id, ownerSceneID: owner)
+        #expect(!closedAgain)
+        let openedNext = state.open(ownerSceneID: owner)
+        #expect(openedNext)
+        let reopened = try #require(state.request)
+        #expect(reopened.id != first.id)
+        let closedStale = state.close(presentationID: first.id, ownerSceneID: owner)
+        #expect(!closedStale)
+        #expect(state.request == reopened)
+        let closedCurrent = state.close(presentationID: reopened.id, ownerSceneID: owner)
+        #expect(closedCurrent)
+        #expect(state.request == nil)
+    }
+
+    @MainActor @Test("설정 coordinator는 살아 있는 owner를 유지하고 다른 객체의 같은 ID도 거절한다")
+    func settingsCoordinatorKeepsLiveOwner() throws {
+        let coordinator = SettingsPresentationCoordinator()
+        let owner = CaptureSceneOwner(), other = CaptureSceneOwner()
+        let duplicateIDOwner = CaptureSceneOwner(id: owner.id)
+        #expect(coordinator.open(owner: owner))
+        let request = try #require(coordinator.request)
+        #expect(coordinator.open(owner: owner))
+        #expect(!coordinator.open(owner: other))
+        #expect(!coordinator.open(owner: duplicateIDOwner))
+        #expect(coordinator.presentation(for: owner.id) == request)
+        #expect(coordinator.presentation(for: other.id) == nil)
+        #expect(!coordinator.close(presentationID: request.id, ownerSceneID: other.id))
+        #expect(coordinator.request == request)
+        #expect(coordinator.close(presentationID: request.id, ownerSceneID: owner.id))
+        #expect(coordinator.request == nil)
+        #expect(coordinator.open(owner: other))
+        let next = try #require(coordinator.request)
+        #expect(next.ownerSceneID == other.id)
+        #expect(!coordinator.close(presentationID: request.id, ownerSceneID: owner.id))
+        #expect(coordinator.request == next)
+    }
+
+    @MainActor @Test("설정 request는 창을 retain하지 않고 닫힌 창의 늦은 해제가 새 설정을 닫지 않는다")
+    func settingsCoordinatorReclaimsReleasedOwner() throws {
+        let coordinator = SettingsPresentationCoordinator()
+        var initialOwner: CaptureSceneOwner? = CaptureSceneOwner()
+        weak var weakInitialOwner = initialOwner
+        let oldRequest: SettingsPresentationRequest
+        do {
+            let owner = try #require(initialOwner)
+            #expect(coordinator.open(owner: owner))
+            oldRequest = try #require(coordinator.request)
+        }
+        initialOwner = nil
+        #expect(weakInitialOwner == nil)
+        #expect(coordinator.request == nil)
+        #expect(coordinator.presentation(for: oldRequest.ownerSceneID) == nil)
+
+        let nextOwner = CaptureSceneOwner()
+        #expect(coordinator.open(owner: nextOwner))
+        let nextRequest = try #require(coordinator.request)
+        #expect(nextRequest.id != oldRequest.id)
+        #expect(nextRequest.ownerSceneID == nextOwner.id)
+        #expect(!coordinator.close(presentationID: oldRequest.id, ownerSceneID: oldRequest.ownerSceneID))
+        #expect(coordinator.request == nextRequest)
+        #expect(coordinator.close(presentationID: nextRequest.id, ownerSceneID: nextOwner.id))
+        #expect(coordinator.request == nil)
+    }
+
     @Test("알림은 현재 epoch의 정리와 일치하는 실제 마감 작업만 열고 명령 경로를 받지 않는다")
     func notificationOwnership() {
         let id = UUID(), other = UUID()
