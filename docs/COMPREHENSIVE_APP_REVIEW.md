@@ -54,6 +54,8 @@
 
 `748672d`의 [Batch 실행](https://github.com/hellosunghyun/mirror/actions/runs/37197743914)에서도 Mac은 빌드 뒤 두 사례가 초기 `capture.close` snapshot 조회에서 실패했다. iPhone은 UI 단계가 1,213초 뒤 기존 20분 제한으로 중단됐다. 정확한 iPhone 조작 위치는 미상이다. 이 workflow는 XCTest 원문을 별도 파일에 기록하므로 GitHub job log에 사례 활동이 없었고, 중단 시 native 종료 상태를 아직 받지 못한 EXIT trap은 기존 고정 진단을 호출하지 않았다. 검사 시간이나 성공 기준을 바꾸는 대신, 이런 중단에서도 현재 사례의 마지막 고정 진행 단계를 확인하도록 진단을 보완한다. 진행 정보는 부분 관측이며 실제 두 사례의 typed 성공 결과를 대신하지 않는다.
 
+`748672d`의 같은 [Adaptive 실행](https://github.com/hellosunghyun/mirror/actions/runs/37197743932)에서 iPad system은 빌드 성공 뒤 UI 단계가 1,213초에 중단됐다. 실제 SDK 로그는 입력 저장 버튼의 `Dynamic Type font sizes are unsupported`, 링크 안내·정리 날짜 설명·상단 추가 버튼의 `Contrast failed`를 보고했다. 두 설명 문구는 기존의 더 선명한 `MirrorPalette.supportingText`를 적용한다. 상단 버튼은 측정된 색상이나 화면이 없어 원인을 확정하지 않는다. 최대 크기를 SwiftUI 환경에 고정한 테스트와 시스템 설정에 따른 Dynamic Type 지원 검사는 별도로 원인 분리가 필요하며 저장 버튼의 고정 글꼴 문제로 단정하지 않는다. 전체 감사와 실패 기준은 유지한다. 같은 iPad 실행에서 펼친 날짜 그룹과 고유한 오늘 버튼의 조회·선택, 저장 버튼 문구 변경까지 확인했지만 계획 저장은 감사 이후 단계이므로 통과로 기록하지 않는다. 최신 화면 이미지와 수정 뒤 대비 검사는 아직 미확인이다.
+
 ## 주요 흐름의 수용 기준
 
 | 흐름 | 기대하는 행동 | 유지할 보호 |

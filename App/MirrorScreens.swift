@@ -365,7 +365,7 @@ struct MirrorCaptureView: View {
                                 capturePlanChoices
                                 TextField("메모", text: $note, axis: .vertical).lineLimit(1...10).focused($focusedField, equals: .note).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.note")
                                 TextField("https:// 원문 링크", text: $sourceURL).focused($focusedField, equals: .url).disabled(model.isSaving || model.projectionPending).accessibilityIdentifier("capture.url")
-                                Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(.secondary)
+                                Text("링크를 저장해도 웹 내용을 자동으로 가져오지 않아요.").font(.caption).foregroundStyle(MirrorPalette.supportingText)
                             }.textFieldStyle(.roundedBorder).padding(.top, 12)
                         }
                     }
@@ -946,7 +946,7 @@ struct MirrorReviewView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                     .accessibilityAddTraits(.isHeader)
                                 Text(session.isWeekly ? "주간 정리 · \(weekLabel(try? session.context.planningDay.mondayWeek()))" : "일간 정리 · \(AppDate.label(session.context.planningDay))")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(MirrorPalette.supportingText)
                             }
                         }
                         if let task = model.currentReviewTask, let card = model.currentCard {
