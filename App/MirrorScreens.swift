@@ -1162,6 +1162,10 @@ struct MirrorReviewView: View {
                 reviewFooter
             }
             .navigationTitle("정리")
+            #if os(iOS)
+            .toolbarBackground(MirrorPalette.canvas, for: .navigationBar)
+            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
+            #endif
             .onChange(of: model.currentCard?.id, initial: true) { _, _ in
                 cardFocused = false
                 Task { @MainActor in await Task.yield(); cardFocused = true }
