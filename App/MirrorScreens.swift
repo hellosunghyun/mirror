@@ -123,7 +123,12 @@ struct MirrorTodayView: View {
                             if model.reviewSummary != nil, !model.pendingTasks.isEmpty {
                                 Button("새로 넣은 일도 정리") { model.beginReview(mode: .manualResume, includeNewInputs: true) }
                             }
-                        } label: { Label("정리 옵션", systemImage: "ellipsis").frame(minWidth: 44, minHeight: 44) }
+                        } label: {
+                            Label("정리 옵션", systemImage: "ellipsis")
+                                .labelStyle(.iconOnly)
+                                .frame(minWidth: 44, minHeight: 44)
+                        }
+                            .accessibilityLabel("정리 옵션")
                             #if os(macOS)
                             .menuStyle(.borderlessButton)
                             #endif
