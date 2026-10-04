@@ -741,6 +741,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
             #endif
             swipeDirections.append(towardTop ? "down" : "up")
         }
+        phoneRevealSwipeLimitMeasurement(element, in: app, first: firstObservation, previous: lastObservation,
+                                        swipeDirections: swipeDirections, deadline: deadline)
         XCTFail("8회 이내 실제 스크롤로 추가검증 요소에 도달해야 한다.")
         throw HarnessFailure.unhittable
     }
@@ -750,18 +752,65 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let owner: CGRect?
     }
 
+    /// 8번째 gesture가 끝난 실패 경로에서만 현재 기하를 다시 읽는다. 새 값으로 성공 판정을 하지 않는다.
+    @MainActor
+    private func phoneRevealSwipeLimitMeasurement(_ element: XCUIElement, in app: XCUIApplication,
+                                                  first: RevealFrameObservation?, previous: RevealFrameObservation?,
+                                                  swipeDirections: [String], deadline: Date) {
+        #if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone,
+              diagnosticCase == .searchDetailUndo, diagnosticProgressPhase == .postponeStarted,
+              diagnosticRequestedElement == .taskPostpone, element === diagnosticRequestedObject,
+              let first, let previous, swipeDirections.count == 8,
+              app.state == .runningForeground else { return }
+        let frame = element.frame
+        let identifier = element.identifier
+        let type = element.elementType
+        let windows = app.windows.allElementsBoundByIndex.map { $0.frame }
+        let predicate = NSPredicate(format: "identifier == %@", identifier)
+        let surfaces = app.scrollViews.containing(predicate).allElementsBoundByIndex
+            + app.tables.containing(predicate).allElementsBoundByIndex
+            + app.collectionViews.containing(predicate).allElementsBoundByIndex
+        var areaCount = 0, hittableCount = 0, typedTargetCount = 0, columnCount = 0
+        let owners: [CGRect] = surfaces.compactMap { surface in
+            let bounds = surface.frame
+            guard hasArea(bounds) else { return nil }
+            areaCount += 1
+            if surface.isHittable { hittableCount += 1 }
+            guard surface.descendants(matching: type).matching(predicate).firstMatch.exists else { return nil }
+            typedTargetCount += 1
+            guard bounds.minX <= frame.midX && frame.midX <= bounds.maxX else { return nil }
+            columnCount += 1
+            guard windows.contains(where: { $0.intersects(bounds) }) else { return nil }
+            return bounds
+        }
+        let viewport = owners.min(by: { $0.width * $0.height < $1.width * $1.height })
+        let hittable = element.isHittable
+        revealFailureMeasurement(frame: frame, viewport: viewport, type: type, hittable: hittable,
+            insideWindow: windows.contains(where: { $0.contains(frame) }),
+            insideOwner: viewport.map { $0.contains(frame) } ?? true,
+            ownerCount: owners.count, deadlineExceeded: Date() >= deadline)
+        revealOwnerFailureMeasurement(element, in: app, counts: [surfaces.count, areaCount, hittableCount,
+                                                               typedTargetCount, columnCount, owners.count])
+        phoneRevealObstructionMeasurement(element, identifier: identifier, in: app,
+            first: first, previous: previous, last: RevealFrameObservation(target: frame, owner: viewport),
+            observationCount: 9, swipeDirections: swipeDirections, swipeLimit: true)
+        #endif
+    }
+
     /// Phone의 알려진 실패 분기에서만 읽는다. 개별 안내 요소와의 기하 교차는 가림 원인의 확정이 아니다.
     @MainActor
     private func phoneRevealObstructionMeasurement(_ element: XCUIElement, identifier: String,
                                                    in app: XCUIApplication,
                                                    first: RevealFrameObservation, previous: RevealFrameObservation?,
                                                    last: RevealFrameObservation, observationCount: Int,
-                                                   swipeDirections: [String]) {
+                                                   swipeDirections: [String], swipeLimit: Bool = false) {
         #if os(iOS)
         guard UIDevice.current.userInterfaceIdiom == .phone,
               diagnosticCase == .searchDetailUndo, diagnosticProgressPhase == .postponeStarted,
               diagnosticRequestedElement == .taskPostpone, element === diagnosticRequestedObject,
-              (1...8).contains(observationCount), swipeDirections.count == observationCount - 1,
+              (swipeLimit ? observationCount == 9 : (1...8).contains(observationCount)),
+              swipeDirections.count == observationCount - 1,
               app.state == .runningForeground else { return }
         let windows = app.windows.allElementsBoundByIndex
         guard windows.count == 1, let window = windows.first,
@@ -794,8 +843,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
               let undo = measurement(window.buttons.matching(identifier: "task.undo")),
               let retry = measurement(window.buttons.matching(identifier: "state.retry")),
               let tabBar = measurement(window.tabBars), app.state == .runningForeground else { return }
-        let fields: [String: Any] = [
-            "schemaVersion": 1, "case": "searchDetailUndo", "requestSequence": diagnosticRequestSequence,
+        var fields: [String: Any] = [
+            "schemaVersion": swipeLimit ? 2 : 1, "case": "searchDetailUndo", "requestSequence": diagnosticRequestSequence,
             "requestedElement": "taskPostpone", "observationCount": observationCount,
             "swipeDirections": swipeDirections, "first": observation(first),
             "previous": previous.map { observation($0) as Any } ?? NSNull(), "last": observation(last),
@@ -803,6 +852,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
             "elements": ["feedback": feedback, "dismissFeedback": dismissFeedback, "undo": undo,
                          "retry": retry, "tabBar": tabBar],
         ]
+        if swipeLimit { fields["boundary"] = "swipeLimit" }
         guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
               data.count <= 1_900 else { return }
         print("UI adaptive phone reveal obstruction diagnostic: \(String(decoding: data, as: UTF8.self))")

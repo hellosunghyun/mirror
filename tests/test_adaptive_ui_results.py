@@ -1480,6 +1480,39 @@ esac
                 self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(
                     prefix + [self.phone_reveal_obstruction_row(**fields), event(case=case, state='failed')]), EXPECTED, entries))
 
+    def test_phone_swipe_limit_preserves_ninth_observation_after_eight_actions(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        row = self.phone_reveal_obstruction_row(schemaVersion=2, boundary='swipeLimit',
+                                               observationCount=9, swipeDirections=['up'] * 8)
+        result = helper.xctest_case_diagnostics('\n'.join(prefix + [row, event(case=case, state='failed')]),
+                                               EXPECTED, entries)[0]['phoneRevealObstruction']
+        self.assertEqual(result, json.loads(row[len(helper.PHONE_REVEAL_OBSTRUCTION_MARKER):]))
+        self.assertNotEqual(result['previous']['target'], result['last']['target'])
+        self.assertEqual(result['boundary'], 'swipeLimit')
+        for terminal in ('passed', 'skipped'):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row, event(case=case, state=terminal)]),
+                                                           EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row]), EXPECTED, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row, event(case=case, state='failed')]),
+                                                       {**EXPECTED, 'platform': 'ipad'}, entries))
+
+    def test_phone_swipe_limit_rejects_other_boundary_count_pairs_and_legacy_shape_changes(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'iphone')
+        case, prefix = self.phone_reveal_obstruction_prefix()
+        base = {'schemaVersion': 2, 'boundary': 'swipeLimit', 'observationCount': 9, 'swipeDirections': ['up'] * 8}
+        invalid = ({'schemaVersion': 1}, {'schemaVersion': 3}, {'schemaVersion': True},
+                   {'boundary': PRIVATE}, {'boundary': None}, {'observationCount': 8}, {'observationCount': 10},
+                   {'observationCount': True}, {'swipeDirections': ['up'] * 7}, {'swipeDirections': ['up'] * 9},
+                   {'swipeDirections': ['up'] * 7 + [PRIVATE]}, {'previous': None}, {'private': PRIVATE})
+        rows = [self.phone_reveal_obstruction_row(**{**base, **change}) for change in invalid]
+        rows.append(self.phone_reveal_obstruction_row(schemaVersion=2, observationCount=9, swipeDirections=['up'] * 8))
+        for row in rows:
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row, event(case=case, state='failed')]),
+                                                           EXPECTED, entries))
+
     def test_phone_obstruction_requires_phone_current_request_postpone_boundary_and_failed_terminal(self):
         source, _ = self.progress_fixture()
         entries = helper.source_method_entries(source, 'iphone')

@@ -543,9 +543,17 @@ def reveal_owner_fields(value, platform):
 def phone_reveal_obstruction_fields(value):
     keys = {'schemaVersion', 'case', 'requestSequence', 'requestedElement', 'observationCount',
             'swipeDirections', 'first', 'previous', 'last', 'windowFrame', 'elements'}
+    if not isinstance(value, dict) or type(value.get('schemaVersion')) is not int:
+        return False
+    swipe_limit = value['schemaVersion'] == 2
+    if swipe_limit:
+        keys.add('boundary')
     if not (isinstance(value, dict) and set(value) == keys and value['case'] == 'searchDetailUndo'
+            and value['schemaVersion'] in (1, 2)
             and value['requestedElement'] == 'taskPostpone'
-            and type(value['observationCount']) is int and 1 <= value['observationCount'] <= 8
+            and type(value['observationCount']) is int
+            and (value['observationCount'] == 9 and value['boundary'] == 'swipeLimit' if swipe_limit
+                 else 1 <= value['observationCount'] <= 8)
             and isinstance(value['swipeDirections'], list)
             and len(value['swipeDirections']) == value['observationCount'] - 1
             and all(type(direction) is str and direction in ('up', 'down') for direction in value['swipeDirections'])):
@@ -684,7 +692,7 @@ def xctest_case_diagnostics(log, expected, entries):
             value = strict_json(text[len(marker):])
         except (AdaptiveError, ValueError, TypeError, RecursionError):
             return None
-        versions = (1, 2) if marker == REVEAL_OWNER_MARKER else (1,)
+        versions = (1, 2) if marker in (REVEAL_OWNER_MARKER, PHONE_REVEAL_OBSTRUCTION_MARKER) else (1,)
         if not (isinstance(value, dict) and type(value.get('schemaVersion')) is int
                 and value['schemaVersion'] in versions and value.get('case') == CASE_DIAGNOSTIC_NAMES[active]):
             return None
