@@ -21,6 +21,7 @@
       </MacroExpansion>
       <EnvironmentVariables>
          <EnvironmentVariable key="MIRROR_UI_APPEARANCE" value="$(MIRROR_UI_APPEARANCE)" isEnabled="YES" />
+         <EnvironmentVariable key="MIRROR_UI_DYNAMIC_TYPE_FIXTURE" value="$(MIRROR_UI_DYNAMIC_TYPE_FIXTURE)" isEnabled="YES" />
       </EnvironmentVariables>
    </TestAction>
 </Scheme>

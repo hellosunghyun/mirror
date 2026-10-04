@@ -12,6 +12,8 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor private var diagnosticRequestSequence = 0
     @MainActor private var diagnosticAuditSequence = 0
     @MainActor private var diagnosticAuditIssueSequence = 0
+    @MainActor private var dynamicTypeFixtureMode: DynamicTypeFixtureMode?
+    @MainActor private var dynamicTypeFixtureScopes: Set<String> = []
 
     @MainActor
     func testMaximumTypeCaptureValidationAndRecovery() throws {
@@ -388,10 +390,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private func launchApp(recordConfiguration: Bool = true, method: String = #function) throws -> XCUIApplication {
         continueAfterFailure = false
         screenshotSequence = 0
+        dynamicTypeFixtureMode = try requestedDynamicTypeFixture()
+        dynamicTypeFixtureScopes = []
         let app = XCUIApplication()
         app.launchEnvironment["MIRROR_UI_TESTING"] = "1"
         app.launchEnvironment["MIRROR_TEST_DATE"] = "2026-09-30T03:00:00Z"
         app.launchEnvironment["MIRROR_UI_DYNAMIC_TYPE"] = "accessibility5"
+        app.launchEnvironment["MIRROR_UI_DYNAMIC_TYPE_FIXTURE"] = dynamicTypeFixtureMode?.rawValue ?? ""
         app.launchEnvironment["MIRROR_UI_APPEARANCE"] = try appearance()
         app.launchArguments = ["-AppleLanguages", "(ko)", "-AppleLocale", "ko_KR"]
         app.launch()
@@ -403,6 +408,29 @@ final class MirrorAdaptiveUITests: XCTestCase {
             app.terminate()
             throw error
         }
+    }
+
+    private enum DynamicTypeFixtureMode: String { case pinned, system }
+
+    @MainActor
+    private func requestedDynamicTypeFixture() throws -> DynamicTypeFixtureMode? {
+        let raw = ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE_FIXTURE"] ?? ""
+        // 미설정 scheme 변수는 기존 고정 fixture다. 진단 실행은 별도 marker로 명시적 모드 전달을 검증한다.
+        if raw.isEmpty || raw == "$(MIRROR_UI_DYNAMIC_TYPE_FIXTURE)" { return nil }
+        guard let mode = DynamicTypeFixtureMode(rawValue: raw) else {
+            XCTFail("글자 크기 진단 fixture는 pinned 또는 system이어야 한다.")
+            throw HarnessFailure.configuration
+        }
+        #if os(iOS)
+        guard diagnosticCase == .captureValidation else {
+            XCTFail("글자 크기 진단 fixture는 iOS의 기존 입력 검증 사례에서만 허용한다.")
+            throw HarnessFailure.configuration
+        }
+        return mode
+        #else
+        XCTFail("글자 크기 진단 fixture는 iOS에서만 허용한다.")
+        throw HarnessFailure.configuration
+        #endif
     }
 
     @MainActor
@@ -418,6 +446,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
     @MainActor
     private func configuration(in app: XCUIApplication, viewport: String, method: String = #function) throws {
         let applied = try find("ui.appliedDynamicType", requestedElement: .appliedDynamicType, in: app)
+        try recordDynamicTypeFixture(applied, scope: "root")
         let appliedValue = applied.value
         let appliedString = appliedValue as? String
         let appliedLabel = applied.label
@@ -609,8 +638,9 @@ final class MirrorAdaptiveUITests: XCTestCase {
             let elementType = element.elementType
             let windows = app.windows.allElementsBoundByIndex.map { $0.frame }
             let ownerPredicate = NSPredicate(format: "identifier == %@", identifier)
-            let surfaces = app.scrollViews.allElementsBoundByIndex + app.tables.allElementsBoundByIndex
-                + app.collectionViews.allElementsBoundByIndex
+            let surfaces = app.scrollViews.containing(ownerPredicate).allElementsBoundByIndex
+                + app.tables.containing(ownerPredicate).allElementsBoundByIndex
+                + app.collectionViews.containing(ownerPredicate).allElementsBoundByIndex
             // 같은 관측의 경계를 재사용하며, 다음 반복과 스크롤 뒤에는 새로 읽는다.
             let owners: [(surface: XCUIElement, bounds: CGRect, area: CGFloat)] = surfaces.compactMap { surface in
                 let bounds = surface.frame
@@ -626,8 +656,13 @@ final class MirrorAdaptiveUITests: XCTestCase {
             let oversizedInput = viewportFrame.map { isScrollableInput && frame.height > $0.height } ?? false
             // 긴 입력란은 내용 자체를 스크롤할 수 있다. 동작/오류 버튼에는 항상 전체 표시를 요구한다.
             let insideOwner = viewportFrame.map { oversizedInput ? hasArea($0.intersection(frame)) : $0.contains(frame) } ?? true
-            if element.isHittable, hasArea(frame), windows.contains(where: { $0.contains(frame) }), insideOwner { return }
+            let hittable = element.isHittable
+            let insideWindow = windows.contains(where: { $0.contains(frame) })
+            if hittable, hasArea(frame), insideWindow, insideOwner { return }
             guard Date() < deadline, let viewport else {
+                revealFailureMeasurement(frame: frame, viewport: viewportFrame, type: elementType,
+                    hittable: hittable, insideWindow: insideWindow, insideOwner: insideOwner,
+                    ownerCount: owners.count, deadlineExceeded: Date() >= deadline)
                 XCTFail("현재 대상의 실제 스크롤 소유자 안에서 요소에 도달해야 한다.")
                 throw HarnessFailure.unhittable
             }
@@ -646,6 +681,28 @@ final class MirrorAdaptiveUITests: XCTestCase {
         }
         XCTFail("8회 이내 실제 스크롤로 추가검증 요소에 도달해야 한다.")
         throw HarnessFailure.unhittable
+    }
+
+    /// 실패 직전 이미 읽은 기하·조건만 기록한다. 제목·식별자·AX 원문과 추가 SDK 조회는 없다.
+    @MainActor
+    private func revealFailureMeasurement(frame: CGRect, viewport: CGRect?, type: XCUIElement.ElementType,
+                                          hittable: Bool, insideWindow: Bool, insideOwner: Bool,
+                                          ownerCount: Int, deadlineExceeded: Bool) {
+        guard let diagnosticCase else { return }
+        func coordinates(_ value: CGRect?) -> Any {
+            guard let value else { return NSNull() }
+            let numbers = [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)]
+            guard numbers.allSatisfy({ $0.isFinite && abs($0) <= 100_000 }) else { return NSNull() }
+            return numbers
+        }
+        let value: [String: Any] = ["schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "requestSequence": diagnosticRequestSequence, "elementType": type.rawValue,
+            "frame": coordinates(frame), "viewport": coordinates(viewport), "hittable": hittable,
+            "insideWindow": insideWindow, "insideOwner": insideOwner, "ownerCount": ownerCount,
+            "deadlineExceeded": deadlineExceeded]
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]), data.count <= 1_024 else { return }
+        let line = "UI adaptive reveal boundary: " + String(decoding: data, as: UTF8.self) + "\n"
+        try? FileHandle.standardOutput.write(contentsOf: Data(line.utf8))
     }
 
     @MainActor
@@ -783,6 +840,7 @@ final class MirrorAdaptiveUITests: XCTestCase {
             throw HarnessFailure.configuration
         }
         let probe = query.firstMatch
+        try recordDynamicTypeFixture(probe, scope: scope.rawValue)
         #if os(macOS)
         let matches = probe.label == "글자 크기 환경: accessibility5"
         #else
@@ -798,6 +856,32 @@ final class MirrorAdaptiveUITests: XCTestCase {
     }
 
     private enum PresentationScope: String { case capture, review, plan, detail }
+
+    @MainActor
+    private func recordDynamicTypeFixture(_ probe: XCUIElement, scope: String) throws {
+        guard let mode = dynamicTypeFixtureMode else { return }
+        guard diagnosticCase == .captureValidation, scope == "root" || scope == "capture",
+              let fields = (try? JSONSerialization.jsonObject(with: Data(probe.label.utf8))) as? [String: String],
+              Set(fields.keys) == ["actualMode", "scope", "swiftUI", "uiKit", "uiKitSource"],
+              let actualMode = fields["actualMode"], DynamicTypeFixtureMode(rawValue: actualMode) != nil,
+              fields["scope"] == scope, fields["uiKitSource"] == "appSystem",
+              let swiftUI = fields["swiftUI"], Self.fontEnvironmentNames.contains(swiftUI),
+              let uiKit = fields["uiKit"], Self.applicationContentSizeNames.contains(uiKit) else {
+            // 대상 앱의 원문 label은 실패 메시지나 로그에 포함하지 않는다.
+            XCTFail("대상 앱의 글자 크기 진단 관측은 고정 schema와 enum을 사용해야 한다.")
+            throw HarnessFailure.configuration
+        }
+        if dynamicTypeFixtureScopes.insert(scope).inserted {
+            emitMeasurement("UI dynamic type fixture:", fields: [
+                "schemaVersion": 1, "requestedMode": mode.rawValue, "actualMode": actualMode,
+                "scope": scope, "swiftUI": swiftUI, "uiKit": uiKit, "uiKitSource": "appSystem",
+            ])
+        }
+        guard actualMode == mode.rawValue, uiKit == "accessibilityExtraExtraExtraLarge" else {
+            XCTFail("대상 앱에 요청한 진단 모드와 시스템 최대 글자 크기가 적용되어야 한다.")
+            throw HarnessFailure.configuration
+        }
+    }
 
     @MainActor
     private func configurationMeasurement(method: String, value: Any?, string: String?, label: String) {
@@ -849,6 +933,12 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private static let fontEnvironmentNames: Set<String> = [
         "xSmall", "small", "medium", "large", "xLarge", "xxLarge", "xxxLarge",
         "accessibility1", "accessibility2", "accessibility3", "accessibility4", "accessibility5",
+    ]
+
+    private static let applicationContentSizeNames: Set<String> = [
+        "extraSmall", "small", "medium", "large", "extraLarge", "extraExtraLarge", "extraExtraExtraLarge",
+        "accessibilityMedium", "accessibilityLarge", "accessibilityExtraLarge",
+        "accessibilityExtraExtraLarge", "accessibilityExtraExtraExtraLarge", "unspecified",
     ]
 
     /// XCTest의 predicate callback과 대기 종료 시점 사이의 관측 snapshot을 함께 보호한다.
@@ -975,12 +1065,41 @@ final class MirrorAdaptiveUITests: XCTestCase {
         let element = issue.element
         let identifier: AuditElementIdentifier = element.map { auditElementIdentifier($0.identifier) } ?? .none
         let type: AuditElementType = element.map { auditElementType($0.elementType) } ?? .none
-        // label/value/frame/debugDescription/detailedDescription과 알 수 없는 식별자는 출력하지 않는다.
+        // label/value/debugDescription/detailedDescription과 알 수 없는 식별자는 출력하지 않는다.
         emitMeasurement("UI adaptive audit issue:", fields: [
             "schemaVersion": 1, "case": diagnosticCase.rawValue,
             "auditSequence": diagnosticAuditSequence, "issueSequence": diagnosticAuditIssueSequence,
             "issueKind": kind.rawValue, "elementPresent": element != nil,
             "elementIdentifier": identifier.rawValue, "elementType": type.rawValue, "ignored": false,
+        ])
+        #if os(iOS)
+        if let mode = dynamicTypeFixtureMode, diagnosticCase == .captureValidation {
+            let knownTypes: XCUIAccessibilityAuditType = [.dynamicType, .contrast, .textClipped]
+            var types: [String] = []
+            if issue.auditType.contains(.dynamicType) { types.append("dynamicType") }
+            if issue.auditType.contains(.contrast) { types.append("contrast") }
+            if issue.auditType.contains(.textClipped) { types.append("textClipped") }
+            if !issue.auditType.subtracting(knownTypes).isEmpty || types.isEmpty { types.append("other") }
+            emitMeasurement("UI dynamic type audit:", fields: [
+                "schemaVersion": 1, "requestedMode": mode.rawValue,
+                "auditSequence": diagnosticAuditSequence, "issueSequence": diagnosticAuditIssueSequence,
+                "types": types, "ignored": false,
+            ])
+        }
+        #endif
+        // 감사 issue당 frame SDK 조회 한 번만 추가한다. 원문 AX 내용 없이 유한한 좌표만 남긴다.
+        let frame: [Double]? = element.flatMap {
+            let value = $0.frame
+            let numbers = [Double(value.minX), Double(value.minY), Double(value.width), Double(value.height)]
+            guard numbers.allSatisfy({ $0.isFinite && abs($0) <= 100_000 }),
+                  value.width >= 0, value.height >= 0 else { return nil }
+            return numbers
+        }
+        emitMeasurement("UI adaptive audit geometry:", fields: [
+            "schemaVersion": 1, "case": diagnosticCase.rawValue,
+            "auditSequence": diagnosticAuditSequence, "issueSequence": diagnosticAuditIssueSequence,
+            "elementIdentifier": identifier.rawValue, "elementType": type.rawValue,
+            "frame": frame.map { $0 as Any } ?? NSNull(),
         ])
     }
 

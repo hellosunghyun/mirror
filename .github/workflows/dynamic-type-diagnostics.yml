@@ -1,0 +1,80 @@
+name: iPad Dynamic Type 설정 원인분리 진단
+
+on:
+  push:
+    paths:
+      - '.github/workflows/dynamic-type-diagnostics.yml'
+      - 'scripts/ci-dynamic-type-diagnostics.py'
+      - 'tests/test_dynamic_type_diagnostics.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dynamic-type-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+
+jobs:
+  compare:
+    name: 같은 build의 pinned · system 단일 사례 비교 · 진단 전용
+    runs-on: xcode-27
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: 진단 소유·범위·비공개 경계 회귀
+        timeout-minutes: 1
+        run: python3 -m unittest discover -s tests -p 'test_dynamic_type_diagnostics.py' -v
+      - name: 실제 공개 simctl ui 계약 확인
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py help
+      - name: 기존 unsigned Adaptive 앱과 runner 한 번 빌드
+        id: build
+        timeout-minutes: 10
+        run: >-
+          bash scripts/ci-adaptive-ui.sh ipad system build
+          > .build/ci-dynamic-type-diagnostics/build.stdout
+          2> .build/ci-dynamic-type-diagnostics/build.stderr
+      - name: 같은 대상 Simulator의 시스템 최대 크기 확인
+        id: setup
+        timeout-minutes: 3
+        run: python3 scripts/ci-dynamic-type-diagnostics.py setup
+      - name: 고정 SwiftUI 최대 크기의 기존 한 사례
+        id: pinned
+        timeout-minutes: 8
+        run: python3 scripts/ci-dynamic-type-diagnostics.py run pinned
+      - name: pinned 실제 단일 사례와 관측값 검증
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py collect pinned
+      - name: 시스템 크기를 따르는 기존 한 사례
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        id: system
+        timeout-minutes: 8
+        run: python3 scripts/ci-dynamic-type-diagnostics.py run system
+      - name: system 실제 단일 사례와 관측값 검증
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py collect system
+      - name: 대상 Simulator의 원래 글자 크기 복구
+        if: ${{ always() && steps.build.outputs.adaptive_build_ready == 'true' }}
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py restore
+      - name: 진단 전용 고정 요약만 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: dynamic-type-diagnostic-only-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-dynamic-type-diagnostics/public/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: SDK·앱·xcresult 진단 원문 정리
+        if: always()
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py cleanup

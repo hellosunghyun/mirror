@@ -302,6 +302,49 @@ private struct MirrorSheetHeader: View {
 }
 #endif
 
+/// Mac 검사용 환경값은 실제 스크롤 콘텐츠 경계에서 읽는다. 글자 크기를 설정하지 않는다.
+@MainActor
+fileprivate struct MirrorScrollDynamicTypeProbe: ViewModifier {
+    let scope: String
+    #if DEBUG && os(macOS)
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    #endif
+
+    @ViewBuilder func body(content: Content) -> some View {
+        #if DEBUG && os(macOS)
+        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
+           ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
+            content.accessibilityElement(children: .contain)
+                .accessibilityIdentifier("ui.appliedDynamicType." + scope)
+                .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
+                .accessibilityLabel(appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경")
+        } else { content }
+        #else
+        content
+        #endif
+    }
+
+    #if DEBUG && os(macOS)
+    private var appliedTypeName: String? {
+        switch dynamicTypeSize {
+        case .xSmall: "xSmall"
+        case .small: "small"
+        case .medium: "medium"
+        case .large: "large"
+        case .xLarge: "xLarge"
+        case .xxLarge: "xxLarge"
+        case .xxxLarge: "xxxLarge"
+        case .accessibility1: "accessibility1"
+        case .accessibility2: "accessibility2"
+        case .accessibility3: "accessibility3"
+        case .accessibility4: "accessibility4"
+        case .accessibility5: "accessibility5"
+        @unknown default: nil
+        }
+    }
+    #endif
+}
+
 @MainActor
 struct MirrorCaptureView: View {
     let request: CapturePresentationRequest
@@ -385,6 +428,7 @@ struct MirrorCaptureView: View {
                 .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
+            .modifier(MirrorScrollDynamicTypeProbe(scope: "capture"))
             .background(MirrorPalette.canvas)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { captureActions }
@@ -1005,6 +1049,7 @@ struct MirrorReviewView: View {
                     .frame(maxWidth: 580, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
+                .modifier(MirrorScrollDynamicTypeProbe(scope: "review"))
                 .frame(maxHeight: .infinity)
                 reviewFooter
             }

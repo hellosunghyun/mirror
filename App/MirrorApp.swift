@@ -2,6 +2,9 @@ import MirrorDomain
 import MirrorSystem
 import AppIntents
 import SwiftUI
+#if DEBUG && os(iOS)
+import UIKit
+#endif
 
 struct MirrorAppIntentsRegistration: AppIntentsPackage {
     static var includedPackages: [any AppIntentsPackage.Type] { [MirrorAppIntentsPackage.self] }
@@ -63,7 +66,12 @@ private struct MirrorUITestingDynamicType: ViewModifier {
         #if DEBUG
         if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
            ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
-            content.modifier(MirrorAppliedDynamicType()).dynamicTypeSize(.accessibility5)
+            if MirrorDynamicTypeFixture.requested == .system {
+                content.modifier(MirrorAppliedDynamicType(fixtureMode: .system))
+            } else {
+                content.modifier(MirrorAppliedDynamicType(fixtureMode: MirrorDynamicTypeFixture.requested))
+                    .dynamicTypeSize(.accessibility5)
+            }
         } else { content }
         #else
         content
@@ -80,8 +88,18 @@ struct MirrorPresentationDynamicType: ViewModifier {
         #if DEBUG
         if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
            ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
-            content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope))
+            #if os(macOS)
+            if scope == "capture" || scope == "review" {
+                content.dynamicTypeSize(size)
+            } else {
+                content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope))
+                    .dynamicTypeSize(size)
+            }
+            #else
+            content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope,
+                                                      fixtureMode: MirrorDynamicTypeFixture.requested))
                 .dynamicTypeSize(size)
+            #endif
         } else {
             content.dynamicTypeSize(size)
         }
@@ -92,15 +110,65 @@ struct MirrorPresentationDynamicType: ViewModifier {
 }
 
 #if DEBUG
+private enum MirrorDynamicTypeFixture: String {
+    case pinned, system
+
+    static var requested: Self? {
+        #if os(iOS)
+        return ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE_FIXTURE"].flatMap(Self.init(rawValue:))
+        #else
+        return nil
+        #endif
+    }
+}
+
+@MainActor
 private struct MirrorAppliedDynamicType: ViewModifier {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var identifier = "ui.appliedDynamicType"
+    var fixtureMode: MirrorDynamicTypeFixture?
     func body(content: Content) -> some View {
         content.accessibilityElement(children: .contain)
             .accessibilityIdentifier(identifier)
             .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
-            .accessibilityLabel(appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경")
+            .accessibilityLabel(appliedLabel)
     }
+    private var appliedLabel: String {
+        #if os(iOS)
+        if let fixtureMode {
+            // 대상 앱의 시스템 값을 읽는다. SwiftUI override와 테스트 runner의 UIKit 값은 사용하지 않는다.
+            let fields = ["actualMode": fixtureMode.rawValue,
+                          "scope": identifier == "ui.appliedDynamicType" ? "root"
+                              : String(identifier.dropFirst("ui.appliedDynamicType.".count)),
+                          "swiftUI": appliedTypeName ?? "unavailable", "uiKit": applicationContentSizeName,
+                          "uiKitSource": "appSystem"]
+            if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) {
+                return String(decoding: data, as: UTF8.self)
+            }
+        }
+        #endif
+        return appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경"
+    }
+    #if os(iOS)
+    private var applicationContentSizeName: String {
+        switch UIApplication.shared.preferredContentSizeCategory {
+        case .extraSmall: "extraSmall"
+        case .small: "small"
+        case .medium: "medium"
+        case .large: "large"
+        case .extraLarge: "extraLarge"
+        case .extraExtraLarge: "extraExtraLarge"
+        case .extraExtraExtraLarge: "extraExtraExtraLarge"
+        case .accessibilityMedium: "accessibilityMedium"
+        case .accessibilityLarge: "accessibilityLarge"
+        case .accessibilityExtraLarge: "accessibilityExtraLarge"
+        case .accessibilityExtraExtraLarge: "accessibilityExtraExtraLarge"
+        case .accessibilityExtraExtraExtraLarge: "accessibilityExtraExtraExtraLarge"
+        case .unspecified: "unspecified"
+        default: "unavailable"
+        }
+    }
+    #endif
     private var appliedTypeName: String? {
         switch dynamicTypeSize {
         case .xSmall: "xSmall"

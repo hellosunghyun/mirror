@@ -315,6 +315,9 @@ for target in ('MirrorIOS', 'MirrorMac'):
     variables = ET.SubElement(test, 'EnvironmentVariables')
     ET.SubElement(variables, 'EnvironmentVariable', key='MIRROR_UI_APPEARANCE',
                   value='$(MIRROR_UI_APPEARANCE)', isEnabled='YES')
+    if target == 'MirrorIOS':
+        ET.SubElement(variables, 'EnvironmentVariable', key='MIRROR_UI_DYNAMIC_TYPE_FIXTURE',
+                      value='$(MIRROR_UI_DYNAMIC_TYPE_FIXTURE)', isEnabled='YES')
     ET.indent(scheme, space='   ')
     ET.ElementTree(scheme).write(schemes / f'{target}AdaptiveUI.xcscheme', encoding='UTF-8', xml_declaration=True)
 for target in ('MirrorIOS', 'MirrorMac'):
