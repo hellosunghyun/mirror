@@ -29,6 +29,7 @@ MAX_LOG = 64 * 1024 * 1024
 PROGRESS_MARKER = 'Batch UI progress: '
 DISCLOSURE_MARKER = 'Batch UI disclosure failure diagnostic: '
 MOBILE_MEASUREMENT_MARKER = 'Batch UI mobile measurement diagnostic: '
+PLANNER_REACHABILITY_MARKER = 'Batch UI planner reachability diagnostic: '
 
 
 class BatchError(Exception):
@@ -642,6 +643,134 @@ def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
     return reports
 
 
+def planner_reachability_observation_valid(value):
+    """캐시 필드의 범위와 단축 평가 순서만 검증하며 기하를 재계산하지 않는다."""
+    def frame_valid(frame):
+        return (frame is None or frame == 'invalid' or
+                (type(frame) is list and len(frame) == 4
+                 and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
+                         for number in frame) and frame[2] >= 0 and frame[3] >= 0))
+
+    if (type(value['iteration']) is not int or not 1 <= value['iteration'] <= 12
+            or type(value['exists']) is not bool
+            or not frame_valid(value['targetFrame']) or not frame_valid(value['ownerFrame'])
+            or (value['windowCount'] is not None
+                and (type(value['windowCount']) is not int or not 0 <= value['windowCount'] <= 10_000))
+            or any(item is not None and type(item) is not bool
+                   for item in (value['hittable'], value['enabled'], value['insideOwner']))
+            or type(value['deadlineExceededAtLastGuard']) is not bool or type(value['swipePerformed']) is not bool):
+        return False
+    if value['deadlineExceededAtLastGuard']:
+        if value['swipePerformed']:
+            return False
+    elif value['iteration'] != 12 or not value['swipePerformed']:
+        return False
+    if (value['insideOwner'] is not None or value['swipePerformed']) and value['ownerFrame'] is None:
+        return False
+    if not value['exists']:
+        return all(value[key] is None for key in
+                   ('role', 'targetFrame', 'windowCount', 'hittable', 'enabled', 'insideOwner'))
+    if value['role'] not in ('staticText', 'button', 'other') or value['targetFrame'] is None:
+        return False
+    if type(value['targetFrame']) is list:
+        target_has_area = value['targetFrame'][2] > 0 and value['targetFrame'][3] > 0
+        if target_has_area != (value['windowCount'] is not None):
+            return False
+    if value['windowCount'] != 1:
+        return all(value[key] is None for key in ('hittable', 'enabled', 'insideOwner'))
+    if type(value['hittable']) is not bool:
+        return False
+    if not value['hittable']:
+        return value['enabled'] is None and value['insideOwner'] is None
+    if type(value['enabled']) is not bool:
+        return False
+    return value['insideOwner'] is False if value['enabled'] else value['insideOwner'] is None
+
+
+def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
+    """iPad Two 사례의 마지막 캐시 관측을 같은 실제 planTask 실패에만 연결한다."""
+    if (platform != 'ipad' or bundle != 'MirrorIOSBatchUITests' or not isinstance(log, str)
+            or len(log.encode('utf-8')) > MAX_LOG or PLANNER_REACHABILITY_MARKER.rstrip() not in log
+            or partial_progress(log, bundle).get('status') != 'partial'):
+        return []
+    try:
+        source = SUPPORT.read_regular(source_root / SOURCE, SUPPORT.MAX_JSON).decode('utf-8').splitlines()
+    except (OSError, UnicodeError, SUPPORT.AdaptiveError):
+        return []
+    declaration = '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {'
+    if source.count(declaration) != 1:
+        return []
+    start = source.index(declaration)
+    end = next((index for index in range(start + 1, len(source))
+                if source[index].startswith('    private func ')), len(source))
+    call = ('let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\\(task.uuid)"), '
+            'surface: .planner, target: .planTask, in: app)')
+    matching = [index + 1 for index, line in enumerate(source) if line.strip() == call]
+    if (len(matching) != 1 or not start < matching[0] - 1 < end
+            or 'progress(.pickerStarted)' not in [line.strip() for line in source[start:matching[0] - 1]]):
+        return []
+    caller_line = matching[0]
+    fields = {'schemaVersion', 'method', 'phase', 'progressSequence', 'callerLine', 'target', 'observationTiming',
+              'iteration', 'exists', 'role', 'targetFrame', 'ownerFrame', 'windowCount', 'hittable', 'enabled',
+              'insideOwner', 'deadlineExceededAtLastGuard', 'swipePerformed'}
+    payload = 'failed - batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=planTask'
+    reports, active, progress, observation, location = [], None, None, None, None
+    matching_failures = 0
+    for line in log.splitlines():
+        failure = SUPPORT.UI_FAILURE_SOURCE.fullmatch(line)
+        owned_failure, found = False, None
+        if failure is not None:
+            case = SUPPORT.UI_FAILURE_CASE.fullmatch(failure[4])
+            if (case is not None and case[1] == bundle + '.' + CLASS and case[2] == CASES[0]
+                    and case[3] == payload and int(failure[2]) == caller_line):
+                found = SUPPORT.source_location(failure[1], int(failure[2]),
+                                                int(failure[3]) if failure[3] else 1, source_root)
+                owned_failure = found is not None and found['file'] == SOURCE
+                if owned_failure:
+                    matching_failures += 1
+                    if matching_failures > 1:
+                        return []
+        if PLANNER_REACHABILITY_MARKER.rstrip() in line:
+            if (active != CASES[0] or progress is None or progress['phase'] != 'pickerStarted'
+                    or observation is not None or not line.startswith(PLANNER_REACHABILITY_MARKER)
+                    or len(line.encode('utf-8')) + 1 > 1024):
+                return []
+            try:
+                value = SUPPORT.strict_json(line[len(PLANNER_REACHABILITY_MARKER):])
+            except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
+                return []
+            if (not isinstance(value, dict) or set(value) != fields
+                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
+                    or value['method'] != active or value['phase'] != 'pickerStarted'
+                    or type(value['progressSequence']) is not int or not 1 <= value['progressSequence'] <= 96
+                    or value['progressSequence'] != progress['sequence']
+                    or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= 100_000
+                    or value['callerLine'] != caller_line or value['target'] != 'planTask'
+                    or value['observationTiming'] != 'cachedLastIteration'
+                    or not planner_reachability_observation_valid(value)):
+                return []
+            observation = value
+        elif line.startswith(PROGRESS_MARKER):
+            if observation is not None:
+                return []
+            progress = SUPPORT.strict_json(line[len(PROGRESS_MARKER):])
+        elif event := SUPPORT.UI_CASE_EVENT.match(line):
+            if event[3] == 'started':
+                active, progress, observation, location = event[2], None, None, None
+            else:
+                if observation is not None:
+                    if event[3] != 'failed' or location is None:
+                        return []
+                    reports.append({'scope': 'partialFailureOnly', **observation, 'sourceFile': SOURCE,
+                                    **location, 'terminal': 'failed'})
+                active, progress, observation, location = None, None, None, None
+        elif observation is not None and failure is not None:
+            if not owned_failure or location is not None:
+                return []
+            location = {'line': found['line'], **({'column': found['column']} if failure[3] else {})}
+    return reports if observation is None and matching_failures == 1 else []
+
+
 def diagnostics(directory, expected, phase, partial_failure=False):
     require(phase in ('build', 'test'), 'invalidArguments')
     require(not partial_failure or phase == 'test', 'invalidArguments')
@@ -676,6 +805,12 @@ def diagnostics(directory, expected, phase, partial_failure=False):
             validate_source(SUPPORT.read_regular(ROOT / SOURCE, SUPPORT.MAX_JSON).decode('utf-8'))
             print('::notice::Batch UI partial progress diagnostics: ' + json.dumps(
                 {**expected, 'scope': 'partialFailureOnly', **partial_progress(log, context['bundle'])}, sort_keys=True))
+            if expected['platform'] == 'ipad':
+                planner_reports = planner_reachability_diagnostics(log, context['bundle'], expected['platform'])
+                if planner_reports:
+                    print('::notice::Batch UI planner reachability diagnostics: ' + json.dumps(
+                        {**expected, 'scope': 'partialFailureOnly', 'locations': planner_reports,
+                         'locationCount': len(planner_reports)}, sort_keys=True))
             if expected['platform'] == 'macos':
                 disclosure_reports = disclosure_failure_diagnostics(log, context['bundle'])
                 if disclosure_reports:

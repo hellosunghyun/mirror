@@ -1158,6 +1158,228 @@ class BatchResultGateTests(unittest.TestCase):
                     self.assertFalse((directory / 'safe-outcome.json').exists())
                     self.assertNotIn(str(ROOT), '\n'.join(messages))
 
+    def planner_source_fixture(self, source_root):
+        source = source_root / helper.SOURCE
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('\n'.join((
+            '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {',
+            '        progress(.pickerStarted)',
+            '        for task in selected {',
+            '            let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\\(task.uuid)"), surface: .planner, target: .planTask, in: app)',
+            '        }', '    }',
+        )))
+        return source
+
+    def planner_log_fixture(self, source_root, case=None, column=1, **changes):
+        case = helper.CASES[0] if case is None else case
+        sequence = 19 if case == helper.CASES[0] else 70
+        value = {'schemaVersion': 1, 'method': case, 'phase': 'pickerStarted', 'progressSequence': sequence,
+                 'callerLine': 4, 'target': 'planTask', 'observationTiming': 'cachedLastIteration',
+                 'iteration': 1, 'exists': True, 'role': 'staticText', 'targetFrame': [0, 90, 100, 20],
+                 'ownerFrame': [0, 0, 100, 100], 'windowCount': 1, 'hittable': True, 'enabled': True,
+                 'insideOwner': False, 'deadlineExceededAtLastGuard': True, 'swipePerformed': False, **changes}
+        assertion = self.query_failure_fixture(
+            'failed - batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=planTask',
+            case=case, line=value['callerLine'], column=column, source_root=source_root)
+        return ([event(case, 'started')] + progress_lines(case, sequence)
+                + [helper.PLANNER_REACHABILITY_MARKER + json.dumps(value), assertion, event(case, 'failed')])
+
+    def test_planner_reachability_keeps_cached_short_circuit_observations_and_zero_frames(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.planner_source_fixture(source_root)
+            unread = {'role': None, 'targetFrame': None, 'windowCount': None,
+                      'hittable': None, 'enabled': None, 'insideOwner': None}
+            unchecked = {'windowCount': None, 'hittable': None, 'enabled': None, 'insideOwner': None}
+            changes = ({}, {'exists': False, **unread, 'ownerFrame': None},
+                       {'targetFrame': [0, 0, 0, 0], **unchecked, 'ownerFrame': None},
+                       {'targetFrame': [0, 0, 0, 20], **unchecked},
+                       {'targetFrame': 'invalid', **unchecked},
+                       {'windowCount': 0, 'hittable': None, 'enabled': None, 'insideOwner': None},
+                       {'windowCount': 10_000, 'hittable': None, 'enabled': None, 'insideOwner': None},
+                       {'hittable': False, 'enabled': None, 'insideOwner': None},
+                       {'enabled': False, 'insideOwner': None}, {'role': 'button', 'targetFrame': 'invalid'},
+                       {'role': 'other', 'targetFrame': [-100_000, 100_000, 100_000, 0],
+                        **unchecked, 'ownerFrame': 'invalid'},
+                       {'iteration': 12, 'deadlineExceededAtLastGuard': False, 'swipePerformed': True})
+            for change in changes:
+                with self.subTest(change=change):
+                    lines = self.planner_log_fixture(source_root, **change)
+                    reports = helper.planner_reachability_diagnostics('\n'.join(lines), BUNDLE, 'ipad', source_root)
+                    fields = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_MARKER):])
+                    self.assertEqual(reports, [{'scope': 'partialFailureOnly', **fields,
+                        'sourceFile': helper.SOURCE, 'line': 4, 'column': 1, 'terminal': 'failed'}])
+                    self.assertNotIn(str(source_root), json.dumps(reports))
+                    with self.assertRaises(helper.BatchError):
+                        helper.validate_outcome({**EXPECTED, **reports[0]}, EXPECTED)
+            lines = self.planner_log_fixture(source_root, column=None, targetFrame=[0, 0, 0, 0], **unchecked)
+            report = helper.planner_reachability_diagnostics('\n'.join(lines), BUNDLE, 'ipad', source_root)[0]
+            self.assertNotIn('column', report)
+            self.assertEqual(report['targetFrame'], [0, 0, 0, 0])
+            with self.assertRaises(helper.BatchError):
+                helper.validate_log('\n'.join(lines), BUNDLE)
+            for sequence, (phase, _) in enumerate(helper.progress_steps(helper.CASES[0]), 1):
+                if phase == 'pickerStarted':
+                    tail = self.planner_log_fixture(source_root, progressSequence=sequence)[-3:]
+                    current = [event(helper.CASES[0], 'started')] + progress_lines(helper.CASES[0], sequence) + tail
+                    self.assertEqual(len(helper.planner_reachability_diagnostics(
+                        '\n'.join(current), BUNDLE, 'ipad', source_root)), 1)
+
+    def test_planner_reachability_rejects_short_circuit_contradictions_and_unsafe_fields(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.planner_source_fixture(source_root)
+            changes = [{'iteration': item} for item in (True, 0, 13, '1')]
+            changes += [{'exists': item} for item in (1, None, False)]
+            changes += [{'role': item} for item in (None, [], 'SYNTHETIC_PRIVATE_ROLE')]
+            changes += [{'windowCount': item} for item in (True, -1, 10001, 1.0, None, 0, 2)]
+            changes += [{'hittable': item} for item in (1, None, False)]
+            changes += [{'enabled': item} for item in (1, None, False)]
+            changes += [{'insideOwner': item} for item in (1, None, True)]
+            changes += [{'deadlineExceededAtLastGuard': item} for item in (1, None, False)]
+            changes += [{'swipePerformed': item} for item in (1, None, True)]
+            changes += [{'iteration': 11, 'deadlineExceededAtLastGuard': False, 'swipePerformed': True},
+                        {'targetFrame': [0, 0, 0, 20]}, {'targetFrame': [0, 0, 100, 0]},
+                        {'windowCount': None, 'hittable': None, 'enabled': None, 'insideOwner': None},
+                        {'ownerFrame': None},
+                        {'exists': False, 'role': None, 'targetFrame': None, 'windowCount': None,
+                         'hittable': None, 'enabled': None, 'insideOwner': None, 'ownerFrame': None,
+                         'iteration': 12, 'deadlineExceededAtLastGuard': False, 'swipePerformed': True},
+                        {'schemaVersion': True}, {'schemaVersion': 2}, {'method': helper.CASES[1]},
+                        {'phase': 'pickerVerified'}, {'progressSequence': 18}, {'progressSequence': True},
+                        {'callerLine': True}, {'callerLine': 100001}, {'target': 'other'},
+                        {'observationTiming': 'freshQuery'}, {'extra': '/private/synthetic/title'}]
+            invalid_frames = ('SYNTHETIC_PRIVATE_FRAME', [], [0, 0, 0], [0, 0, 0, 0, 0], [True, 0, 0, 0],
+                              [100001, 0, 0, 0], [0, -100001, 0, 0], [0, 0, -1, 0], [0, 0, 0, -1],
+                              [float('nan'), 0, 0, 0], [0, float('inf'), 0, 0], [10 ** 400, 0, 0, 0])
+            changes += [{key: frame} for key in ('targetFrame', 'ownerFrame') for frame in invalid_frames]
+            changes += [{'targetFrame': None}]
+            lines = self.planner_log_fixture(source_root)
+            fields = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_MARKER):])
+            for change in changes:
+                with self.subTest(change=change):
+                    marker = helper.PLANNER_REACHABILITY_MARKER + json.dumps({**fields, **change})
+                    self.assertEqual(helper.planner_reachability_diagnostics(
+                        '\n'.join(lines[:-3] + [marker] + lines[-2:]), BUNDLE, 'ipad', source_root), [])
+            absent = {**fields, 'exists': False, 'role': None, 'targetFrame': None, 'windowCount': None,
+                      'hittable': None, 'enabled': None, 'insideOwner': None}
+            for key in ('role', 'targetFrame', 'windowCount', 'hittable', 'enabled', 'insideOwner'):
+                marker = helper.PLANNER_REACHABILITY_MARKER + json.dumps({**absent, key: fields[key]})
+                self.assertEqual(helper.planner_reachability_diagnostics(
+                    '\n'.join(lines[:-3] + [marker] + lines[-2:]), BUNDLE, 'ipad', source_root), [])
+
+    def test_planner_reachability_requires_owned_source_case_sequence_and_exact_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            source = self.planner_source_fixture(source_root)
+            lines = self.planner_log_fixture(source_root)
+            value = '\n'.join(lines)
+            for platform in ('iphone', 'macos', None, 'SYNTHETIC_PRIVATE_PLATFORM'):
+                self.assertEqual(helper.planner_reachability_diagnostics(value, BUNDLE, platform, source_root), [])
+            for bundle in ('MirrorMacBatchUITests', 'OtherUITests'):
+                self.assertEqual(helper.planner_reachability_diagnostics(value.replace(BUNDLE, bundle), bundle, 'ipad', source_root), [])
+            other = self.planner_log_fixture(source_root, helper.CASES[1])
+            self.assertEqual(helper.planner_reachability_diagnostics('\n'.join(other), BUNDLE, 'ipad', source_root), [])
+            before, marker, assertion, terminal = lines[:-3], *lines[-3:]
+            invalid = ([marker, assertion, terminal], before[:-1] + [marker, assertion, terminal],
+                       before + [assertion, marker, terminal], before + [marker, marker, assertion, terminal],
+                       before + [marker, assertion, assertion, terminal], before + [assertion, marker, assertion, terminal],
+                       before + [marker, assertion, terminal, assertion], before + [marker, assertion],
+                       before + [marker, terminal], before + [marker, assertion, terminal.replace('failed.', 'passed.')],
+                       before + [marker, assertion, terminal.replace('failed.', 'skipped.')],
+                       before + [marker, progress_lines(helper.CASES[0], 20)[-1], assertion, terminal],
+                       before + [marker, assertion, progress_lines(helper.CASES[0], 20)[-1], terminal],
+                       before + [marker, assertion, terminal.replace(helper.CASES[0], helper.CASES[1])],
+                       before + [marker, assertion, terminal, marker])
+            for wrong in invalid:
+                self.assertEqual(helper.planner_reachability_diagnostics('\n'.join(wrong), BUNDLE, 'ipad', source_root), [])
+            for wrong in (assertion.replace('failed - ', 'XCTAssertEqual failed - '),
+                          assertion.replace('target=planTask', 'target=planToday'), assertion + ' SYNTHETIC_PRIVATE_VALUE',
+                          assertion.replace(helper.SOURCE, 'Tests/Other.swift'), assertion.replace(':4:1:', ':3:1:'),
+                          assertion.replace(':4:1:', ':4:0:'), assertion.replace(helper.CASES[0], helper.CASES[1]),
+                          assertion.replace(BUNDLE, 'OtherUITests')):
+                self.assertEqual(helper.planner_reachability_diagnostics(
+                    '\n'.join(before + [marker, wrong, terminal]), BUNDLE, 'ipad', source_root), [])
+            original = source.read_text()
+            for wrong in (original.replace('verifyPicker(', 'otherPicker('), original + '\n' + original,
+                          original.replace('progress(.pickerStarted)', 'progress(.pickerVerified)'),
+                          original.replace('app.staticTexts', 'app.buttons'), original.replace('.planTask', '.planToday'),
+                          original.replace('surface: .planner', 'surface: .library'),
+                          original.replace('for task in selected {', '}\n    private func otherPicker() {')):
+                source.write_text(wrong)
+                self.assertEqual(helper.planner_reachability_diagnostics(value, BUNDLE, 'ipad', source_root), [])
+            source.write_text(original)
+            with mock.patch.object(helper.SUPPORT, 'read_regular', side_effect=OSError('SYNTHETIC_PRIVATE_VALUE')):
+                self.assertEqual(helper.planner_reachability_diagnostics(value, BUNDLE, 'ipad', source_root), [])
+            source.unlink()
+            source.symlink_to(ROOT / helper.SOURCE)
+            self.assertEqual(helper.planner_reachability_diagnostics(value, BUNDLE, 'ipad', source_root), [])
+
+    def test_planner_reachability_rejects_malformed_or_oversized_private_markers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.planner_source_fixture(source_root)
+            lines = self.planner_log_fixture(source_root)
+            marker = lines[-3]
+            fields = json.loads(marker[len(helper.PLANNER_REACHABILITY_MARKER):])
+            malformed = (marker[:-1], marker.replace('"exists": true', '"exists": true, "exists": true'),
+                         helper.PLANNER_REACHABILITY_MARKER + json.dumps({key: item for key, item in fields.items() if key != 'role'}),
+                         helper.PLANNER_REACHABILITY_MARKER + '[]', 'SDK error: ' + marker, 'title="' + marker + '"',
+                         marker.ljust(1024), marker + '한' * 350, marker + ' SYNTHETIC_PRIVATE_VALUE')
+            for wrong in malformed:
+                self.assertEqual(helper.planner_reachability_diagnostics(
+                    '\n'.join(lines[:-3] + [wrong] + lines[-2:]), BUNDLE, 'ipad', source_root), [])
+            self.assertEqual(len(helper.planner_reachability_diagnostics(
+                '\n'.join(lines[:-3] + [marker.ljust(1023)] + lines[-2:]), BUNDLE, 'ipad', source_root)), 1)
+            for wrong in ('', None):
+                self.assertEqual(helper.planner_reachability_diagnostics(wrong, BUNDLE, 'ipad', source_root), [])
+            with mock.patch.object(helper, 'MAX_LOG', 8):
+                self.assertEqual(helper.planner_reachability_diagnostics('\n'.join(lines), BUNDLE, 'ipad', source_root), [])
+
+    def test_planner_reachability_notice_is_optional_ipad_only_and_does_not_publish_acceptance(self):
+        source = (ROOT / helper.SOURCE).read_text().splitlines()
+        expected_call = ('let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\\(task.uuid)"), '
+                         'surface: .planner, target: .planTask, in: app)')
+        caller_line = next(index for index, line in enumerate(source, 1) if line.strip() == expected_call)
+        value = '\n'.join(self.planner_log_fixture(ROOT, callerLine=caller_line))
+        reports = helper.planner_reachability_diagnostics(value, BUNDLE, 'ipad')
+        self.assertEqual(len(reports), 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            (directory / 'test.log').write_text(value)
+            output, summary = directory / 'github-output', directory / 'github-summary'
+            output.write_text('previous=value\n')
+            summary.write_text('previous summary\n')
+            for platform, enabled in (('ipad', True), ('ipad', False), ('iphone', True), ('macos', True)):
+                expected = {**EXPECTED, 'platform': platform}
+                with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), \
+                        mock.patch.dict(helper.os.environ, {'GITHUB_OUTPUT': str(output), 'GITHUB_STEP_SUMMARY': str(summary)}), \
+                        mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                    helper.diagnostics(directory, expected, 'test', partial_failure=enabled)
+                messages = [call.args[0] for call in printed.call_args_list]
+                prefix = '::notice::Batch UI planner reachability diagnostics: '
+                notices = [message for message in messages if message.startswith(prefix)]
+                self.assertEqual(len(notices), int(platform == 'ipad' and enabled))
+                if notices:
+                    self.assertEqual(json.loads(notices[0][len(prefix):]),
+                                     {**expected, 'scope': 'partialFailureOnly', 'locations': reports, 'locationCount': 1})
+                self.assertEqual(messages[0], '::notice::Batch UI source diagnostics: ' + json.dumps(
+                    {**expected, 'phase': 'test', 'scope': 'stdoutOnly', 'locations': helper.failure_locations(value, BUNDLE)}, sort_keys=True))
+                self.assertTrue(any(message.startswith('::notice::Batch UI reachable failure diagnostics: ') for message in messages))
+                write.assert_not_called()
+                self.assertEqual(output.read_text(), 'previous=value\n')
+                self.assertEqual(summary.read_text(), 'previous summary\n')
+                self.assertFalse((directory / 'safe-outcome.json').exists())
+                self.assertNotIn(str(ROOT), '\n'.join(messages))
+            invalid = value.replace('"role": "staticText"', '"role": "SYNTHETIC_PRIVATE_ROLE"')
+            (directory / 'test.log').write_text(invalid)
+            with mock.patch.object(helper, 'context_for', return_value={'bundle': BUNDLE}), mock.patch('builtins.print') as printed:
+                helper.diagnostics(directory, {**EXPECTED, 'platform': 'ipad'}, 'test', partial_failure=True)
+            messages = [call.args[0] for call in printed.call_args_list]
+            self.assertFalse(any(message.startswith(prefix) for message in messages))
+            self.assertTrue(any(message.startswith('::notice::Batch UI reachable failure diagnostics: ') for message in messages))
+            self.assertNotIn('SYNTHETIC_PRIVATE_ROLE', '\n'.join(messages))
+
     def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             source_root = Path(temporary).resolve()
