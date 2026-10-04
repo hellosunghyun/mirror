@@ -1202,6 +1202,8 @@ final class AppModel {
             preferences.deadlineAlarmDates = [:]
             preferences.reviewNotifications = false; preferences.deadlineNotifications = false
             preferences.spotlightEnabled = false; preferences.selectedCalendars = []; preferences.calendarEnabled = false
+            // 후처리나 재개설이 실패해도 재시작 때 이전 공간의 외부 노출 동의를 되살리지 않는다.
+            savePreferences()
             if let oldServices { await reportCleanup(await oldServices.eraseLocalSurfaceData()) }
             if preferenceCleanupFailed {
                 cleanupProblem = "원본은 지웠지만 이 공간의 미완료 알림 설정 정리를 확인하지 못했어요. 새 공간에는 적용하지 않아요."
