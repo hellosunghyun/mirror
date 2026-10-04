@@ -648,8 +648,20 @@ final class MirrorBatchUITests: XCTestCase {
             let frame = owner.frame
             guard hasArea(frame), hasArea(frame.intersection(windowFrame)) else { return nil }
             let anchor: ScrollTarget
-            if let observedTarget { anchor = observedTarget }
-            else {
+            if let observedTarget {
+                if surface == .library, target == .taskRow, !hasArea(observedTarget.frame) {
+                    // 행의 소유 관계는 유지하고, 아직 없는 기하만 같은 목록의 검색 필드로 확인한다.
+                    let targetPredicate = NSPredicate(format: "identifier == %@", observedTarget.identifier)
+                    guard !observedTarget.identifier.isEmpty,
+                          owner.descendants(matching: observedTarget.type).matching(targetPredicate).count == 1,
+                          window.descendants(matching: observedTarget.type).matching(targetPredicate).count == 1 else { return nil }
+                    let searches = owner.textFields.matching(identifier: "library.search")
+                    guard searches.count == 1 else { return nil }
+                    let search = searches.firstMatch
+                    guard search.exists, search.elementType == .textField else { return nil }
+                    anchor = ScrollTarget(identifier: "library.search", type: .textField, frame: search.frame)
+                } else { anchor = observedTarget }
+            } else {
                 // 아직 생성되지 않은 lazy 대상을 위해 이 실제 surface의 기존 작업/선택 안내를 기준으로 삼는다.
                 let element = owner.descendants(matching: .any).matching(predicate).firstMatch
                 guard element.exists else { return nil }
