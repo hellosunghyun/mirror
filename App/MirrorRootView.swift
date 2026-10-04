@@ -260,7 +260,10 @@ struct MirrorRootView: View {
                 .toolbar {
                     commonToolbar
                     if offersCalendarToggle {
-                        ToolbarItem(placement: commonToolbarPlacement) { adjacentCalendarToggle }
+                        ToolbarItem(placement: commonToolbarPlacement) {
+                            HStack { adjacentCalendarToggle }
+                                .buttonStyle(.plain)
+                        }
                     }
                 }
         }
@@ -269,6 +272,8 @@ struct MirrorRootView: View {
     private var adjacentCalendarToggle: some View {
         Button { adjacentCalendarVisible.toggle() } label: {
             Label(adjacentCalendarVisible ? "보조 일정 숨기기" : "보조 일정 표시", systemImage: "sidebar.right")
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .accessibilityLabel(adjacentCalendarVisible ? "보조 일정 숨기기" : "보조 일정 표시")
         .accessibilityValue(adjacentCalendarVisible ? "표시됨" : "숨겨짐")

@@ -8,6 +8,8 @@
 
 공개된 빌드 80의 IPA·공증 DMG는 이전 소스 `326fc23`의 산출물이며 이번 소스의 검증 결과로 대신하지 않는다. 최신 실패 진단 산출물 다운로드는 현재 환경에서 GitHub 저장소 호스트 `productionresultssa4.blob.core.windows.net`에 대한 Forbidden 응답으로 차단됐다. 환경 설정 초안에 필요한 호스트를 추가하되 실제 설정 적용과 다운로드 성공은 별도로 확인한다.
 
+환경 연결 복구 뒤 Mac·iPhone·iPad의 서명 자료가 없는 UI 검사 산출물을 내려받아 원격 ZIP SHA-256과 일치함을 확인했다. iPad의 실제 보조 일정 버튼은 label=`보조 일정 표시`인데 value가 비어 있고 높이 36pt였다. 기존 상태값·표시/숨김 검사와 조작은 유지하면서 다른 toolbar 버튼과 같은 SwiftUI 콘텐츠 경로·plain 스타일·44pt label을 사용한다. iPhone의 `계속 편집` 실제 탭 뒤 확인창이 남는 실패에는 취소 action에서 presentation 상태를 명시적으로 닫고 기존 제목·메모·링크 초안을 유지한다. Mac의 일부 실패는 `main thread busy for 30.0s`로 확인됐지만 실제 정체 원인과 수정 효과는 아직 미확정이다. 기존 전체 UI 검사와 필수 배포 게이트로 새 소스를 검증한다.
+
 사용자가 제공한 Ad Hoc 프로파일 적용과 각 push의 GitHub Release 게시를 승인했다. [배포 workflow](../.github/workflows/adhoc-release.yml)는 모든 push와 수동 실행을 처리한다. 각 실행의 검증을 보존하며 새 push로 이전 배포를 취소하지 않는다.
 
 macOS용 Developer ID 서명·공증 DMG도 같은 릴리스에 추가한다. 별도 Secret과 실제 검증 단계는 [macOS 배포 안내](MACOS_RELEASE.md)를 따른다.

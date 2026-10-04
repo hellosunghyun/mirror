@@ -1696,6 +1696,7 @@ struct MirrorTaskDetail: View {
                 } else { finishEditing(); discardRequestedID = nil; model.selectedTaskID = nil }
             }.accessibilityIdentifier("detail.discardEdit")
             Button("계속 편집", role: .cancel) {
+                showDiscardConfirmation = false
                 if selectionRequested == discardSelectionRequest { selectionRequested = nil }
                 discardRequestedID = nil; discardSelectionRequest = nil
             }
