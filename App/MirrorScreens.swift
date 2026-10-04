@@ -528,7 +528,7 @@ struct MirrorCaptureView: View {
                     .accessibilityLabel(problem).accessibilityIdentifier("state.error")
             }
             if showSavedFeedback, model.problem == nil, !model.projectionPending, !model.isSaving {
-                Text(savedFeedback).font(.callout).foregroundStyle(.secondary)
+                Text(savedFeedback).font(.callout).foregroundStyle(MirrorPalette.supportingText)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("capture.feedback")
@@ -1288,7 +1288,7 @@ struct MirrorReviewView: View {
         return layout {
             if let session = model.review {
                 Text("이번에 정한 \(session.decidedToday + session.decidedElsewhere)개")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(MirrorPalette.supportingText)
                     .accessibilityIdentifier("review.progress")
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
