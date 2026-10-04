@@ -148,6 +148,70 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         columns = '\n'.join('    ' + '\t'.join(values[index:index + 3]) for index in range(0, len(values), 3))
         self.assertTrue(helper.supports_ui(public_help(columns)))
 
+    def test_public_standard_and_extended_declarations_require_the_complete_ordered_block(self):
+        # 공개 보존본: keith/zsh-xcode-completions@bef240f25847c3429c69593a5e6c36e2023b8e87
+        # specs/simctl.txt:637–639. 현재 runner 원문과 동일하다는 주장 없이 고정 문법만 합성한다.
+        declarations = (
+            'Standard sizes: extra-small, small, medium, large, extra-large, extra-extra-large, extra-extra-extra-large.',
+            'Extended range sizes: accessibility-medium, accessibility-large, accessibility-extra-large, '
+            'accessibility-extra-extra-large, accessibility-extra-extra-extra-large.',
+            'Other values: unknown, unsupported.',
+        )
+        for indent in ('\t     ', '             '):
+            with self.subTest(indent=repr(indent)):
+                text = public_help('        Description before the declarations.\n'
+                                   + '\n'.join(indent + line for line in declarations))
+                metadata = helper.help_metadata(text)
+                self.assertTrue(metadata['supported'])
+                self.assertEqual(metadata['knownCategories'], list(helper.CATEGORIES))
+                self.assertEqual(metadata['categoryFormat'], 'standardExtendedDeclarations')
+                self.assertTrue(metadata['categoryListComplete'])
+                self.assertEqual([row['indentColumns'] for row in metadata['categoryRows']], [13, 13])
+                self.assertEqual([row['unknownWordCount'] for row in metadata['categoryRows']], [2, 3])
+                self.assertEqual([row['paragraphIndex'] for row in metadata['categoryRows']], [2, 2])
+                report, _ = helper.help_contract('', text)
+                self.assertEqual(report['contractFrom'], 'stderr')
+                self.assertNotIn('unknown', metadata['knownCategories'])
+                self.assertNotIn('unsupported', metadata['knownCategories'])
+
+        standard, extended, other = declarations
+        block = '\n'.join('    ' + line for line in declarations)
+        invalid_blocks = (
+            '\n'.join('    ' + line for line in (extended, standard, other)),
+            '\n'.join('    ' + line for line in (standard, standard, extended, other)),
+            '\n'.join('    ' + line for line in (standard, other)),
+            '\n'.join('    ' + line for line in (standard, extended)),
+            block.replace('extra-small, small', 'small, extra-small', 1),
+            block.replace('extra-small, small', 'extra-small, extra-small', 1),
+            block.replace('medium, large,', 'medium,', 1),
+            block.replace('accessibility-medium,', 'extra-small,', 1),
+            block.replace('accessibility-medium,', PRIVATE + ',', 1),
+            block.replace('Standard sizes:', 'Standard size:'),
+            block.replace('extra-extra-extra-large.\n', 'extra-extra-extra-large\n', 1),
+            block.replace('extra-extra-extra-large.\n', 'extra-extra-extra-large..\n', 1),
+            block.replace('Other values: unknown, unsupported.', 'Other values: ' + PRIVATE + '.'),
+            block + '\n    ' + PRIVATE,
+            block.replace('\n    Extended', '\n    ' + PRIVATE + '\n    Extended'),
+            block.replace('\n    Extended', '\n\n    Extended'),
+            block.replace('\n    Extended', '\n     Extended'),
+            block.replace('\n    Extended', '\n  appearance\n    Extended'),
+            block.replace('\n    Extended', '\n  content_size\n    Extended'),
+            block + '\n\n' + block,
+            block + '\n\n    ' + ', '.join(helper.CATEGORIES),
+            '    ' + standard + '\n\n    ' + ', '.join(helper.CATEGORIES),
+        )
+        for listing in invalid_blocks:
+            with self.subTest(listing=listing):
+                text = public_help(listing)
+                self.assertFalse(helper.supports_ui(text))
+                self.assertNotIn(PRIVATE, json.dumps(helper.help_metadata(text)))
+        outside = public_help(block).replace('content_size', 'appearance') + '\n  content_size\n    No values'
+        self.assertFalse(helper.supports_ui(outside))
+        report, digest = helper.help_contract(public_help('    ' + standard),
+                                             public_help('    ' + extended + '\n    ' + other))
+        self.assertEqual(report['contractFrom'], 'none')
+        self.assertIsNone(digest)
+
     def test_zero_column_and_indented_headings_require_the_same_complete_scoped_list(self):
         for indent in ('', '  ', '\t'):
             with self.subTest(indent=repr(indent)):

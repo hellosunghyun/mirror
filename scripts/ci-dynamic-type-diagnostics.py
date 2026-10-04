@@ -24,6 +24,11 @@ CATEGORIES = ('extra-small', 'small', 'medium', 'large', 'extra-large', 'extra-e
               'extra-extra-extra-large', 'accessibility-medium', 'accessibility-large',
               'accessibility-extra-large', 'accessibility-extra-extra-large',
               'accessibility-extra-extra-extra-large')
+GROUPED_CATEGORY_DECLARATIONS = (
+    'Standard sizes: ' + ', '.join(CATEGORIES[:7]) + '.',
+    'Extended range sizes: ' + ', '.join(CATEGORIES[7:]) + '.',
+    'Other values: unknown, unsupported.',
+)
 CATEGORY_TOKEN = re.compile(r'(?<![\w-])(?:' + '|'.join(map(re.escape, CATEGORIES)) + r')(?![\w-])')
 PROBE = 'UI dynamic type fixture: '
 AUDIT = 'UI dynamic type audit: '
@@ -172,6 +177,16 @@ def category_listing(text):
     result['categoryRows'], result['categoryRowsTruncated'] = category_row_metadata(groups)
     candidates, known, formats = [], set(), set()
     for group in groups:
+        # 공개 Xcode 27 도움말 보존본의 세 선언을 같은 문단·들여쓰기에서 원자적으로 확인한다.
+        # unknown/unsupported는 지원 category가 아니며 다른 설명이나 부분 목록과 합치지 않는다.
+        if any(line.lstrip(' \t').startswith(('Standard sizes:', 'Extended range sizes:', 'Other values:'))
+               for line in group):
+            valid = tuple(line.strip(' \t') for line in group) == GROUPED_CATEGORY_DECLARATIONS
+            candidates.append((list(CATEGORIES) if valid else [], valid))
+            if valid:
+                known.update(CATEGORIES)
+                formats.add('standardExtendedDeclarations')
+            continue
         rows, valid = [], True
         for line in group:
             row = category_row(line)
