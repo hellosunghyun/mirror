@@ -40,7 +40,8 @@ struct MirrorRootView: View {
     private var sceneExposureID: UUID { sceneOwner.id }
     private var isCompact: Bool {
         #if os(iOS)
-        return sizeClass == .compact
+        // 큰 글자에서는 iPad의 좁은 사이드바 대신 탭으로 본문 너비를 확보한다.
+        return sizeClass == .compact || dynamicTypeSize.isAccessibilitySize
         #else
         return false
         #endif
