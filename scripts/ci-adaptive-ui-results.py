@@ -1104,13 +1104,14 @@ def evidence(directory, expected):
                'passedTests': count, 'failedTests': 0, 'skippedTests': 0, 'screenshotCount': len(screenshots)})
 
 
-def failure_recorded_screenshots(log, expected, entries):
+def failure_recorded_screenshots(log, expected, entries, *, require_failure_or_interruption=False):
     # 부분 실행도 원래 고정 phase protocol과 실제 bundle/method 소유를 먼저 검증한다.
     require(xctest_progress_diagnostics(log, expected, entries) is not None, 'invalidFailureScreenshotProgress')
-    active, configured, selected = None, set(), {}
+    active, configured, selected, failed = None, set(), {}, False
     for line in log.splitlines():
         event = UI_CASE_EVENT.match(line)
         if event is not None:
+            failed = failed or event[3] == 'failed'
             active = event[2] if event[3] == 'started' else None
             continue
         if CONFIG_MARKER in line:
@@ -1130,6 +1131,10 @@ def failure_recorded_screenshots(log, expected, entries):
                 require(name not in selected, 'duplicateFailureScreenshot')
                 selected[name] = active
     require(selected, 'noRecordedFailureScreenshots')
+    # EXIT trap이 native 상태를 회수하지 못한 중단도, 실제 owned case의 실패나
+    # 미종료 실행이 관측된 경우에만 진단한다. 끝난 성공/skip만으로는 추정하지 않는다.
+    require(not require_failure_or_interruption or failed or active is not None,
+            'unconfirmedNativeUIFailure')
     return selected
 
 
@@ -1138,14 +1143,16 @@ def failure_evidence_context(directory, expected):
     outcome = read_json(directory / 'safe-outcome.json')
     validate_outcome(outcome, expected)
     require(outcome['status'] == 'failed' and outcome['phase'] == 'test'
-            and type(outcome['xcodebuildExitCode']) is int and 1 <= outcome['xcodebuildExitCode'] <= 255,
+            and (outcome['xcodebuildExitCode'] is None
+                 or type(outcome['xcodebuildExitCode']) is int and 1 <= outcome['xcodebuildExitCode'] <= 255),
             'notNativeUIFailure')
     require(source_location(UI_FAILURE_SOURCE_FILE, 1, 1, ROOT) is not None, 'invalidSourceEntries')
     entries = source_method_entries(read_regular(ROOT / UI_FAILURE_SOURCE_FILE, MAX_JSON).decode('utf-8'),
                                     expected['platform'])
     require(entries is not None, 'invalidSourceEntries')
     log = read_regular(directory / 'test.log', MAX_LOG).decode('utf-8')
-    return receipt_hash, failure_recorded_screenshots(log, expected, entries)
+    return receipt_hash, failure_recorded_screenshots(log, expected, entries,
+        require_failure_or_interruption=outcome['xcodebuildExitCode'] is None)
 
 
 def failure_export_entries(value, selected):

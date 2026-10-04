@@ -805,7 +805,7 @@ esac
         valid = {**expected, 'phase': 'test', 'status': 'passed', 'commandExitCode': 0, 'xcodebuildExitCode': 0,
                  'totalTestCount': 4, 'passedTests': 4, 'failedTests': 0, 'skippedTests': 0, 'screenshotCount': 11}
         helper.validate_outcome(valid, expected)
-        for key, value in (('runID', '33'), ('status', PRIVATE), ('xcodebuildExitCode', 65),
+        for key, value in (('runID', '33'), ('status', PRIVATE), ('xcodebuildExitCode', 65), ('xcodebuildExitCode', None),
                            ('commandExitCode', True), ('screenshotCount', 10), ('private', PRIVATE)):
             with self.assertRaises(helper.AdaptiveError):
                 helper.validate_outcome({**valid, key: value}, expected)
@@ -1193,13 +1193,80 @@ esac
                 helper.failure_evidence(root, expected)
             self.assertEqual(str(error.exception), 'staleReviewDirectory')
 
-    def test_failure_images_reject_success_build_unknown_native_and_every_foreign_identity_before_export(self):
+    def test_failure_images_preserve_recorded_png_when_native_status_was_not_collected(self):
+        for terminal in ('failed', None):
+            with self.subTest(terminal=terminal), tempfile.TemporaryDirectory() as directory:
+                root, expected, outcome, _, original = self.failure_image_fixture(directory)
+                # shell의 초기 -1은 기존 failure schema에서 null로 저장된다.
+                outcome.update(commandExitCode=130, xcodebuildExitCode=None)
+                outcome_bytes = json.dumps(outcome)
+                (root / 'safe-outcome.json').write_text(outcome_bytes)
+                if terminal is None:
+                    rows = (root / 'test.log').read_text().splitlines()
+                    (root / 'test.log').write_text('\n'.join(rows[:-1]))
+                with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                        mock.patch('builtins.print') as output:
+                    helper.failure_evidence(root, expected)
+                review = root / 'failure-review'
+                manifest = json.loads((review / 'manifest.json').read_text())
+                self.assertEqual({key: manifest[key] for key in expected}, expected)
+                self.assertEqual((manifest['kind'], manifest['scope'], manifest['semantics']),
+                                 ('adaptive-failure-diagnostic', 'recordedFixtureAppImagesOnly', 'diagnosticOnlyNotAcceptanceOrAuditCause'))
+                self.assertEqual(len(manifest['screenshots']), 1)
+                shot = manifest['screenshots'][0]
+                self.assertEqual((shot['case'], shot['stage'], shot['sequence']), (CASE, 'max-capture', 1))
+                self.assertEqual((review / shot['file']).read_bytes(), helper.clean_png(original)[0])
+                self.assertNotIn(PRIVATE.encode(), (review / shot['file']).read_bytes())
+                self.assertEqual({p.name for p in review.iterdir()}, {'manifest.json', 'SHA256SUMS', 'screenshots'})
+                self.assertEqual((root / 'safe-outcome.json').read_text(), outcome_bytes)
+                self.assertFalse((root / 'review').exists())
+                self.assertIn('"status": "diagnosticOnly"', output.call_args[0][0])
+                for forbidden in (PRIVATE, str(root), 'passedTests', 'failedTests', 'auditType'):
+                    self.assertNotIn(forbidden, json.dumps(manifest))
+                    self.assertNotIn(forbidden, output.call_args[0][0])
+                with self.assertRaises(helper.AdaptiveError):
+                    helper.validate_outcome(manifest, expected)
+                with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                        self.assertRaises(helper.AdaptiveError) as error:
+                    helper.failure_evidence(root, expected)
+                self.assertEqual(str(error.exception), 'staleReviewDirectory')
+
+    def test_missing_native_status_needs_an_owned_failed_or_interrupted_case_before_export(self):
+        for kind in ('passed', 'skipped', 'unknown', 'foreignOwner', 'incompleteRecording', 'missingConfiguration'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                root, expected, outcome, _, _ = self.failure_image_fixture(directory)
+                outcome.update(commandExitCode=130, xcodebuildExitCode=None)
+                (root / 'safe-outcome.json').write_text(json.dumps(outcome))
+                rows = (root / 'test.log').read_text().splitlines()
+                if kind in ('passed', 'skipped'):
+                    rows[-1] = event(state=kind)
+                elif kind == 'unknown':
+                    rows = [PRIVATE]
+                elif kind == 'foreignOwner':
+                    rows[0] = event(owner='Foreign.MirrorAdaptiveUITests')
+                elif kind == 'incompleteRecording':
+                    rows.pop(-2)
+                elif kind == 'missingConfiguration':
+                    rows.pop(1)
+                (root / 'test.log').write_text('\n'.join(rows))
+                with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                        mock.patch.object(helper, 'directory_files') as files, self.assertRaises(helper.AdaptiveError):
+                    helper.failure_evidence(root, expected)
+                files.assert_not_called()
+                self.assertFalse((root / 'failure-review').exists())
+
+    def test_failure_images_reject_success_build_invalid_native_and_every_foreign_identity_before_export(self):
         with tempfile.TemporaryDirectory() as directory:
             root, expected, outcome, _, _ = self.failure_image_fixture(directory)
             variants = [{**outcome, 'status': 'buildComplete', 'phase': 'build', 'commandExitCode': 0, 'xcodebuildExitCode': 0},
-                        {**outcome, 'phase': 'build'}, {**outcome, 'xcodebuildExitCode': None},
-                        {**outcome, 'xcodebuildExitCode': 0}, {**outcome, 'xcodebuildExitCode': True}]
-            variants += [{**outcome, key: 'foreign'} for key in expected]
+                        {**outcome, 'phase': 'build'}, {**outcome, 'phase': 'build', 'xcodebuildExitCode': None},
+                        {**outcome, 'status': 'passed', 'xcodebuildExitCode': None},
+                        {**outcome, 'commandExitCode': 0, 'xcodebuildExitCode': None},
+                        {**outcome, 'status': PRIVATE, 'xcodebuildExitCode': None},
+                        {**outcome, 'xcodebuildExitCode': -1}, {**outcome, 'xcodebuildExitCode': 0},
+                        {**outcome, 'xcodebuildExitCode': True}]
+            variants += [{**outcome, 'xcodebuildExitCode': native, key: 'foreign'}
+                         for native in (65, None) for key in expected]
             for value in variants:
                 with self.subTest(keys=tuple(value)):
                     (root / 'safe-outcome.json').write_text(json.dumps(value))
@@ -1208,11 +1275,12 @@ esac
                         helper.failure_evidence(root, expected)
                     files.assert_not_called()
                     self.assertFalse((root / 'failure-review').exists())
-            (root / 'safe-outcome.json').write_text(json.dumps(outcome))
-            with mock.patch.object(helper, 'verify_receipt', side_effect=helper.AdaptiveError('buildReceiptMismatch')), \
-                    mock.patch.object(helper, 'directory_files') as files, self.assertRaises(helper.AdaptiveError):
-                helper.failure_evidence(root, expected)
-            files.assert_not_called()
+            for native in (65, None):
+                (root / 'safe-outcome.json').write_text(json.dumps({**outcome, 'xcodebuildExitCode': native}))
+                with mock.patch.object(helper, 'verify_receipt', side_effect=helper.AdaptiveError('buildReceiptMismatch')), \
+                        mock.patch.object(helper, 'directory_files') as files, self.assertRaises(helper.AdaptiveError):
+                    helper.failure_evidence(root, expected)
+                files.assert_not_called()
 
     def test_failure_images_require_actual_complete_phase_fixture_configuration_and_native_owner(self):
         source, entries = self.progress_fixture()
