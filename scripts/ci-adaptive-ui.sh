@@ -56,6 +56,11 @@ adaptive_context=$(python3 scripts/ci-adaptive-ui-results.py context "${adaptive
 IFS=$'\t' read -r adaptive_scheme adaptive_sdk adaptive_destination <<< "$adaptive_context"
 
 if [[ "$adaptive_mode" == build ]]; then
+  if [[ -n "${MIRROR_DYNAMIC_TYPE_PREBOOT:-}" ]]; then
+    [[ "$MIRROR_DYNAMIC_TYPE_PREBOOT" == 1 && "$adaptive_platform" == ipad && "$adaptive_appearance" == system ]] || exit 2
+    # 같은 context의 부팅 요청만 먼저 보낸다. 준비 완료 판정은 진단 setup의 기존 bootstatus가 맡는다.
+    python3 scripts/ci-dynamic-type-diagnostics.py preboot
+  fi
   set +e
   xcodebuild -project Mirror.xcodeproj -scheme "$adaptive_scheme" -configuration Debug \
     -sdk "$adaptive_sdk" -destination "$adaptive_destination" -jobs 2 \

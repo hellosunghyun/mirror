@@ -642,6 +642,62 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             with self.subTest(malformed=malformed), self.assertRaises((helper.A.AdaptiveError, ValueError)):
                 helper.observations('\n'.join(bad), 'system', 'failed')
 
+    def test_preboot_requests_only_the_owned_device_without_category_or_build_receipt_changes(self):
+        env = {'MIRROR_DYNAMIC_TYPE_PREBOOT': '1', 'GITHUB_WORKFLOW': 'iPad Dynamic Type 설정 원인분리 진단'}
+        for state in ('Booted', 'Shutdown'):
+            devices = {'devices': {'runtime': [{'udid': 'foreign-udid', 'state': 'Shutdown'},
+                                               {'udid': 'owned-udid', 'state': state}]}}
+            with self.subTest(state=state), mock.patch.dict(os.environ, env), \
+                    mock.patch.object(helper.A, 'read_json', return_value={'supported': True}), \
+                    mock.patch.object(helper, 'context', return_value=({'destination': 'owned'}, 'owned-udid')) as context, \
+                    mock.patch.object(helper, 'command', side_effect=lambda args, name:
+                        json.dumps(devices) if name == 'preboot-devices' else '') as command, \
+                    mock.patch.object(helper.A, 'write_json') as write, \
+                    mock.patch.object(helper.A, 'verify_receipt') as receipt:
+                report = {}
+                helper.execute('preboot', None, EXPECTED, report)
+                context.assert_called_once_with(EXPECTED)
+                calls = [mock.call(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], 'preboot-devices')]
+                if state == 'Shutdown':
+                    calls.append(mock.call(['xcrun', 'simctl', 'boot', 'owned-udid'], 'preboot-request'))
+                self.assertEqual(command.call_args_list, calls)
+                self.assertEqual(report['prebootDisposition'], 'bootRequested' if state == 'Shutdown' else 'alreadyBooted')
+                self.assertEqual(report['simulatorInitialState'], state)
+                self.assertNotIn('bootStatusExitCode', report)
+                self.assertNotIn('systemAfter', report)
+                self.assertNotIn('owned-udid', json.dumps(report))
+                write.assert_not_called()
+                receipt.assert_not_called()
+
+    def test_preboot_rejects_missing_optin_wrong_workflow_context_and_ambiguous_device(self):
+        valid_env = {'MIRROR_DYNAMIC_TYPE_PREBOOT': '1', 'GITHUB_WORKFLOW': 'iPad Dynamic Type 설정 원인분리 진단'}
+        for env in ({**valid_env, 'MIRROR_DYNAMIC_TYPE_PREBOOT': ''},
+                    {**valid_env, 'MIRROR_DYNAMIC_TYPE_PREBOOT': 'true'},
+                    {**valid_env, 'GITHUB_WORKFLOW': 'another-workflow'}):
+            with mock.patch.dict(os.environ, env), \
+                    mock.patch.object(helper.A, 'read_json', return_value={'supported': True}), \
+                    mock.patch.object(helper, 'context', return_value=({}, 'owned-udid')), \
+                    mock.patch.object(helper, 'command') as command, self.assertRaises(helper.Failure):
+                helper.execute('preboot', None, EXPECTED, {})
+            command.assert_not_called()
+        for rows in ([], [{'udid': 'foreign-udid', 'state': 'Shutdown'}],
+                     [{'udid': 'owned-udid', 'state': 'Creating'}],
+                     [{'udid': 'owned-udid', 'state': 'Booted'}] * 2):
+            with mock.patch.dict(os.environ, valid_env), \
+                    mock.patch.object(helper.A, 'read_json', return_value={'supported': True}), \
+                    mock.patch.object(helper, 'context', return_value=({}, 'owned-udid')), \
+                    mock.patch.object(helper, 'command', return_value=json.dumps({'devices': {'runtime': rows}})) as command, \
+                    self.assertRaises(helper.Failure):
+                helper.execute('preboot', None, EXPECTED, {})
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(command.call_args.args[1], 'preboot-devices')
+        with mock.patch.dict(os.environ, valid_env), \
+                mock.patch.object(helper.A, 'read_json', return_value={'supported': True}), \
+                mock.patch.object(helper, 'context', side_effect=helper.A.AdaptiveError('contextMismatch')), \
+                mock.patch.object(helper, 'command') as command, self.assertRaises(helper.A.AdaptiveError):
+            helper.execute('preboot', None, EXPECTED, {})
+        command.assert_not_called()
+
     def test_restore_journal_precedes_mutation_and_uses_same_context_only(self):
         ctx, sequence = {'destination': 'fixed-context'}, []
         write_json = helper.A.write_json
@@ -856,6 +912,20 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             self.assertIs(printed.call_args.kwargs['flush'], True)
             self.assertNotIn(PRIVATE, printed.call_args.args[0])
 
+    def test_checkout_timeout_is_fixed_failure_before_any_simulator_or_restore_mutation(self):
+        env = {'GITHUB_ACTIONS': 'true', 'GITHUB_REPOSITORY': 'hellosunghyun/mirror', 'RUNNER_OS': 'macOS'}
+        with mock.patch.dict(os.environ, env), mock.patch.object(helper.A, 'identity', return_value=EXPECTED), \
+                mock.patch.object(helper.A, 'checkout_matches',
+                    side_effect=subprocess.TimeoutExpired(PRIVATE, 5, output=PRIVATE, stderr=PRIVATE)), \
+                mock.patch.object(helper, 'execute') as execute, \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(helper.main(['restore']), 2)
+            execute.assert_not_called()
+            self.assertNotIn(PRIVATE, output.getvalue())
+            report = json.loads(output.getvalue().splitlines()[-1].removeprefix('::notice::Dynamic Type diagnostic: '))
+            self.assertEqual(report['phase'], 'checkoutStarted')
+            self.assertEqual(report['status'], 'diagnosticUnavailable')
+
     def test_changed_build_is_rejected_before_any_second_arm_command(self):
         ctx = {'destination': 'fixed'}
         saved = {'context': ctx, 'before': 'large', 'receipt': 'original'}
@@ -907,6 +977,7 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
         self.assertIn("always() && steps.build.outputs.adaptive_build_ready == 'true'", workflow)
         self.assertNotIn('adaptive_evidence_ready', workflow)
         self.assertNotIn('continue-on-error', workflow)
+        self.assertEqual(workflow.count("MIRROR_DYNAMIC_TYPE_PREBOOT: '1'"), 1)
 
 
 if __name__ == '__main__':

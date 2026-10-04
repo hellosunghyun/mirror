@@ -60,6 +60,33 @@ def png(*extra, width=1, height=1, raw=b'\0\xff\x00\x00\xff'):
 
 
 class AdaptiveResultGateTests(unittest.TestCase):
+    def test_checkout_checks_remain_ordered_and_each_git_call_is_bounded(self):
+        expected = {'commitSHA': 'a' * 40}
+        with mock.patch.object(helper.subprocess, 'check_output', side_effect=['a' * 40 + '\n', b'']) as output, \
+                mock.patch.object(helper.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            helper.checkout_matches(expected)
+            self.assertEqual([call.args[0][1] for call in output.call_args_list], ['rev-parse', 'ls-files'])
+            self.assertEqual(run.call_args.args[0], ['git', 'diff', '--quiet', 'HEAD', '--'])
+            self.assertTrue(all(call.kwargs['timeout'] == 5 for call in (*output.call_args_list, run.call_args)))
+        for sha, dirty, untracked in (('b' * 40, 0, b''), ('a' * 40, 1, b''), ('a' * 40, 0, PRIVATE.encode())):
+            with mock.patch.object(helper.subprocess, 'check_output', side_effect=[sha, untracked]), \
+                    mock.patch.object(helper.subprocess, 'run', return_value=subprocess.CompletedProcess([], dirty)), \
+                    self.assertRaises(helper.AdaptiveError):
+                helper.checkout_matches(expected)
+
+    def test_each_checkout_timeout_stops_before_later_git_checks(self):
+        for stage in range(3):
+            timeout = subprocess.TimeoutExpired(PRIVATE, 5, output=PRIVATE, stderr=PRIVATE)
+            outputs = [timeout] if stage == 0 else ['a' * 40, timeout if stage == 2 else b'']
+            with self.subTest(stage=stage), \
+                    mock.patch.object(helper.subprocess, 'check_output', side_effect=outputs) as output, \
+                    mock.patch.object(helper.subprocess, 'run', side_effect=timeout if stage == 1 else None,
+                                      return_value=subprocess.CompletedProcess([], 0)) as run, \
+                    self.assertRaises(subprocess.TimeoutExpired):
+                helper.checkout_matches({'commitSHA': 'a' * 40})
+            self.assertEqual(output.call_count, 2 if stage == 2 else 1)
+            self.assertEqual(run.call_count, 0 if stage == 0 else 1)
+
     def compiler_fixture(self, directory):
         root = Path(directory).resolve()
         path = root / 'App/Synthetic.swift'
@@ -672,15 +699,25 @@ class AdaptiveResultGateTests(unittest.TestCase):
         self.run_stubbed_shell('test', native=65, receipt=0, expected_exit=65, expected_diagnostics=False,
                                expected_test_diagnostics=True)
 
+    def test_dynamic_preboot_hook_precedes_build_and_preserves_native_or_preboot_failure(self):
+        self.run_stubbed_shell('build', native=65, receipt=0, expected_exit=65, expected_diagnostics=True,
+                               platform='ipad', preboot='1', expected_preboot=True)
+        self.run_stubbed_shell('build', native=65, receipt=0, expected_exit=73, expected_diagnostics=False,
+                               platform='ipad', preboot='1', preboot_exit=73, expected_preboot=True,
+                               expected_native_called=False)
+        self.run_stubbed_shell('build', native=65, receipt=0, expected_exit=2, expected_diagnostics=False,
+                               platform='iphone', preboot='1', expected_native_called=False)
+
     def run_stubbed_shell(self, mode, native, receipt, expected_exit, expected_diagnostics,
-                          expected_test_diagnostics=False):
+                          expected_test_diagnostics=False, platform='iphone', preboot='', preboot_exit=0,
+                          expected_preboot=False, expected_native_called=True):
         # 실제 shell을 격리된 복사본에서 실행하고 모든 Python/Xcode 경계를 stub한다.
         # SDK·앱·네트워크를 실행하지 않고 EXIT trap의 원래 종료 코드 보존을 검증한다.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scripts').mkdir()
             (root / 'bin').mkdir()
-            (root / '.build/ci-adaptive-ui/iphone-system').mkdir(parents=True)
+            (root / ('.build/ci-adaptive-ui/' + platform + '-system')).mkdir(parents=True)
             script = root / 'scripts/ci-adaptive-ui.sh'
             shutil.copyfile(ROOT / 'scripts/ci-adaptive-ui.sh', script)
             python = root / 'bin/python3'
@@ -690,31 +727,39 @@ case "$2" in
   context) printf 'MirrorIOSAdaptiveUI\\tiphonesimulator\\tplatform=iOS Simulator,id=11111111-1111-1111-1111-111111111111\\n' ;;
   diagnostics) exit 73 ;;
   test-diagnostics) exit 75 ;;
+  preboot) exit "$ADAPTIVE_STUB_PREBOOT" ;;
   receipt-record) exit "$ADAPTIVE_STUB_RECEIPT" ;;
   failure) printf '%s\\n' "$*" >> "$ADAPTIVE_STUB_FAILURE"; exit 74 ;;
 esac
 ''')
             xcode = root / 'bin/xcodebuild'
-            xcode.write_text('#!/bin/bash\nexit "$ADAPTIVE_STUB_NATIVE"\n')
+            xcode.write_text('#!/bin/bash\nprintf "%s\\n" xcodebuild >> "$ADAPTIVE_STUB_EVENTS"\nexit "$ADAPTIVE_STUB_NATIVE"\n')
             python.chmod(0o700)
             xcode.chmod(0o700)
             environment = {**os.environ, 'GITHUB_ACTIONS': 'true', 'GITHUB_RUN_NUMBER': '1',
                            'GITHUB_OUTPUT': str(root / 'output'), 'PATH': str(root / 'bin') + os.pathsep + os.environ['PATH'],
                            'ADAPTIVE_STUB_EVENTS': str(root / 'events'), 'ADAPTIVE_STUB_FAILURE': str(root / 'failure'),
-                           'ADAPTIVE_STUB_NATIVE': str(native), 'ADAPTIVE_STUB_RECEIPT': str(receipt)}
-            result = subprocess.run(['bash', str(script), 'iphone', 'system', mode], env=environment,
+                           'ADAPTIVE_STUB_NATIVE': str(native), 'ADAPTIVE_STUB_RECEIPT': str(receipt),
+                           'MIRROR_DYNAMIC_TYPE_PREBOOT': preboot, 'ADAPTIVE_STUB_PREBOOT': str(preboot_exit)}
+            result = subprocess.run(['bash', str(script), platform, 'system', mode], env=environment,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
             self.assertEqual(result.returncode, expected_exit)
             events = (root / 'events').read_text().splitlines()
             self.assertEqual(events.count('diagnostics'), int(expected_diagnostics))
             self.assertEqual(events.count('test-diagnostics'), int(expected_test_diagnostics))
+            self.assertEqual(events.count('preboot'), int(expected_preboot))
+            self.assertEqual(events.count('xcodebuild'), int(expected_native_called))
+            if expected_preboot:
+                self.assertLess(events.index('context'), events.index('preboot'))
+                if expected_native_called:
+                    self.assertLess(events.index('preboot'), events.index('xcodebuild'))
             if expected_diagnostics:
                 self.assertLess(events.index('diagnostics'), events.index('failure'))
             if expected_test_diagnostics:
                 self.assertLess(events.index('test-diagnostics'), events.index('failure'))
             failure = (root / 'failure').read_text()
             self.assertIn('--exit-code ' + str(expected_exit), failure)
-            self.assertIn('--native-exit-code ' + str(native), failure)
+            self.assertIn('--native-exit-code ' + str(native if expected_native_called else -1), failure)
 
     def test_summary_requires_exact_platform_count_and_integer_fields(self):
         for platform, count in (('iphone', 4), ('ipad', 4), ('macos', 5)):

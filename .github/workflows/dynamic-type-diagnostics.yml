@@ -36,6 +36,8 @@ jobs:
       - name: 기존 unsigned Adaptive 앱과 runner 한 번 빌드
         id: build
         timeout-minutes: 10
+        env:
+          MIRROR_DYNAMIC_TYPE_PREBOOT: '1'
         run: >-
           bash scripts/ci-adaptive-ui.sh ipad system build
           > .build/ci-dynamic-type-diagnostics/build.stdout

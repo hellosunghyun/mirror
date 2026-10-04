@@ -425,6 +425,18 @@ def execute(action, mode, expected, report):
     checkpoint(report, 'contextStarted')
     ctx, udid = context(expected)
     checkpoint(report, 'contextVerified')
+    if action == 'preboot':
+        require(os.environ.get('MIRROR_DYNAMIC_TYPE_PREBOOT') == '1'
+                and os.environ.get('GITHUB_WORKFLOW') == 'iPad Dynamic Type 설정 원인분리 진단',
+                'invalidPrebootInvocation')
+        devices = A.strict_json(command(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], 'preboot-devices'))
+        matches = [device for group in devices['devices'].values() for device in group if device.get('udid') == udid]
+        require(len(matches) == 1 and matches[0].get('state') in ('Booted', 'Shutdown'), 'simulatorContextMismatch')
+        report['simulatorInitialState'] = matches[0]['state']
+        if matches[0]['state'] == 'Shutdown':
+            command(['xcrun', 'simctl', 'boot', udid], 'preboot-request')
+        report['prebootDisposition'] = 'bootRequested' if matches[0]['state'] == 'Shutdown' else 'alreadyBooted'
+        return  # content_size와 복구 journal은 build 검증 뒤 기존 setup만 변경한다.
     if action == 'setup':
         receipt = A.verify_receipt(BUILD, expected)
         devices = A.strict_json(command(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], 'devices'))
@@ -507,7 +519,7 @@ def main(argv=None):
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_OS') == 'macOS'
                 and os.environ.get('GITHUB_REPOSITORY') == 'hellosunghyun/mirror', 'runnerMismatch')
-        require(len(args) in (1, 2) and args[0] in ('help', 'setup', 'run', 'collect', 'restore', 'cleanup')
+        require(len(args) in (1, 2) and args[0] in ('help', 'preboot', 'setup', 'run', 'collect', 'restore', 'cleanup')
                 and (len(args) == 2 and args[1] in MODES if args[0] in ('run', 'collect') else len(args) == 1), 'invalidAction')
         expected = A.identity('ipad', 'system')
         mode = args[1] if len(args) == 2 else None

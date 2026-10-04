@@ -187,13 +187,13 @@ def configuration(expected, case):
 
 def checkout_matches(expected):
     require(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, stderr=subprocess.DEVNULL,
-                                    text=True).strip() == expected['commitSHA'], 'checkoutSHAMismatch')
+                                    text=True, timeout=5).strip() == expected['commitSHA'], 'checkoutSHAMismatch')
     require(subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--'], cwd=ROOT,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5).returncode == 0,
             'modifiedCheckout')
     require(not subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--',
                                         'App', 'Sources', 'Extensions', 'Tests'], cwd=ROOT,
-                                       stderr=subprocess.DEVNULL), 'untrackedAppSource')
+                                       stderr=subprocess.DEVNULL, timeout=5), 'untrackedAppSource')
 
 
 def safe_directory(directory):
