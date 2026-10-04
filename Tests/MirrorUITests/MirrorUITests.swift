@@ -3,6 +3,9 @@ import XCTest
 import UIKit
 import CryptoKit
 #endif
+#if os(macOS)
+import AppKit
+#endif
 
 /// 실제 UI 입력과 앱의 Core Data 저장 경로를 사용한다. 테스트 전용 성공 응답이나 seed는 없다.
 /// 같은 소스를 iPhone, iPad, Mac UI scheme에서 실행한다.
@@ -110,7 +113,11 @@ final class MirrorUITests: XCTestCase {
         let splitURL = "https://example.com/mirror-split-source"
         try activate("capture.open", in: app)
         let continuousTitle = try requireElement("capture.title", in: app)
+        #if os(macOS)
+        try replaceText(in: continuousTitle, with: firstSplitTitle + "\n" + secondSplitTitle, app: app, pasteMultilineCaptureTitle: true)
+        #else
         try replaceText(in: continuousTitle, with: firstSplitTitle + "\n" + secondSplitTitle, app: app)
+        #endif
         try activate("capture.more", in: app)
         try replaceText(in: requireElement("capture.note", in: app), with: splitNote, app: app)
         try replaceText(in: requireElement("capture.url", in: app), with: splitURL, app: app)
@@ -2212,6 +2219,7 @@ final class MirrorUITests: XCTestCase {
     @MainActor
     private func replaceText(in field: XCUIElement, with text: String, app: XCUIApplication,
                              prepareKeyboardBeforeTyping: Bool = false,
+                             pasteMultilineCaptureTitle: Bool = false,
                              file: StaticString = #filePath, line: UInt = #line) throws {
         try interact(with: field, in: app)
         #if os(iOS)
@@ -2223,6 +2231,18 @@ final class MirrorUITests: XCTestCase {
         #if os(macOS)
         field.typeKey("a", modifierFlags: .command)
         field.typeKey(.delete, modifierFlags: [])
+        if pasteMultilineCaptureTitle {
+            guard text.contains("\n"), field.identifier == "capture.title" else {
+                XCTFail("macMultilineCapturePasteTargetMismatch", file: file, line: line)
+                throw UIHarnessError.unexpectedValue("macMultilineCapturePasteTarget")
+            }
+            // S-02의 여러 줄 붙여넣기를 실제 Cmd-V로 수행한다. Return 키 동작과 구분한다.
+            try withMacPasteboard(text, file: file, line: line) {
+                field.typeKey("v", modifierFlags: .command)
+                try waitForValue(text, element: field, file: file, line: line)
+            }
+            return
+        }
         #else
         let current = value(of: field)
         // TextField의 placeholder는 value로 보고될 수 있다. 실제 입력 값만 지운다.
@@ -2241,6 +2261,53 @@ final class MirrorUITests: XCTestCase {
         field.typeText(text)
         try waitForValue(text, element: field, file: file, line: line)
     }
+
+    #if os(macOS)
+    @MainActor
+    private func withMacPasteboard(_ text: String, file: StaticString, line: UInt,
+                                   perform: () throws -> Void) throws {
+        let pasteboard = NSPasteboard.general
+        let originalChangeCount = pasteboard.changeCount
+        guard let originals = pasteboard.pasteboardItems else {
+            XCTFail("macMultilinePasteboardSnapshotFailed", file: file, line: line)
+            throw UIHarnessError.unexpectedValue("macMultilinePasteboardSnapshot")
+        }
+        // 원래 item은 clear 뒤 다시 읽지 않는다. 모든 형식의 Data를 메모리에만 보존한다.
+        var saved: [NSPasteboardItem] = []
+        for original in originals {
+            let item = NSPasteboardItem()
+            for type in original.types {
+                guard let data = original.data(forType: type), item.setData(data, forType: type) else {
+                    XCTFail("macMultilinePasteboardSnapshotFailed", file: file, line: line)
+                    throw UIHarnessError.unexpectedValue("macMultilinePasteboardSnapshot")
+                }
+            }
+            saved.append(item)
+        }
+        guard pasteboard.changeCount == originalChangeCount else {
+            XCTFail("macMultilinePasteboardPreparationFailed", file: file, line: line)
+            throw UIHarnessError.unexpectedValue("macMultilinePasteboardPreparation")
+        }
+        // 선언이 반환한 소유 count를 사용한다. setString은 소유권이 바뀌면 false를 반환한다.
+        let ownedChangeCount = pasteboard.declareTypes([.string], owner: nil)
+        defer {
+            if pasteboard.changeCount == ownedChangeCount {
+                pasteboard.clearContents()
+                if !saved.isEmpty {
+                    XCTAssertTrue(pasteboard.writeObjects(saved), "macMultilinePasteboardRestoreFailed", file: file, line: line)
+                }
+            } else {
+                // 다른 소유자가 쓴 내용을 원래 snapshot으로 덮어쓰지 않는다.
+                XCTFail("macMultilinePasteboardOwnershipChanged", file: file, line: line)
+            }
+        }
+        guard pasteboard.setString(text, forType: .string), pasteboard.changeCount == ownedChangeCount else {
+            XCTFail("macMultilinePasteboardWriteFailed", file: file, line: line)
+            throw UIHarnessError.unexpectedValue("macMultilinePasteboardWrite")
+        }
+        try perform()
+    }
+    #endif
 
     @MainActor
     private func value(of element: XCUIElement) -> String { element.value as? String ?? "" }
