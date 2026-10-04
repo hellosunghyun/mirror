@@ -1195,6 +1195,75 @@ esac
         self.assertEqual(set(report), {'case', 'method', 'sourceFile', 'entryLine', 'lastProgress',
                                        'requestSequence', 'requestedElement', 'auditBoundaries'})
 
+    def lookup_count_fixture(self, method='testMaximumTypePlannedCaptureKeepsUnassignedDefault', **extra):
+        case = method
+        phase = ('defaultCaptureStarted' if case == 'testMaximumTypePlannedCaptureKeepsUnassignedDefault'
+                 else 'captureComplete')
+        rows = [event(case=case), self.case_diagnostic_row(case=case)]
+        for sequence, (current, step) in enumerate(helper.PROGRESS_PROTOCOL[case], 1):
+            rows.append(self.progress_row(case, current, sequence, step))
+            if current == phase:
+                break
+        rows.append(self.case_diagnostic_row(case=case, sequence=1, element='destinationLibrary'))
+        value = {'schemaVersion': 1, 'case': helper.CASE_DIAGNOSTIC_NAMES[case],
+                 'requestSequence': 1, 'requestedElement': 'destinationLibrary', 'matchingCount': 2, **extra}
+        return rows, helper.LOOKUP_FAILURE_COUNT_MARKER + json.dumps(value)
+
+    def test_lookup_count_preserves_exact_pad_count_only_at_two_owned_failed_boundaries(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'ipad')
+        expected = {**EXPECTED, 'platform': 'ipad'}
+        for case in ('testMaximumTypePlannedCaptureKeepsUnassignedDefault',
+                     'testMaximumTypeSearchDetailCompletionAndUndo'):
+            for count in (0, 2, 65_535):
+                with self.subTest(case=case, count=count):
+                    prefix, row = self.lookup_count_fixture(case, matchingCount=count)
+                    reports = helper.xctest_case_diagnostics(
+                        '\n'.join(prefix + [row, event(case=case, state='failed')]), expected, entries)
+                    self.assertEqual(reports[0]['lookupFailureCount'],
+                                     json.loads(row[len(helper.LOOKUP_FAILURE_COUNT_MARKER):]))
+                    self.assertNotIn(PRIVATE, json.dumps(reports))
+
+    def test_lookup_count_rejects_invalid_bounds_types_identity_and_private_fields(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'ipad')
+        case = 'testMaximumTypePlannedCaptureKeepsUnassignedDefault'
+        expected = {**EXPECTED, 'platform': 'ipad'}
+        bad = ({'matchingCount': True}, {'matchingCount': 2.0}, {'matchingCount': -1},
+               {'matchingCount': 1}, {'matchingCount': 65_536}, {'schemaVersion': True},
+               {'schemaVersion': 2}, {'case': 'searchDetailUndo'}, {'case': PRIVATE},
+               {'requestSequence': True}, {'requestSequence': 0}, {'requestSequence': 2},
+               {'requestedElement': 'destinationToday'}, {'requestedElement': PRIVATE}, {'label': PRIVATE})
+        for fields in bad:
+            with self.subTest(fields=fields):
+                prefix, row = self.lookup_count_fixture(**fields)
+                self.assertIsNone(helper.xctest_case_diagnostics(
+                    '\n'.join(prefix + [row, event(case=case, state='failed')]), expected, entries))
+        prefix, row = self.lookup_count_fixture()
+        duplicate = row.replace('"matchingCount": 2', '"matchingCount": 2, "matchingCount": 3')
+        self.assertIsNone(helper.xctest_case_diagnostics(
+            '\n'.join(prefix + [duplicate, event(case=case, state='failed')]), expected, entries))
+
+    def test_lookup_count_rejects_wrong_platform_phase_terminal_and_later_activity(self):
+        source, _ = self.progress_fixture()
+        entries = helper.source_method_entries(source, 'ipad')
+        expected = {**EXPECTED, 'platform': 'ipad'}
+        case = 'testMaximumTypePlannedCaptureKeepsUnassignedDefault'
+        prefix, row = self.lookup_count_fixture()
+        for suffix in ([], [event(case=case, state='passed')], [event(case=case, state='skipped')],
+                       [row, event(case=case, state='failed')],
+                       [self.case_diagnostic_row(case=case, sequence=2, element='destinationLibrary'),
+                        event(case=case, state='failed')]):
+            self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(prefix + [row] + suffix), expected, entries))
+        for platform in ('iphone', 'macos'):
+            self.assertIsNone(helper.xctest_case_diagnostics(
+                '\n'.join(prefix + [row, event(case=case, state='failed')]),
+                {**EXPECTED, 'platform': platform}, helper.source_method_entries(source, platform)))
+        wrong_phase = prefix[:-2] + [prefix[-1], row, event(case=case, state='failed')]
+        self.assertIsNone(helper.xctest_case_diagnostics('\n'.join(wrong_phase), expected, entries))
+        self.assertIsNone(helper.xctest_case_diagnostics(
+            '\n'.join([row] + prefix + [event(case=case, state='failed')]), expected, entries))
+
     def test_case_diagnostics_reject_unknown_private_enums_extra_and_duplicate_json_keys(self):
         _, entries = self.progress_fixture()
         prefix = [event(), self.case_diagnostic_row(), self.progress_row()]

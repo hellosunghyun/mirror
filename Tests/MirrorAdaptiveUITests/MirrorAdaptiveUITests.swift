@@ -547,7 +547,22 @@ final class MirrorAdaptiveUITests: XCTestCase {
             XCTFail("Adaptive UI lookup failure: missing")
             throw HarnessFailure.missingElement
         }
-        guard query.count == 1 else {
+        let matchingCount = query.count
+        guard matchingCount == 1 else {
+            #if os(iOS)
+            if UIDevice.current.userInterfaceIdiom == .pad,
+               requestedElement == .destinationLibrary,
+               let diagnosticCase,
+               (diagnosticCase == .plannedCapture && diagnosticProgressPhase == .defaultCaptureStarted)
+                || (diagnosticCase == .searchDetailUndo && diagnosticProgressPhase == .captureComplete),
+               (0...65_535).contains(matchingCount) {
+                emitMeasurement("UI adaptive lookup failure count:", fields: [
+                    "schemaVersion": 1, "case": diagnosticCase.rawValue,
+                    "requestSequence": diagnosticRequestSequence,
+                    "requestedElement": requestedElement.rawValue, "matchingCount": matchingCount,
+                ])
+            }
+            #endif
             XCTFail("Adaptive UI lookup failure: nonUnique")
             throw HarnessFailure.missingElement
         }
