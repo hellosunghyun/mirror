@@ -330,3 +330,7 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 ### 마지막 정리 결정 뒤에도 유지되는 창 조회
 
 8b91 Mac ReviewUndo는 초기 안내 부재와 상세 왕복, 내일 결정 뒤 카드 부재·진행1개 검사를 통과한 다음 requireWindowElement의 첫 window.exists 조회 직후 실패했다. state.feedback의 존재 대기·개수 조회에는 도달하지 않았으므로 안내 자체가 없었다고 판정하지 않는다. 기존 창 조회에 들어간 review.today 필터는 마지막 결정 뒤 사라지는 버튼을 참조했다. 이 필터만 제거해 정리가 끝날 때까지 남는 review.finish로 소유 창을 얻고, 최초 창의 고유성·전면 상태·유효한 경계와 두 버튼의 실제 고유 역할·식별자는 기존대로 모두 확인한다. 같은 창 안의 안내·되돌리기 검사와 실제 조작, 시간 제한은 유지한다. SDK 내부 재해석을 원인으로 단정하지 않으며 이번 수정의 실제 동작과 전체 UI 수용은 후속 Actions에서 확인한다.
+
+### Batch 스크롤 소유 실패의 두 경계 구분
+
+8b91 Mac Twenty의 taskRow ownerMissing은 소유 창이 고유하지 않은 경우와 유효한 스크롤 후보가 없는 경우가 같은 고정 실패 문구를 사용해 구분되지 않았다. 두 기존 XCTFail의 reason만 각각 batchActualScrollOwnerWindowNotUnique와 batchActualScrollOwnerCandidateMissing으로 나누고, 파서는 이전 batchActualScrollOwnerMissing도 계속 허용한다. 추가 AX·시각·기하 조회나 원문·개수 출력 없이 기존 분기만 구분하며, 15초·12회 탐색·고유 소유 검증·실패·두 사례의 typed 수용 게이트는 유지한다. 기존 enum 수용과 원문·접미사·이상값 거절 회귀를 확장했으며 실행은 Actions에서 확인한다. 이 변경은 실제 실패 원인이나 해결을 확정하지 않는다.

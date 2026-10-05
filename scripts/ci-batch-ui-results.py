@@ -287,6 +287,7 @@ def reachable_failure_locations(log, bundle, source_root=ROOT):
     """현재 사례의 정확한 XCTFail 고정 문장만 보존한다. 원문·측정값은 버린다."""
     require(isinstance(log, str) and len(log.encode('utf-8')) <= MAX_LOG, 'invalidLogBounds')
     reasons = ('batchTargetIsNotReachableWithin15SecondsAnd12Scrolls', 'batchActualScrollOwnerMissing',
+               'batchActualScrollOwnerWindowNotUnique', 'batchActualScrollOwnerCandidateMissing',
                'batchActualScrollOwnerAmbiguous', 'batchScrollOwnerRequiresActualSurface')
     targets = ('unknown', 'captureOpen', 'captureSave', 'captureClose', 'destinationToday', 'destinationLibrary',
                'librarySearch', 'librarySelectToggle', 'librarySelectAll', 'taskRow', 'taskSelection',

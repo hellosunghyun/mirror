@@ -728,7 +728,7 @@ final class MirrorBatchUITests: XCTestCase {
         let windows = app.windows.containing(ownerPredicate).allElementsBoundByAccessibilityElement
             .filter { $0.exists && hasArea($0.frame) }
         guard windows.count == 1, let window = windows.first else {
-            XCTFail("batchActualScrollOwnerMissing target=\(target.rawValue)", file: file, line: line)
+            XCTFail("batchActualScrollOwnerWindowNotUnique target=\(target.rawValue)", file: file, line: line)
             throw HarnessFailure.missing
         }
         let windowFrame = window.frame
@@ -768,7 +768,7 @@ final class MirrorBatchUITests: XCTestCase {
             return ScrollOwner(element: owner, frame: frame)
         }.sorted { $0.area < $1.area }
         guard let owner = owners.first else {
-            XCTFail("batchActualScrollOwnerMissing target=\(target.rawValue)", file: file, line: line)
+            XCTFail("batchActualScrollOwnerCandidateMissing target=\(target.rawValue)", file: file, line: line)
             throw HarnessFailure.missing
         }
         if owners.count > 1 {

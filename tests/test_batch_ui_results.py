@@ -370,6 +370,7 @@ class BatchResultGateTests(unittest.TestCase):
 
     def test_reachable_failure_diagnostics_accept_exact_reasons_and_target_enums(self):
         reasons = ('batchTargetIsNotReachableWithin15SecondsAnd12Scrolls', 'batchActualScrollOwnerMissing',
+                   'batchActualScrollOwnerWindowNotUnique', 'batchActualScrollOwnerCandidateMissing',
                    'batchActualScrollOwnerAmbiguous', 'batchScrollOwnerRequiresActualSurface')
         targets = ('unknown', 'captureOpen', 'captureSave', 'captureClose', 'destinationToday', 'destinationLibrary',
                    'librarySearch', 'librarySelectToggle', 'librarySelectAll', 'taskRow', 'taskSelection',
@@ -388,17 +389,18 @@ class BatchResultGateTests(unittest.TestCase):
         self.assertNotIn('column', helper.reachable_failure_locations(value, BUNDLE)[0])
 
     def test_reachable_failure_diagnostics_reject_payload_quotes_suffixes_and_unknown_enums(self):
-        fixed = 'failed - batchActualScrollOwnerMissing target=librarySearch'
-        invalid = (fixed + ' SYNTHETIC_PRIVATE_VALUE', fixed + '.', fixed + ' ',
-                   'SYNTHETIC_PRIVATE_VALUE ' + fixed, '"' + fixed + '"',
-                   'XCTAssertEqual failed: ' + fixed, 'failed - "' + fixed + '"',
-                   fixed.replace('batchActualScrollOwnerMissing', 'batchUnknownFailure'),
-                   fixed.replace('batchActualScrollOwnerMissing', 'batchActualScrollOwnerMissingExtra'),
-                   fixed.replace('librarySearch', 'SYNTHETIC_PRIVATE_VALUE'),
-                   fixed.replace('target=', 'target ='), fixed.replace('failed - ', 'XCTFail failed - '))
-        for payload in invalid:
-            with self.subTest(payload=payload):
-                self.assertEqual(helper.reachable_failure_locations(self.query_failure_fixture(payload), BUNDLE), [])
+        for reason in ('batchActualScrollOwnerMissing', 'batchActualScrollOwnerWindowNotUnique',
+                       'batchActualScrollOwnerCandidateMissing'):
+            fixed = 'failed - ' + reason + ' target=librarySearch'
+            invalid = (fixed + ' SYNTHETIC_PRIVATE_VALUE', fixed + '.', fixed + ' ',
+                       'SYNTHETIC_PRIVATE_VALUE ' + fixed, '"' + fixed + '"',
+                       'XCTAssertEqual failed: ' + fixed, 'failed - "' + fixed + '"',
+                       fixed.replace(reason, 'batchUnknownFailure'), fixed.replace(reason, reason + 'Extra'),
+                       fixed.replace('librarySearch', 'SYNTHETIC_PRIVATE_VALUE'),
+                       fixed.replace('target=', 'target ='), fixed.replace('failed - ', 'XCTFail failed - '))
+            for payload in invalid:
+                with self.subTest(reason=reason, payload=payload):
+                    self.assertEqual(helper.reachable_failure_locations(self.query_failure_fixture(payload), BUNDLE), [])
 
     def test_reachable_failure_diagnostics_reject_other_owner_source_and_bounds(self):
         payload = 'failed - batchActualScrollOwnerMissing target=librarySearch'
