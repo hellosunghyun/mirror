@@ -799,7 +799,7 @@ struct MirrorSettingsView: View {
             Button("선택적으로 iCloud 연결 시작") { Task { await model.previewCloudConnection() } }
                 .disabled(!model.canChangeWorkspace || model.cloudConnected || model.cloudSyncStatus == .accountTransitionRequired)
             if let preview = model.cloudPreview {
-                Text("이 기기의 원본 \(preview.localOperationCount)개 · 현재 수신된 계정 원본 \(preview.cloudOperationCount)개 · 중복 \(preview.duplicateCount)개")
+                Text("이 기기의 변경 기록 \(preview.localOperationCount)개 · iCloud에서 받은 변경 기록 \(preview.cloudOperationCount)개 · 중복 \(preview.duplicateCount)개")
                     .font(.callout)
                 ForEach(preview.warnings, id: \.self) { settingNote($0) }
                 Toggle("작업 제목과 변경 이력을 이 iCloud 개인 공간에 병합하는 데 동의", isOn: $cloudMergeConfirmed)
@@ -822,7 +822,7 @@ struct MirrorSettingsView: View {
         } header: {
             Label("동기화와 상태", systemImage: "externaldrive")
         } footer: {
-            settingNote("선택적 iCloud 동기화는 Apple 계정과 이 앱의 서명 설정이 필요해요. 다른 모든 기기가 최신이라는 표시를 하지 않아요.")
+            settingNote("iCloud 연결을 지원하는 앱과 사용할 수 있는 Apple 계정이 필요해요. 다른 기기의 변경 사항은 연결 상태에 따라 늦게 반영될 수 있어요.")
         }
     }
 

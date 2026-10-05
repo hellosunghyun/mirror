@@ -399,12 +399,12 @@ public actor MirrorStore {
         let otherEpoch = metadata.epoch != configuration.workspaceEpoch || metadata.workspace != configuration.workspaceKey
         let counts = Self.archivePreviewCounts(parsed, existing: otherEpoch ? [] : existing, configuration: previewConfiguration)
         var warnings: [String] = []
-        if counts.quarantinedRecords > 0 { warnings.append("격리·미해석 원본 \(counts.quarantinedRecords)개는 보존하지만 현재 작업에 적용하지 않습니다.") }
-        if counts.hasPendingRecords { warnings.append("아직 부모 기록이 없는 변경은 대기 상태로 보존합니다.") }
-        warnings.append("현재 작업 스냅샷이 아닌 원본 변경 기록을 병합합니다.")
+        if counts.quarantinedRecords > 0 { warnings.append("처리할 수 없는 변경 기록 \(counts.quarantinedRecords)개는 보존하지만 현재 목록에 적용하지 않아요.") }
+        if counts.hasPendingRecords { warnings.append("먼저 필요한 변경 기록이 없어 아직 적용할 수 없는 변경은 보관해요.") }
+        warnings.append("백업에 담긴 작업과 변경 이력을 함께 가져와요.")
         let otherAccount = Self.requiresAccountConfirmation(metadata.scopes, configuration: configuration)
-        if otherEpoch { warnings.append("다른 세대의 자료입니다. 기기 내 작업을 교체하고 원본 공간을 명시적으로 복원해야 합니다.") }
-        if otherAccount { warnings.append("다른 계정 또는 확인할 수 없는 출처의 자료입니다. 계정 간 이관을 명시적으로 확인해야 합니다.") }
+        if otherEpoch { warnings.append("다른 개인 공간 또는 초기화 전 자료예요. 이 자료를 복원하면 현재 기기의 작업이 교체돼요. 계속하려면 추가 확인이 필요해요.") }
+        if otherAccount { warnings.append("다른 계정에서 가져왔거나 출처를 확인할 수 없는 자료예요. 계정 간에 자료를 옮길지 추가로 확인해 주세요.") }
         return ImportPreview(operationCount: parsed.count, taskCount: report.tasks.count,
                              newTaskCount: counts.newTasks, duplicateCount: preview.duplicates,
                              quarantinedRecordCount: counts.quarantinedRecords, warnings: warnings,
@@ -420,10 +420,10 @@ public actor MirrorStore {
         let decoded = decode(parsed, configuration: previewConfiguration)
         let report = TaskReducer.reduce(decoded.records, workspaceKey: metadata.workspace, workspaceEpoch: metadata.epoch)
         let counts = archivePreviewCounts(parsed, existing: [], configuration: previewConfiguration)
-        var warnings = ["중단된 기기 내 복원을 선택한 원본 export로 다시 진행합니다. 현재 저장소는 전체 교체됩니다.",
-                        "다른 계정과 세대의 자료가 포함되면 이관을 명시적으로 확인해야 합니다."]
-        if counts.quarantinedRecords > 0 { warnings.append("격리·미해석 원본 \(counts.quarantinedRecords)개는 보존하지만 현재 작업에 적용하지 않습니다.") }
-        if counts.hasPendingRecords { warnings.append("아직 부모 기록이 없는 변경은 대기 상태로 보존합니다.") }
+        var warnings = ["선택한 내보내기 파일로 중단된 기기 복원을 다시 진행해요. 이 기기의 미러 저장 자료 전체가 교체돼요.",
+                        "다른 계정이나 개인 공간 또는 초기화 전 자료가 포함되어 있으면 복원에 추가 확인이 필요해요."]
+        if counts.quarantinedRecords > 0 { warnings.append("처리할 수 없는 변경 기록 \(counts.quarantinedRecords)개는 보존하지만 현재 목록에 적용하지 않아요.") }
+        if counts.hasPendingRecords { warnings.append("먼저 필요한 변경 기록이 없어 아직 적용할 수 없는 변경은 보관해요.") }
         return ImportPreview(operationCount: parsed.count, taskCount: report.tasks.count,
             newTaskCount: counts.newTasks, duplicateCount: importCounts(parsed, existing: []).duplicates,
             quarantinedRecordCount: counts.quarantinedRecords, warnings: warnings,

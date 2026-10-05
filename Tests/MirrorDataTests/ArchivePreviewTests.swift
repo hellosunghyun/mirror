@@ -120,7 +120,7 @@ struct ArchivePreviewTests {
             #expect(preview.newTaskCount == 1)
             #expect(preview.duplicateCount == 1)
             #expect(preview.quarantinedRecordCount == 3)
-            #expect(preview.warnings.contains { $0.contains("격리") && $0.contains("3개") })
+            #expect(preview.warnings.contains { $0.contains("처리할 수 없는 변경 기록") && $0.contains("3개") })
         }
         #expect(recovery.requiresWorkspaceConfirmation)
         #expect(try await target.snapshot().tasks.isEmpty)
@@ -157,6 +157,6 @@ struct ArchivePreviewTests {
         #expect(recovery.taskCount == 0)
         #expect(recovery.newTaskCount == 0)
         #expect(recovery.quarantinedRecordCount == 2)
-        #expect(recovery.warnings.contains { $0.contains("격리") && $0.contains("2개") })
+        #expect(recovery.warnings.contains { $0.contains("처리할 수 없는 변경 기록") && $0.contains("2개") })
     }
 }

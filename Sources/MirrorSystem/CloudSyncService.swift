@@ -261,9 +261,9 @@ public actor CloudSyncService {
                 localOperationCount: local.records.count + local.quarantinedCount,
                 cloudOperationCount: remote.records.count + remote.quarantinedCount,
                 duplicateCount: preview?.duplicateCount ?? 0,
-                warnings: (preview?.warnings ?? []) + ["작업과 변경 이력만 Apple private database에서 동기화합니다.",
-                    "캘린더 원문·세션·영수증·기기 알림 설정은 이 기기에 남습니다.",
-                    "다른 기기의 자료는 비동기로 내려오므로 이 미리 보기는 이후 달라질 수 있습니다."])
+                warnings: (preview?.warnings ?? []) + ["작업과 변경 이력만 개인 iCloud 공간에서 동기화해요.",
+                    "캘린더 원문·정리 진행 상태·저장 확인 정보·기기 알림 설정은 이 기기에 남아요.",
+                    "다른 기기의 변경 사항이 도착하면 미리 보기 내용이 달라질 수 있어요."])
             candidateStore = cloud; pendingLocalStore = localStore; pendingToken = consent.token
             pendingArchive = preview == nil ? nil : archive; fingerprint = account; identityTokenArchive = identity
             observedStoreIDs = await cloud.cloudStoreIdentifiers()
