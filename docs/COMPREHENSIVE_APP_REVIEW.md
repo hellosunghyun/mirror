@@ -428,3 +428,12 @@ TextField의 최소 높이를 기존 지우기 버튼과 같은44pt로 맞춘다
 소스를 대조하면 root라는 JSON 값은 MirrorRootView 본문의 환경이 아니라 iPad 도구 막대의 버튼에 붙은 modifier 내부 환경에서 읽혔다. 루트의 실제 dynamicTypeSize는 따로 읽혀 compact 배치와 시트 전달에 사용되고 있었다. iPhone header와 iPad toolbar의 두 root probe에 이 실제 루트 환경값을 전달해 같은 범위를 측정한다. root 값이 전달되지 않으면 unavailable로 실패하며, 요청한 크기·상수·UIKit 값으로 SwiftUI 관측을 대신하지 않는다.
 
 DEBUG value의 scope만 바로잡으며 앱 글자 환경·레이아웃·AX 계층·실제 버튼·모드와 UIKit appSystem 관측을 유지한다. 다른 presentation scope와 Mac 전용 probe, 기존 JSON 다섯 필드·accessibility5 일치·전체 감사·사례·시간 제한은 그대로다. 새 구현을 복제하는 정적 테스트는 추가하지 않고 기존 pinned/system 비교와 iPhone·iPad 적응형 UI 검사로 수정 효과와 컴파일을 확인한다. 실제 루트 값과 후속 capture·감사 결과는 다음 Actions 실행 전까지 미확정이다. FR-025/030, Q-075/076/079에 연결한다.
+
+
+### 2026-10-05 · 20개 작업 탐색의 순차 관측 보존
+
+4d14와2fd3의 실제 배치 검사에서20개 저장 뒤 originalTasks의 행 도달 실패가 반복됐다. Mac의 마지막 관측은 유효 button의 창 밖frame·전체포함필터후windowCount0·deadline초과였고, Phone·Pad의 마지막exists는false였다. 기존schema2는이마지막반복만보존하므로앞선행위치·탐색방향·조회시간을알수없었다. 이자료만으로고정wheel폭·정렬·lazy생성·앱저장오류중하나를원인으로단정하지않는다.
+
+기존schema1/2마지막관측은유지하고Twenty/libraryStarted/taskRow의같은최종실패에만최대12개순차관측을별도고정trace로보존한다. 기존AX조회값과post-owner frame, 선택한스크롤방향, 기존Date deadline guard의시작후경과값만사용한다. 추가AX·시계조회·스크롤·대기나성공조건변경없이실패때만출력하며, 성공과소유조회throw에서는출력하지않는다. 관측은원자적snapshot이아니고swipePerformed는SDK호출이반환했다는뜻이지실제이동거리를증명하지않는다.
+
+진단파서는기존schema2로이미검증한정확사례·phase·진행64·원본호출부·원래실패1회·failedterminal과연결된trace만받는다. 1부터연속인최대12개, 마지막기존관측일치, 순차평가의null·기하·enum·시간범위·8192바이트제한을검사한다. 중복·잘림·추가원문필드·다른source/사례/phase·성공·관측불일치는진단불가로닫는다. 제목·UUID·AX원문은기록하지않고typed수용게이트·15초/12회·44pt·전체대상포함을유지한다. 실제기록과원인분류효과는후속Actions로확인한다.

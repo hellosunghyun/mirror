@@ -1519,6 +1519,219 @@ class BatchResultGateTests(unittest.TestCase):
                     self.assertFalse((directory / 'safe-outcome.json').exists())
                     self.assertNotIn(str(ROOT), '\n'.join(messages))
 
+    def planner_trace_log_fixture(self, source_root, bundle=BUNDLE, observations=None, **changes):
+        if observations is None:
+            observations = [
+                {'iteration': 1, 'exists': False, 'role': None, 'targetFrame': None,
+                 'ownerFrame': [0, 0, 100, 100], 'windowCount': None, 'hittable': None,
+                 'enabled': None, 'insideOwner': None, 'deadlineExceededAtLastGuard': False,
+                 'swipePerformed': True, 'postOwnerTargetFrame': [0, -10, 100, 20],
+                 'scrollDirection': 'up', 'guardElapsedMilliseconds': 1_250.5},
+                {'iteration': 2, 'exists': True, 'role': 'button', 'targetFrame': [0, 90, 100, 20],
+                 'ownerFrame': [0, 0, 100, 100], 'windowCount': 1, 'hittable': True,
+                 'enabled': True, 'insideOwner': False, 'deadlineExceededAtLastGuard': True,
+                 'swipePerformed': False, 'postOwnerTargetFrame': None,
+                 'scrollDirection': None, 'guardElapsedMilliseconds': 15_020.25},
+            ]
+        extra_fields = {'postOwnerTargetFrame', 'scrollDirection', 'guardElapsedMilliseconds'}
+        last = {key: value for key, value in observations[-1].items() if key not in extra_fields}
+        lines = self.task_row_log_fixture(source_root, bundle, **{**last, **changes})
+        last_value = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_MARKER):])
+        value = {'schemaVersion': 1, **{key: last_value[key] for key in
+                 ('method', 'phase', 'progressSequence', 'callerLine', 'target')},
+                 'observationTiming': 'cachedIterationsAtFailure', 'observations': observations}
+        return lines[:-2] + [helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value)] + lines[-2:]
+
+    def test_reachability_trace_preserves_late_appearance_short_circuits_and_all_twelve_swipes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.task_row_source_fixture(source_root)
+            normal = self.planner_trace_log_fixture(source_root)
+            entries = json.loads(normal[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])['observations']
+            zero = {**entries[0], 'exists': True, 'role': 'button', 'targetFrame': [0, 0, 0, 20],
+                    'postOwnerTargetFrame': [0, 0, 0, 0], 'scrollDirection': 'down'}
+            invalid = {**zero, 'targetFrame': 'invalid', 'postOwnerTargetFrame': 'invalid',
+                       'ownerFrame': 'invalid'}
+            twelve = [{**entries[0], 'iteration': index, 'postOwnerTargetFrame': None,
+                       'scrollDirection': 'down' if index in (1, 4, 5, 6, 7) else 'up',
+                       'guardElapsedMilliseconds': index * 1_000} for index in range(1, 13)]
+            single = [{**entries[-1], 'iteration': 1, 'guardElapsedMilliseconds': 15_000}]
+            for platform, bundle in (('iphone', BUNDLE), ('ipad', BUNDLE), ('macos', 'MirrorMacBatchUITests')):
+                for observations in (entries, [zero, entries[-1]], [invalid, entries[-1]], twelve, single):
+                    with self.subTest(platform=platform, observations=observations):
+                        lines = self.planner_trace_log_fixture(source_root, bundle, observations)
+                        value = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+                        reports = helper.planner_reachability_trace_diagnostics(
+                            '\n'.join(lines), bundle, platform, source_root)
+                        self.assertEqual(reports, [{'scope': 'partialFailureOnly', **value,
+                            'sourceFile': helper.SOURCE, 'line': 10, 'column': 1, 'terminal': 'failed'}])
+                        with_trace = helper.planner_reachability_diagnostics('\n'.join(lines), bundle, platform, source_root)
+                        without_trace = helper.planner_reachability_diagnostics(
+                            '\n'.join(lines[:-3] + lines[-2:]), bundle, platform, source_root)
+                        self.assertEqual(with_trace, without_trace)
+                        self.assertEqual(len(with_trace), 1)
+                        with self.assertRaises(helper.BatchError):
+                            helper.validate_log('\n'.join(lines), bundle)
+                        with self.assertRaises(helper.BatchError):
+                            helper.validate_outcome({**EXPECTED, **reports[0]}, EXPECTED)
+            self.assertFalse(helper.planner_reachability_observation_valid(entries[0]))
+            both = [self.planner_log_fixture(source_root), normal]
+            for order in (both, list(reversed(both))):
+                self.assertEqual(len(helper.planner_reachability_trace_diagnostics(
+                    '\n'.join(sum(order, [])), BUNDLE, 'ipad', source_root)), 1)
+
+    def test_reachability_trace_rejects_intermediate_timer_and_last_observation_contradictions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.task_row_source_fixture(source_root)
+            lines = self.planner_trace_log_fixture(source_root)
+            fields = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+            changes = [(0, value) for value in (
+                {'iteration': 0}, {'iteration': True}, {'iteration': 2},
+                {'deadlineExceededAtLastGuard': True}, {'swipePerformed': False},
+                {'role': 'button'}, {'targetFrame': [0, 0, 100, 20]}, {'ownerFrame': None},
+                {'windowCount': 1}, {'hittable': False}, {'enabled': True}, {'insideOwner': False},
+                {'scrollDirection': None}, {'scrollDirection': 'left'},
+                {'postOwnerTargetFrame': 'SYNTHETIC_PRIVATE_FRAME'},
+                {'postOwnerTargetFrame': [True, 0, 10, 10]}, {'postOwnerTargetFrame': [0, 0, -1, 20]},
+                {'guardElapsedMilliseconds': -1}, {'guardElapsedMilliseconds': True},
+                {'guardElapsedMilliseconds': '1250'}, {'guardElapsedMilliseconds': float('nan')},
+                {'guardElapsedMilliseconds': float('inf')}, {'guardElapsedMilliseconds': 10 ** 400},
+                {'guardElapsedMilliseconds': 15_000}, {'guardElapsedMilliseconds': 1_200_001},
+            )]
+            changes += [(1, value) for value in (
+                {'iteration': 3}, {'guardElapsedMilliseconds': 14_999},
+                {'postOwnerTargetFrame': [0, 0, 0, 0]}, {'scrollDirection': 'up'},
+                {'role': 'other'}, {'targetFrame': [0, 91, 100, 20]},
+                {'ownerFrame': [0, 0, 100, 101]},
+            )]
+            for index, change in changes:
+                with self.subTest(index=index, change=change):
+                    value = copy.deepcopy(fields)
+                    value['observations'][index].update(change)
+                    marker = helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value)
+                    current = '\n'.join(lines[:-3] + [marker] + lines[-2:])
+                    self.assertEqual(helper.planner_reachability_trace_diagnostics(current, BUNDLE, 'ipad', source_root), [])
+                    self.assertEqual(len(helper.planner_reachability_diagnostics(current, BUNDLE, 'ipad', source_root)), 1)
+            # 둘 다 deadline 이전이어도 순차 guard 시간의 역행은 연결하지 않는다.
+            value = copy.deepcopy(fields)
+            earlier = {**value['observations'][0], 'iteration': 2, 'guardElapsedMilliseconds': 1_000}
+            value['observations'].insert(1, earlier)
+            value['observations'][-1]['iteration'] = 3
+            changed = self.planner_trace_log_fixture(source_root, observations=value['observations'])
+            self.assertEqual(helper.planner_reachability_trace_diagnostics('\n'.join(changed), BUNDLE, 'ipad', source_root), [])
+            # 조기 단축 평가와 양수 frame/owner 규칙은 trace 중간에서도 유지한다.
+            for change in ({'targetFrame': [0, 0, 100, 20]}, {'windowCount': 1}, {'insideOwner': False}):
+                value = copy.deepcopy(fields)
+                value['observations'][0].update(exists=True, role='button', targetFrame=[0, 0, 0, 0])
+                value['observations'][0].update(change)
+                marker = helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value)
+                self.assertEqual(helper.planner_reachability_trace_diagnostics(
+                    '\n'.join(lines[:-3] + [marker] + lines[-2:]), BUNDLE, 'ipad', source_root), [])
+
+    def test_reachability_trace_rejects_private_extra_duplicate_truncated_and_oversized_payloads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            self.task_row_source_fixture(source_root)
+            lines = self.planner_trace_log_fixture(source_root)
+            fields = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+            values = [{**fields, 'private': 'SYNTHETIC_PRIVATE_VALUE'}, {**fields, 'observations': []},
+                      {**fields, 'observations': fields['observations'] * 7},
+                      {**fields, 'observations': None}, {**fields, 'schemaVersion': True},
+                      {**fields, 'schemaVersion': 2}, {**fields, 'observationTiming': 'freshQuery'}]
+            for key in fields:
+                values.append({name: value for name, value in fields.items() if name != key})
+            for key in fields['observations'][0]:
+                value = copy.deepcopy(fields)
+                del value['observations'][0][key]
+                values.append(value)
+            for key, item in (('rawValue', 'SYNTHETIC_PRIVATE_VALUE'), ('role', 'SYNTHETIC_PRIVATE_ROLE')):
+                value = copy.deepcopy(fields)
+                value['observations'][0][key] = item
+                values.append(value)
+            marker = lines[-3]
+            malformed = [helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value) for value in values]
+            malformed += [marker[:-1], marker.ljust(8192), 'SDK error: ' + marker,
+                          'title="' + marker + '"', marker + ' SYNTHETIC_PRIVATE_VALUE',
+                          marker.replace('"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 1'),
+                          marker.replace('"iteration": 1', '"iteration": 1, "iteration": 1')]
+            for wrong in malformed:
+                self.assertEqual(helper.planner_reachability_trace_diagnostics(
+                    '\n'.join(lines[:-3] + [wrong] + lines[-2:]), BUNDLE, 'ipad', source_root), [])
+
+    def test_reachability_trace_requires_existing_schema2_source_progress_and_one_failed_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary).resolve()
+            source = self.task_row_source_fixture(source_root)
+            lines = self.planner_trace_log_fixture(source_root)
+            before, last, trace, assertion, terminal = lines[:-4], *lines[-4:]
+            wrong_logs = [before + [trace, last, assertion, terminal], before + [last, assertion, trace, terminal],
+                          before + [last, assertion, terminal, trace], [trace] + lines,
+                          before + [last, trace, trace, assertion, terminal], before + [trace, assertion, terminal],
+                          before + [last, trace, assertion], before + [last, trace, terminal],
+                          before + [last, trace, assertion, assertion, terminal], lines + [assertion],
+                          before + [last, trace, assertion, terminal.replace('failed.', 'passed.')],
+                          before + [last, trace, assertion, terminal.replace('failed.', 'skipped.')],
+                          before[:-1] + [last, trace, assertion, terminal],
+                          before + [last, trace, progress_lines(helper.CASES[1], 65)[-1], assertion, terminal]]
+            fields = json.loads(trace[len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+            for change in ({'method': helper.CASES[0]}, {'phase': 'pickerStarted'}, {'progressSequence': 63},
+                           {'progressSequence': True}, {'callerLine': 4}, {'callerLine': True}, {'target': 'planTask'}):
+                wrong = helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps({**fields, **change})
+                wrong_logs.append(before + [last, wrong, assertion, terminal])
+            for wrong in wrong_logs:
+                self.assertEqual(helper.planner_reachability_trace_diagnostics('\n'.join(wrong), BUNDLE, 'ipad', source_root), [])
+            for platform, bundle in (('macos', BUNDLE), ('iphone', 'MirrorMacBatchUITests'), ('unknown', BUNDLE)):
+                self.assertEqual(helper.planner_reachability_trace_diagnostics('\n'.join(lines), bundle, platform, source_root), [])
+            schema1 = self.planner_log_fixture(source_root)
+            self.assertEqual(helper.planner_reachability_trace_diagnostics(
+                '\n'.join(schema1[:-2] + [trace] + schema1[-2:]), BUNDLE, 'ipad', source_root), [])
+            original = source.read_text()
+            for wrong in (original.replace('originalTasks(', 'otherTasks('),
+                          original.replace('"task.row.", title', '"task.row.", other'),
+                          original.replace('target: .taskRow', 'target: .planTask')):
+                source.write_text(wrong)
+                self.assertEqual(helper.planner_reachability_trace_diagnostics('\n'.join(lines), BUNDLE, 'ipad', source_root), [])
+
+    def test_reachability_trace_notice_is_optional_and_never_changes_acceptance_or_original_failure(self):
+        source = (ROOT / helper.SOURCE).read_text().splitlines()
+        call = 'let row = try reachable(query, surface: .library, target: .taskRow, in: app)'
+        line = next(index for index, text in enumerate(source, 1) if text.strip() == call)
+        prefix = '::notice::Batch UI planner reachability trace diagnostics: '
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            for platform, bundle in (('iphone', BUNDLE), ('ipad', BUNDLE), ('macos', 'MirrorMacBatchUITests')):
+                expected = {**EXPECTED, 'platform': platform}
+                lines = self.planner_trace_log_fixture(ROOT, bundle, callerLine=line)
+                for valid in (True, False):
+                    current = list(lines)
+                    if not valid:
+                        value = json.loads(current[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+                        value['private'] = 'SYNTHETIC_PRIVATE_VALUE'
+                        current[-3] = helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value)
+                    log_value = '\n'.join(current)
+                    (directory / 'test.log').write_text(log_value)
+                    reports = helper.planner_reachability_trace_diagnostics(log_value, bundle, platform)
+                    self.assertEqual(len(reports), int(valid))
+                    for enabled in (False, True):
+                        with mock.patch.object(helper, 'context_for', return_value={'bundle': bundle}), \
+                                mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                            helper.diagnostics(directory, expected, 'test', partial_failure=enabled)
+                        messages = [value.args[0] for value in printed.call_args_list]
+                        notices = [message for message in messages if message.startswith(prefix)]
+                        self.assertEqual(len(notices), int(valid and enabled))
+                        if notices:
+                            self.assertEqual(json.loads(notices[0][len(prefix):]),
+                                {**expected, 'scope': 'partialFailureOnly', 'locations': reports, 'locationCount': 1})
+                        self.assertTrue(any(message.startswith('::notice::Batch UI reachable failure diagnostics: ')
+                                            for message in messages))
+                        self.assertEqual(any(message.startswith('::notice::Batch UI planner reachability diagnostics: ')
+                                             for message in messages), enabled)
+                        write.assert_not_called()
+                        self.assertFalse((directory / 'safe-outcome.json').exists())
+                        self.assertNotIn('SYNTHETIC_PRIVATE_VALUE', '\n'.join(messages))
+                        self.assertNotIn(str(ROOT), '\n'.join(messages))
+
     def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             source_root = Path(temporary).resolve()

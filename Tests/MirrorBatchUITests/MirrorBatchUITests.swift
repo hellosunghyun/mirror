@@ -34,6 +34,9 @@ final class MirrorBatchUITests: XCTestCase {
         var insideOwner: Bool?
         var deadlineExceededAtLastGuard: Bool?
         var swipePerformed = false
+        var postOwnerTargetFrame: CGRect?
+        var scrollDirection: String?
+        var guardElapsedMilliseconds: Double?
 
         mutating func recordWindowCount(_ value: Int) -> Int { windowCount = value; return value }
         mutating func recordHittable(_ value: Bool) -> Bool { hittable = value; return value }
@@ -623,10 +626,13 @@ final class MirrorBatchUITests: XCTestCase {
             _ = try unique(query, timeout: max(0, deadline.timeIntervalSinceNow))
         }
         var lastObservation = PlannerReachabilityObservation(iteration: 0)
+        let capturesTrace = progressCase == .twenty && progressPhase == .libraryStarted && target == .taskRow
+        var observations: [PlannerReachabilityObservation] = []
         var missingSearchAttempt = 0
         for attempt in 0..<12 {
             XCTAssertEqual(app.state, .runningForeground, file: file, line: line)
             lastObservation = PlannerReachabilityObservation(iteration: attempt + 1)
+            defer { if capturesTrace { observations.append(lastObservation) } }
             var observedTarget: ScrollTarget?
             let exists = query.firstMatch.exists
             lastObservation.exists = exists
@@ -649,13 +655,16 @@ final class MirrorBatchUITests: XCTestCase {
                     if lastObservation.recordInsideOwner(owner.frame.contains(frame)) { return element }
                 }
             }
-            let beforeDeadline = Date() < deadline
+            let guardDate = Date()
+            let beforeDeadline = guardDate < deadline
             lastObservation.deadlineExceededAtLastGuard = !beforeDeadline
+            lastObservation.guardElapsedMilliseconds = guardDate.timeIntervalSince(deadline.addingTimeInterval(-15)) * 1_000
             guard beforeDeadline, surface != .none else { break }
             let owner = try scrollOwner(surface, in: app, target: target, observedTarget: observedTarget, file: file, line: line)
             lastObservation.ownerFrame = owner.frame
             let towardTop: Bool
             let directionFrame: CGRect? = query.firstMatch.exists ? query.firstMatch.frame : nil
+            lastObservation.postOwnerTargetFrame = directionFrame
             if let directionFrame, hasArea(directionFrame) {
                 towardTop = directionFrame.minY < owner.frame.minY
             } else if surface == .library, !missingTowardTop, target == .taskRow || target == .taskSelection {
@@ -669,6 +678,8 @@ final class MirrorBatchUITests: XCTestCase {
                 default: towardTop = true
                 }
             } else { towardTop = missingTowardTop }
+            // 탐색 방향이다. 손가락 swipe 방향과 구별한다.
+            lastObservation.scrollDirection = towardTop ? "up" : "down"
             #if os(macOS)
             owner.element.scroll(byDeltaX: 0, deltaY: towardTop ? 180 : -180)
             #else
@@ -677,6 +688,7 @@ final class MirrorBatchUITests: XCTestCase {
             lastObservation.swipePerformed = true
         }
         recordPlannerReachabilityFailure(lastObservation, target: target, callerLine: Int(line))
+        recordPlannerReachabilityTrace(observations, target: target, callerLine: Int(line))
         // 대상은 호출부의 고정 enum이다. 실제 identifier·제목·AX 값은 기록하지 않는다.
         XCTFail("batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=\(target.rawValue)", file: file, line: line)
         throw HarnessFailure.unreachable
@@ -731,6 +743,56 @@ final class MirrorBatchUITests: XCTestCase {
         guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
         let line = Data(("Batch UI planner reachability diagnostic: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
         guard line.count <= 1_024 else { return }
+        try? FileHandle.standardOutput.write(contentsOf: line)
+    }
+
+    private func recordPlannerReachabilityTrace(_ observations: [PlannerReachabilityObservation],
+                                                target: ReachableTarget, callerLine: Int) {
+        guard progressCase == .twenty, progressPhase == .libraryStarted, target == .taskRow,
+              (1...12).contains(observations.count) else { return }
+        func frameValue(_ frame: CGRect?) -> Any {
+            guard let frame else { return NSNull() }
+            let values = [Double(frame.minX), Double(frame.minY), Double(frame.width), Double(frame.height)]
+            guard values.allSatisfy({ $0.isFinite && abs($0) <= 100_000 }),
+                  values[2] >= 0, values[3] >= 0 else { return "invalid" }
+            return values
+        }
+        var entries: [[String: Any]] = []
+        for (index, observation) in observations.enumerated() {
+            guard observation.iteration == index + 1,
+                  let deadlineExceeded = observation.deadlineExceededAtLastGuard,
+                  let elapsed = observation.guardElapsedMilliseconds, elapsed.isFinite,
+                  (0...1_200_000).contains(elapsed),
+                  observation.windowCount.map({ (0...10_000).contains($0) }) ?? true else { return }
+            let role: Any
+            switch observation.role {
+            case .some(.staticText): role = "staticText"
+            case .some(.button): role = "button"
+            case .some(_): role = "other"
+            case .none: role = NSNull()
+            }
+            // 이미 읽은 반복별 순차 값만 보존한다. 각 swipe 뒤의 상태를 다시 조회하지 않는다.
+            entries.append([
+                "iteration": observation.iteration, "exists": observation.exists, "role": role,
+                "targetFrame": frameValue(observation.targetFrame), "ownerFrame": frameValue(observation.ownerFrame),
+                "windowCount": observation.windowCount.map { $0 as Any } ?? NSNull(),
+                "hittable": observation.hittable.map { $0 as Any } ?? NSNull(),
+                "enabled": observation.enabled.map { $0 as Any } ?? NSNull(),
+                "insideOwner": observation.insideOwner.map { $0 as Any } ?? NSNull(),
+                "deadlineExceededAtLastGuard": deadlineExceeded, "swipePerformed": observation.swipePerformed,
+                "postOwnerTargetFrame": frameValue(observation.postOwnerTargetFrame),
+                "scrollDirection": observation.scrollDirection.map { $0 as Any } ?? NSNull(),
+                "guardElapsedMilliseconds": elapsed,
+            ])
+        }
+        let fields: [String: Any] = [
+            "schemaVersion": 1, "method": ProgressCase.twenty.rawValue, "phase": ProgressPhase.libraryStarted.rawValue,
+            "progressSequence": progressSequence, "callerLine": callerLine, "target": target.rawValue,
+            "observationTiming": "cachedIterationsAtFailure", "observations": entries,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
+        let line = Data(("Batch UI planner reachability trace: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
+        guard line.count <= 8_192 else { return }
         try? FileHandle.standardOutput.write(contentsOf: line)
     }
 

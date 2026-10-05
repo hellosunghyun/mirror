@@ -30,6 +30,7 @@ PROGRESS_MARKER = 'Batch UI progress: '
 DISCLOSURE_MARKER = 'Batch UI disclosure failure diagnostic: '
 MOBILE_MEASUREMENT_MARKER = 'Batch UI mobile measurement diagnostic: '
 PLANNER_REACHABILITY_MARKER = 'Batch UI planner reachability diagnostic: '
+PLANNER_REACHABILITY_TRACE_MARKER = 'Batch UI planner reachability trace: '
 
 
 class BatchError(Exception):
@@ -644,24 +645,29 @@ def disclosure_failure_diagnostics(log, bundle, source_root=ROOT):
     return reports
 
 
-def planner_reachability_observation_valid(value):
+def _planner_frame_valid(frame):
+    return (frame is None or frame == 'invalid' or
+            (type(frame) is list and len(frame) == 4
+             and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
+                     for number in frame) and frame[2] >= 0 and frame[3] >= 0))
+
+
+def planner_reachability_observation_valid(value, *, _terminal=True):
     """캐시 필드의 범위와 단축 평가 순서만 검증하며 기하를 재계산하지 않는다."""
-    def frame_valid(frame):
-        return (frame is None or frame == 'invalid' or
-                (type(frame) is list and len(frame) == 4
-                 and all(type(number) in (int, float) and abs(number) <= 100_000 and math.isfinite(number)
-                         for number in frame) and frame[2] >= 0 and frame[3] >= 0))
 
     if (type(value['iteration']) is not int or not 1 <= value['iteration'] <= 12
             or type(value['exists']) is not bool
-            or not frame_valid(value['targetFrame']) or not frame_valid(value['ownerFrame'])
+            or not _planner_frame_valid(value['targetFrame']) or not _planner_frame_valid(value['ownerFrame'])
             or (value['windowCount'] is not None
                 and (type(value['windowCount']) is not int or not 0 <= value['windowCount'] <= 10_000))
             or any(item is not None and type(item) is not bool
                    for item in (value['hittable'], value['enabled'], value['insideOwner']))
             or type(value['deadlineExceededAtLastGuard']) is not bool or type(value['swipePerformed']) is not bool):
         return False
-    if value['deadlineExceededAtLastGuard']:
+    if not _terminal:
+        if value['deadlineExceededAtLastGuard'] or not value['swipePerformed']:
+            return False
+    elif value['deadlineExceededAtLastGuard']:
         if value['swipePerformed']:
             return False
     elif value['iteration'] != 12 or not value['swipePerformed']:
@@ -793,6 +799,77 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
     return reports if observation is None and all(matching_failures[item['schemaVersion']] == 1 for item in reports) else []
 
 
+def planner_reachability_trace_diagnostics(log, bundle, platform, source_root=ROOT):
+    """검증된 마지막 taskRow 실패에만 같은 사례의 제한된 반복 캐시를 덧붙인다."""
+    marker = PLANNER_REACHABILITY_TRACE_MARKER
+    if (not isinstance(log, str) or len(log.encode('utf-8')) > MAX_LOG
+            or log.count(marker.rstrip()) != 1):
+        return []
+    last_reports = [report for report in planner_reachability_diagnostics(log, bundle, platform, source_root)
+                    if report['schemaVersion'] == 2]
+    if len(last_reports) != 1:
+        return []
+    last = last_reports[0]
+    fields = {'schemaVersion', 'method', 'phase', 'progressSequence', 'callerLine',
+              'target', 'observationTiming', 'observations'}
+    cached_fields = {'iteration', 'exists', 'role', 'targetFrame', 'ownerFrame', 'windowCount',
+                     'hittable', 'enabled', 'insideOwner', 'deadlineExceededAtLastGuard', 'swipePerformed'}
+    entry_fields = cached_fields | {'postOwnerTargetFrame', 'scrollDirection', 'guardElapsedMilliseconds'}
+    active, last_seen, failure_seen, trace = None, False, False, None
+    for line in log.splitlines():
+        if marker.rstrip() in line:
+            if (active != CASES[1] or not last_seen or failure_seen
+                    or not line.startswith(marker) or len(line.encode('utf-8')) + 1 > 8192):
+                return []
+            try:
+                value = SUPPORT.strict_json(line[len(marker):])
+            except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
+                return []
+            if (not isinstance(value, dict) or set(value) != fields
+                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
+                    or type(value['progressSequence']) is not int or value['progressSequence'] != 64
+                    or type(value['callerLine']) is not int
+                    or value['observationTiming'] != 'cachedIterationsAtFailure'
+                    or any(value[key] != last[key] for key in
+                           ('method', 'phase', 'progressSequence', 'callerLine', 'target'))
+                    or type(value['observations']) is not list or not 1 <= len(value['observations']) <= 12):
+                return []
+            previous_elapsed = 0
+            for index, observation in enumerate(value['observations'], 1):
+                if (not isinstance(observation, dict) or set(observation) != entry_fields
+                        or observation['iteration'] != index
+                        or not planner_reachability_observation_valid(
+                            observation, _terminal=index == len(value['observations']))
+                        or not _planner_frame_valid(observation['postOwnerTargetFrame'])):
+                    return []
+                elapsed = observation['guardElapsedMilliseconds']
+                if (type(elapsed) not in (int, float) or not 0 <= elapsed <= 1_200_000
+                        or not math.isfinite(elapsed) or elapsed < previous_elapsed
+                        or observation['deadlineExceededAtLastGuard'] != (elapsed >= 15_000)):
+                    return []
+                if observation['swipePerformed']:
+                    if observation['scrollDirection'] not in ('up', 'down'):
+                        return []
+                elif observation['postOwnerTargetFrame'] is not None or observation['scrollDirection'] is not None:
+                    return []
+                previous_elapsed = elapsed
+            if any(value['observations'][-1][key] != last[key] for key in cached_fields):
+                return []
+            trace = value
+        elif line.startswith(PLANNER_REACHABILITY_MARKER) and active == CASES[1]:
+            # 마지막 schema2의 현재 source/case/progress/실패 소유는 위 파서가 이미 검증했다.
+            last_seen = True
+        elif event := SUPPORT.UI_CASE_EVENT.match(line):
+            active = event[2] if event[3] == 'started' else None
+            last_seen, failure_seen = False, False
+        elif last_seen and SUPPORT.UI_FAILURE_SOURCE.fullmatch(line):
+            failure_seen = True
+    if trace is None:
+        return []
+    return [{'scope': 'partialFailureOnly', **trace, 'sourceFile': SOURCE, 'line': last['line'],
+             **({'column': last['column']} if 'column' in last else {}), 'terminal': 'failed'}]
+
+
 def diagnostics(directory, expected, phase, partial_failure=False):
     require(phase in ('build', 'test'), 'invalidArguments')
     require(not partial_failure or phase == 'test', 'invalidArguments')
@@ -832,6 +909,11 @@ def diagnostics(directory, expected, phase, partial_failure=False):
                 print('::notice::Batch UI planner reachability diagnostics: ' + json.dumps(
                     {**expected, 'scope': 'partialFailureOnly', 'locations': planner_reports,
                      'locationCount': len(planner_reports)}, sort_keys=True))
+            trace_reports = planner_reachability_trace_diagnostics(log, context['bundle'], expected['platform'])
+            if trace_reports:
+                print('::notice::Batch UI planner reachability trace diagnostics: ' + json.dumps(
+                    {**expected, 'scope': 'partialFailureOnly', 'locations': trace_reports,
+                     'locationCount': len(trace_reports)}, sort_keys=True))
             if expected['platform'] == 'macos':
                 disclosure_reports = disclosure_failure_diagnostics(log, context['bundle'])
                 if disclosure_reports:
