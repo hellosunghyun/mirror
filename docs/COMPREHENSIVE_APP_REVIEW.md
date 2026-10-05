@@ -412,3 +412,10 @@ f5e iPhone system은 앱 빌드 뒤 system-type-setup의 git diff 5초 제한에
 5d9b iPhone의 검증된 빈 보관함 검색과 입력한 검색 PNG를 대조했다. 같은 x=1000에서 검색 배경의 세로 범위는 각각 y423–549와 y423–616으로, 상단은 같고 하단이67픽셀 내려갔다. 현재 plain TextField에는 최소 높이가 없고 검색어가 있을 때만44pt 지우기 버튼이 생기는 구조와 일치한다. 실제 AX hit frame은 미관측이므로44pt 터치 영역 미달이나 Mac 검색 값 대기 실패의 원인으로 단정하지 않는다.
 
 TextField의 최소 높이를 기존 지우기 버튼과 같은44pt로 맞춘다. 글자 크기가 더 커질 때 필요한 높이는 계속 허용한다. 문구·검색 binding·focus·clear 동작·ID와 목록 상태는 유지한다. 낮은 영향의 레이아웃 변경으로 새 테스트는 추가하지 않고 기존 화면·입력·배치·접근성 검사에서 빈/입력 상태와 키보드·큰 글자·Mac 레이아웃을 확인한다. 수정 후 실제 높이와 기존 실패 해결은 후속 Actions 대상이다. FR-017/025/030, Q-046/075/076/079에 연결한다.
+
+
+### 2026-10-05 · 배치 탐색 방향의 중복 기하 조회 감소
+
+4d14 iPad Batch의 Two는 complete33 뒤 실제 passed로 종결했다. Twenty는20개 저장 뒤 libraryStarted에서 작업 탐색에 실패했다. schema2의 첫 실제 관측은 마지막6회차 exists=false·deadlineExceeded=true·swipePerformed=false이며 다른 조건은 평가되지 않았다. 이전 반복의 비용·기하·탐색 대상 순서는 미관측이다. 이를 clipping·소유자·입력 순서 문제로 단정하지 않는다.
+
+탐색 owner를 확인한 뒤 기존 위치에서 대상의 exists를 다시 읽고, 존재하면 frame을 한 번만 읽어 유효성·위쪽 방향을 같은 CGRect로 판단한다. owner 조회 중 늦게 나타나는 lazy 행을 놓치지 않도록 반복 시작의 기하를 재사용하지 않는다. 대상이 없거나 기하가 무효이면 기존 양방향 탐색을 유지하며, 최종 고유성·역할·창/owner·hittable·enabled·포함 검사와15초/12회·진단 schema·실제 호출부를 바꾸지 않는다. 독립 peer와 diff 검사를 마쳤고 실제 절감량·실패 해결은 다음 Actions에서 확인한다.
