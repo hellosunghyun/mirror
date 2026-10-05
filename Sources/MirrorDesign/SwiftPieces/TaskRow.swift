@@ -187,7 +187,11 @@ public struct TaskRow: View {
                 .padding(.vertical, 3)
                 .background(style.snooze, in: Capsule())
         } else if let due {
-            Label(due, systemImage: "calendar")
+            Label {
+                Text(due).foregroundStyle(style.dueText ?? style.muted)
+            } icon: {
+                Image(systemName: "calendar")
+            }
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(style.muted)
                 .labelStyle(TightLabel())
@@ -438,6 +442,8 @@ public extension TaskRow {
         public var text: Color = Style.adaptive(0x141414, 0xF4F3EF)
         /// Due label, strike-through and finished titles.
         public var muted: Color = Style.adaptive(0x5C5A56, 0xA6A49F)
+        /// Optional due text color. Nil and the calendar icon retain `muted`.
+        public var dueText: Color? = nil
         /// Dark ink used on every block.
         public var ink: Color = Color(red: 0.078, green: 0.078, blue: 0.078)
         /// Check fill, completion wash and complete tile, unless `tint` is passed.

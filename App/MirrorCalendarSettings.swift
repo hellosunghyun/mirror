@@ -220,7 +220,7 @@ struct MirrorCalendarView: View {
             }
             if !compact {
                 Text("할 일은 날짜별 목록에, 실제 마감은 따로 표시해요.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(MirrorPalette.supportingText)
             }
         }
     }
@@ -369,7 +369,7 @@ struct MirrorCalendarView: View {
                     Task { await model.requestCalendarAccess(); await loadEvents() }
                 }.buttonStyle(.bordered)
                 Text("허용하지 않아도 할 일 날짜를 정할 수 있어요.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(MirrorPalette.supportingText)
             }
         }
     }

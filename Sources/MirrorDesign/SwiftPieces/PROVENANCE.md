@@ -24,3 +24,5 @@ FormField와 TrackingTabs 원본도 검토했다. FormField는 UIKit 키보드·
 정리 카드 제목도 같은 측정 기반 3줄 미리 보기와 명시적 더 보기·접기를 사용한다. 원문·review.card 식별자를 유지하며 선택적 AccessibilityFocusState<Bool>.Binding을 레이아웃이 끝난 실제 표시 paragraph에 직접 적용한다. 접근성 포커스를 부모 Group이나 측정 복사본에 지정하지 않는다. 새 작업에서는 taskID로 접힘 상태를 초기화하고 본문 탭 펼침은 끈다. String·AttributedString 초기화의 포커스 기본값은 nil이고 기존 상세·메모 표시 체인은 유지한다. SwiftUI SDK의 해당 포커스 API와 실제 VoiceOver 이동·원문·펼침 버튼 동작은 원격 검증 대상으로 남는다.
 
 후속 보완: 실제 상세 제목 펼침 검사에서 `expandableText.expand` 누락을 확인했다. 실제 더 보기·접기 Button을 식별자와 포커스를 가진 표시 paragraph의 아래 형제로 분리하고 label의 최소44×44pt 레이아웃과 직사각형 터치 영역을 제공한다. 문단 안의 마지막 줄 fade는 장식만 남기고 hit testing과 접근성에서 제외한다. 실제 잘림 조건·expanded/showsLess·원문 접근성·측정·링크·애니메이션·원저작권은 유지한다. 정확한 SDK 원인과 새 소스의 실제 해결 여부는 Actions 결과로 확인한다.
+
+2026-10-05 후속 변경: TaskRow.Style에 선택적 dueText를 추가해 날짜 Label의 Text만 별도 색상으로 표시할 수 있게 했다. 기본 nil은 기존 muted를 사용하고, 미러 앱에서만 관측된 날짜 문구의 읽기 대비를 위해 supportingText를 지정한다. 달력 아이콘·완료 제목·취소선·체크 테두리·snoozed·비활성 opacity·글꼴·접근성·행 동작과 라이선스는 유지하며 실제 새 표시와 SDK 수용은 후속 Actions에서 확인한다.

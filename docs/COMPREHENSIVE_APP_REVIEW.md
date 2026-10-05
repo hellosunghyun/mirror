@@ -319,6 +319,10 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 
 8b91 iPad 기본 UI에서 검증한 설정 원본 PNG의 두 저장 상태 값은 모두 core 색 #8A8A8E, 인접 배경 #FFFFFF였으며 표시 픽셀 대비 상한은3.43888:1이었다. PNG는 sRGB를 명시하고 ICC는 없으며 SHA256·CRC·IDAT를 대조했다. 이는 합성된 글자 픽셀의 관측이며 안티앨리어싱 이전 원색을 역추정한 WCAG 판정과 구별한다. 직접 관측한 settingsOverview의 저장 상태·iCloud 값 Text 두 곳에만 기존 supportingText를 명시한다. 흰 배경의 원색 산술 대비는6.56287:1이고 실제 새 렌더링은 후속 Native 설정 사진과 Adaptive 검사로 확인한다. 같은 문구의 다른 화면·상위 스타일·레이아웃·값·비활성 상태·글자 크기·접근성 식별자는 바꾸지 않는다.
 
+### 일정 설명과 검색 범위·계획 날짜의 읽기 대비
+
+같은 8b91 iPad 원본의 일정 설명 두 문구는 #8A8A8E/#FFFFFF로 표시 대비 상한3.43888:1, 보관함 검색 범위는 #7B7C7B/#F7F8F6로3.93365:1, 작업 행의 계획 날짜 문구는 #87878B/#F7F8F6로3.35900:1이었다. 두 PNG의 manifest SHA256·bytes·CRC·IDAT와 sRGB 명시·ICC 부재를 확인했으며, 합성 픽셀의 관측을 안티앨리어싱 이전 원색 판정으로 확대하지 않는다. 직접 관측한 설명 Text 세 곳에 supportingText를 적용하고, 계획 날짜는 새 optional Style.dueText의 기본 nil→muted 동작을 유지하면서 미러 앱만 supportingText를 전달해 날짜 Text에 한정한다. 달력 아이콘·완료 제목·취소선·체크 테두리·snoozed·비활성 표시·행동은 그대로다. 새 색의 배경별 원색 산술은 흰색6.56287:1/캔버스6.16052:1이며 실제 새 픽셀·빌드·기존 Native/Adaptive 수용은 후속 Actions 검증 대상으로 남는다.
+
 ### 이미 존재하는 기본 UI 작업 행의 확인
 
 8b91 Phone은 단위279개와 실제 UI6개를 통과했으나 기존20분 단계 제한으로 최종 execution guard에 도달하지 못했다. 마지막 사례 통과 뒤2.691초, SDK의 TEST EXECUTE SUCCEEDED 뒤1.240초에 timeout이 기록돼 긴 종료 정체로 단정하지 않는다. requireRow 한 곳은 기존 requireElement와 같이 동일한 실제 행의 exists를 먼저 확인하고, 아직 없을 때 원래15초 존재 대기와 같은 실패 처리를 수행한다. 전체 여섯 사용자 흐름·원문·날짜·상태 검증과 후속 실제 조작, 단계 제한은 그대로다. 실제 소요시간 절감과 정상 종료·최종 수용은 후속 Actions에서 확인한다.

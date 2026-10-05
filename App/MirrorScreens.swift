@@ -301,6 +301,7 @@ struct MirrorTaskRow: View {
         style.surface = .clear
         style.text = .primary
         style.muted = .secondary
+        style.dueText = MirrorPalette.supportingText
         style.cornerRadius = 10
         return style
     }
@@ -935,7 +936,7 @@ struct MirrorLibraryView: View {
                     }
                     if !search.isEmpty {
                         Text(searchesWholeLibrary ? "미래·완료·보관한 일까지 검색해요. 휴지통은 제외해요." : "\(filter.label)에서 검색해요.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(MirrorPalette.supportingText)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityIdentifier("library.searchScope")
                     }
