@@ -2637,35 +2637,8 @@ final class MirrorUITests: XCTestCase {
         } else { predicate = NSPredicate(format: "value == %@", expected) }
         let changed = XCTNSPredicateExpectation(predicate: predicate, object: element)
         guard XCTWaiter.wait(for: [changed], timeout: 15) == .completed else {
-            // 실패한 기존 대상만 한 번씩 읽는다. 원문·label·frame과 추가 탐색은 남기지 않는다.
-            let identifier = element.identifier
-            let actual = element.value as? String
-            let placeholder = element.placeholderValue
-            let target: String
-            switch identifier {
-            case "capture.title": target = "captureTitle"
-            case "capture.note": target = "captureNote"
-            case "capture.url": target = "captureURL"
-            case "library.search": target = "librarySearch"
-            case "detail.title": target = "detailTitle"
-            case "ipad.adjacentCalendar.toggle": target = "ipadAdjacentToggle"
-            default: target = "unknown"
-            }
-            func boundedLines(_ text: String) -> Int {
-                text.isEmpty ? 0 : text.split(separator: "\n", maxSplits: 15, omittingEmptySubsequences: false).count
-            }
-            let report: [String: Any] = [
-                "target": target, "callerLine": Int(line), "expectedEmpty": expected.isEmpty,
-                "actualStringPresent": actual != nil, "actualMatchesExpected": actual == expected,
-                "actualMatchesPlaceholder": actual != nil && placeholder != nil && actual == placeholder,
-                "expectedLineCount": boundedLines(expected), "actualLineCount": actual.map(boundedLines) ?? 0,
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]),
-               let json = String(data: data, encoding: .utf8) {
-                print("UI value wait failure diagnostic: \(json)")
-            }
             XCTFail("입력 값이 기대 상태로 바뀌지 않았다.", file: file, line: line)
-            throw UIHarnessError.unexpectedValue(identifier)
+            throw UIHarnessError.unexpectedValue("valueWait")
         }
     }
 

@@ -346,3 +346,10 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 최대 글자 검사에만 추가하던 contain 그룹을 없애고 루트·입력·정리·날짜·상세의 기존 실제 Button에서 환경값을 관측한다. iOS는 같은 실제 @Environment와 앱 UIKit으로 만든 다섯 필드의 JSON을 value에 전달하며 mode·scope·source·SwiftUI accessibility5·UIKit accessibilityExtraExtraExtraLarge를 모두 검증한다. raw JSON 측정값은 otherString으로 구분한다. Mac의 기존 capture.open/save 값 경로와 실제 A5 환경 확인은 유지하며 물리 글자 확대 증거로 해석하지 않는다.
 
 Release의 label·ID·action·frame과 글자 크기 전달은 유지한다. review.finish의 원래 안내 value는 DEBUG+UI_TESTING+최대 글자 진단에서만 관측값으로 교체한다. 날짜 선택·배치 footer의 생산 AX 그룹은 보존한다. 모든 사례·5scope·15초 대기·전체 접근성 감사와 false handler·결과 게이트는 유지하며, 이는 진단 구조를 실제 앱에 가깝게 하는 수정이지 기존 missingDescription의 원인 증명이나 감사 통과가 아니다. 독립 정적 검토 완료, 실제 SDK·버튼 value 노출·감사 결과는 Actions 미검증이다. FR-025/030, Q-076/079에 연결한다.
+
+
+### 2026-10-05 · 입력값 대기 실패 뒤 추가 AX 조회 중단
+
+8b91 Mac 입력 사례는 검색 지우기 뒤 기존 값 대기가 실패했고, 실패 진단의 element.identifier 재조회에서 matchingSnapshot 오류와 추가 지연이 발생했다. 대기 실패 뒤 identifier·value·placeholder를 다시 조회하는 진단 블록을 제거한다. 원래 predicate 두 가지·15초·호출행의 실패 문구·오류 종류는 유지하고 throw의 식별자만 고정 valueWait으로 쓴다. 기존 진단 parser·회귀는 과거 형식 호환을 위해 유지한다.
+
+이는 이미 실패한 사례를 신속하게 보고하기 위한 수정이다. 대기 내부의 SDK 조회 지연이나 앱 검색 문제를 해결했다고 주장하지 않으며 실패를 통과로 바꾸지 않는다. 추가 AX 조회·새 캐시·schema·관측되지 않은 값 출력 없이 독립 정적 검토를 마쳤고, 실제 native 종료와 남은 사례 실행은 Actions에서 확인한다.
