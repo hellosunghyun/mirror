@@ -141,14 +141,20 @@ private enum MirrorDynamicTypeFixture: String {
 }
 #endif
 
-/// 검사용 그룹을 만들지 않고 실제 버튼에서 읽은 환경값만 기록한다.
+/// 검사용 그룹을 만들지 않고 실제 버튼의 value로 관측한 화면 환경값을 기록한다.
 @MainActor
 struct MirrorDynamicTypeValue: ViewModifier {
     enum Scope: String { case root, capture, review, plan, detail }
     let scope: Scope
+    private let rootSize: DynamicTypeSize?
     #if DEBUG
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #endif
+
+    init(scope: Scope, rootSize: DynamicTypeSize? = nil) {
+        self.scope = scope
+        self.rootSize = rootSize
+    }
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -199,7 +205,15 @@ struct MirrorDynamicTypeValue: ViewModifier {
     }
     #endif
     private var appliedTypeName: String? {
-        switch dynamicTypeSize {
+        let measuredSize: DynamicTypeSize
+        if scope == .root {
+            // 도구 막대 내부가 아닌, 본문 배치와 시트가 사용하는 루트 환경을 기록한다.
+            guard let rootSize else { return nil }
+            measuredSize = rootSize
+        } else {
+            measuredSize = dynamicTypeSize
+        }
+        return switch measuredSize {
         case .xSmall: "xSmall"
         case .small: "small"
         case .medium: "medium"

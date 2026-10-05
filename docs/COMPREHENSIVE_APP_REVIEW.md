@@ -419,3 +419,12 @@ TextField의 최소 높이를 기존 지우기 버튼과 같은44pt로 맞춘다
 4d14 iPad Batch의 Two는 complete33 뒤 실제 passed로 종결했다. Twenty는20개 저장 뒤 libraryStarted에서 작업 탐색에 실패했다. schema2의 첫 실제 관측은 마지막6회차 exists=false·deadlineExceeded=true·swipePerformed=false이며 다른 조건은 평가되지 않았다. 이전 반복의 비용·기하·탐색 대상 순서는 미관측이다. 이를 clipping·소유자·입력 순서 문제로 단정하지 않는다.
 
 탐색 owner를 확인한 뒤 기존 위치에서 대상의 exists를 다시 읽고, 존재하면 frame을 한 번만 읽어 유효성·위쪽 방향을 같은 CGRect로 판단한다. owner 조회 중 늦게 나타나는 lazy 행을 놓치지 않도록 반복 시작의 기하를 재사용하지 않는다. 대상이 없거나 기하가 무효이면 기존 양방향 탐색을 유지하며, 최종 고유성·역할·창/owner·hittable·enabled·포함 검사와15초/12회·진단 schema·실제 호출부를 바꾸지 않는다. 독립 peer와 diff 검사를 마쳤고 실제 절감량·실패 해결은 다음 Actions에서 확인한다.
+
+
+### 2026-10-05 · 최대 글자 진단의 루트 측정 범위 바로잡기
+
+4d14 Dynamic Type 비교 실행37250788031/attempt1의 iPad에서 pinned·system 두 모드 모두 실제 root probe의 SwiftUI 값은 xxLarge, UIApplication 값은 accessibilityExtraExtraExtraLarge였다. 모드는 일치했고 최대값 불일치 guard에서 실패했다. capture 환경과 접근성 감사는 관측되지 않았으며 각 native 과정은420초 제한으로 끝났다. 실행 전 simctl 최대값과 원래 large 값으로의 복구 readback은 별도로 확인했다. 이 결과를 본문 전체의 크기 제한이나 SDK 결함으로 확대하지 않는다.
+
+소스를 대조하면 root라는 JSON 값은 MirrorRootView 본문의 환경이 아니라 iPad 도구 막대의 버튼에 붙은 modifier 내부 환경에서 읽혔다. 루트의 실제 dynamicTypeSize는 따로 읽혀 compact 배치와 시트 전달에 사용되고 있었다. iPhone header와 iPad toolbar의 두 root probe에 이 실제 루트 환경값을 전달해 같은 범위를 측정한다. root 값이 전달되지 않으면 unavailable로 실패하며, 요청한 크기·상수·UIKit 값으로 SwiftUI 관측을 대신하지 않는다.
+
+DEBUG value의 scope만 바로잡으며 앱 글자 환경·레이아웃·AX 계층·실제 버튼·모드와 UIKit appSystem 관측을 유지한다. 다른 presentation scope와 Mac 전용 probe, 기존 JSON 다섯 필드·accessibility5 일치·전체 감사·사례·시간 제한은 그대로다. 새 구현을 복제하는 정적 테스트는 추가하지 않고 기존 pinned/system 비교와 iPhone·iPad 적응형 UI 검사로 수정 효과와 컴파일을 확인한다. 실제 루트 값과 후속 capture·감사 결과는 다음 Actions 실행 전까지 미확정이다. FR-025/030, Q-075/076/079에 연결한다.

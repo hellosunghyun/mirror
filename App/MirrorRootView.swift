@@ -276,7 +276,7 @@ struct MirrorRootView: View {
                     .contentShape(Rectangle())
             }
             .accessibilityIdentifier("capture.open")
-            .modifier(MirrorDynamicTypeValue(scope: .root))
+            .modifier(MirrorDynamicTypeValue(scope: .root, rootSize: dynamicTypeSize))
             .keyboardShortcut("n", modifiers: .command)
             Button { settingsOpenAction.callAsFunction() } label: {
                 Label("설정", systemImage: "gearshape")
@@ -353,7 +353,7 @@ struct MirrorRootView: View {
                         .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                 }
                 .accessibilityIdentifier("capture.open")
-                .modifier(MirrorDynamicTypeValue(scope: .root))
+                .modifier(MirrorDynamicTypeValue(scope: .root, rootSize: dynamicTypeSize))
                 .keyboardShortcut("n", modifiers: .command)
                 Button { settingsOpenAction.callAsFunction() } label: {
                     Label("설정", systemImage: "gearshape")
