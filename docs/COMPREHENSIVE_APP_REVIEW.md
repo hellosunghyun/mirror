@@ -493,3 +493,23 @@ bb8ea9d / Swift 308 / run 37256736753 / attempt 1 / Mac job 111598270751의 보�
 원래 build receipt·run/attempt/source/build·unsigned binary hash, 현재 UID·native 시작 뒤 태어난 고유 PID/실행 경로, sample 전후 동일 owner와 binary 재검증을 유지한다. sample 한 번의 3초 관측/8초 상한, watcher 정리, native/UI 전체 시간 제한과 기존 assertion·empty-value 15초 대기는 바꾸지 않는다. 새 AX/SDK getter·동작·앱 변경·타깃·의존성은 없다. private raw sample과 native command 출력은 기존 0700/0600 디렉터리에서만 처리 후 삭제하고 fixed summary만 남긴다. 기존 summary status의 queryEndedBeforeSample/queryEndedDuringSample 문자열은 하위 계약을 보존하며 이번 소스에서는 위 activate 관측 구간의 종료를 뜻한다.
 
 회귀는 기존 owned case·15초 경계·중복/unknown/complete/terminal·receipt/PID/hash·전후 변경·단일 sample·원문 제거 검사를 새 action marker로 유지한다. 별도 상태 회귀는 settings pair가 새 action을 arm/종료/재활성화하지 못함을 검사한다. 실제 임시 파일을 사용하는 기존 watch fixture도 settings pair→새 action 순서를 지나 한 번만 sample하도록 확장했다. 로컬은 Python AST·diff 형식 확인만 수행하며 helper import·실행, SDK와 테스트 실행은 GitHub Actions 전용이다.
+
+### Mac 입력 시트의 세로 콘텐츠 맞춤 명시
+
+Adaptive60/run37262171112/attempt1/source `3a27c1783d147e75d1e2fa3bb88bc80c06a330b2`의 Mac system(job111611486605)은 실제 PNG에서 접힌 입력과 펼친 입력이 모두 약405px 외형을 유지했다. `idealHeight: more ? 520 : 340` 변경만으로는 펼친 시트의 가시 공간이 늘지 않았다. 두 PNG의 x=320 관측에서 밝은 시트 범위의 첫 픽셀은 y166, 마지막은 y569이며 본문→저장 영역 경계는 y429로 같았다. 헤더 아래 본문은 약214px이고 `오늘` 아래 날짜 옵션은 계속 스크롤 뷰포트 밖에 남았다. 이미지 관측이며 AX 또는 실제 NSWindow frame 측정으로 확대하지 않는다.
+
+Apple의 공식 `.fitted` 설명은 콘텐츠의 이상 크기를 사용하며 macOS에서는 기본적으로 사용자가 크기를 조절할 수 있다고 명시한다. `FittedPresentationSizing`은 가로·세로에 nil 크기를 제안한다. `View.presentationSizing(_:)`의 공식 예제는 선택에 따른 콘텐츠 변화에 `.page.fitted(horizontal: false, vertical: true)`를 사용하고, 축소 방지는 별도의 `.sticky(horizontal: false, vertical: true)`로 설정한다. `sticky`의 기본 인자는 false이며 false를 추가하는 것만으로 현재 문제를 고친다는 근거는 없다.
+
+최소 후속 변경으로 macOS의 `.presentationSizing(.fitted)` 한 줄을 `.presentationSizing(.fitted.fitted(horizontal: false, vertical: true))`로 바꾸어 세로 콘텐츠 맞춤을 명시한다. 기존 동적 제안 높이520/340, 최소 높이280·최소 폭320·제안 폭460, ScrollView, 고정 저장 영역, 닫기, 입력 초안과 상태 수명은 유지한다. AppKit 연결이나 고정 height·최소 높이520을 추가하지 않는다.
+
+공식 API 계약에 맞춘 후보이며, NavigationStack/ScrollView에서 이전 제안 높이가 반영되지 않은 원인을 확정한 것은 아니다. 이번 변경의 실제 크기 조절 효과도 아직 미검증이다. GitHub Actions에서 펼침 시의 공간 증가와 접힘 복귀, 작은 Mac 창에서의 저장·닫기 가시성 및 스크롤을 확인해야 한다. 기본 `.fitted`와 명시한 축 맞춤의 동작 차이를 추정만으로 성공 처리하지 않는다.
+
+공식 자료:
+
+- https://developer.apple.com/documentation/swiftui/view/presentationsizing(_:)
+- https://developer.apple.com/documentation/swiftui/presentationsizing/fitted
+- https://developer.apple.com/documentation/swiftui/fittedpresentationsizing
+- https://developer.apple.com/documentation/swiftui/presentationsizing/fitted(horizontal:vertical:)
+- https://developer.apple.com/documentation/swiftui/presentationsizing/sticky(horizontal:vertical:)
+
+공개 JSON 원본은 `/workspace/.cache/mirror-review-20261004/presentation-sizing-docs/official-0.json`부터 `official-5.json`에 보존했다. 로컬 확인은 소스 읽기와 해당 한 줄의 diff·공백 검사뿐이며 저장소 준비 도구·앱 빌드·SDK·테스트는 실행하지 않았다.
