@@ -437,3 +437,10 @@ DEBUG value의 scope만 바로잡으며 앱 글자 환경·레이아웃·AX 계�
 기존schema1/2마지막관측은유지하고Twenty/libraryStarted/taskRow의같은최종실패에만최대12개순차관측을별도고정trace로보존한다. 기존AX조회값과post-owner frame, 선택한스크롤방향, 기존Date deadline guard의시작후경과값만사용한다. 추가AX·시계조회·스크롤·대기나성공조건변경없이실패때만출력하며, 성공과소유조회throw에서는출력하지않는다. 관측은원자적snapshot이아니고swipePerformed는SDK호출이반환했다는뜻이지실제이동거리를증명하지않는다.
 
 진단파서는기존schema2로이미검증한정확사례·phase·진행64·원본호출부·원래실패1회·failedterminal과연결된trace만받는다. 1부터연속인최대12개, 마지막기존관측일치, 순차평가의null·기하·enum·시간범위·8192바이트제한을검사한다. 중복·잘림·추가원문필드·다른source/사례/phase·성공·관측불일치는진단불가로닫는다. 제목·UUID·AX원문은기록하지않고typed수용게이트·15초/12회·44pt·전체대상포함을유지한다. 실제기록과원인분류효과는후속Actions로확인한다.
+
+
+### 2026-10-05 · 정확한 버튼 쿼리의 중복 ID 조회 제거
+
+2fd3 iPad Batch는Two를끝까지통과했지만Twenty의10개저장뒤11번째저장버튼접근에서element.identifier의matching snapshot오류가발생했다. 368d Pad의다른실패는6번째입력값대기였으므로서로다른경계로분리한다. 이자료를앱저장실패나SDK원인의확정근거로쓰지않는다.
+
+activate가정확한identifier로Button쿼리를만들고reachable가실제후보의존재와고유성을확인하므로, 같은문자열을명시전달해이경로의중복identifier getter한번만제거한다. window·typed scroll owner는같은ID로검사하며역할·기하·hittable·enabled·최종포함·44pt·15초/12회는유지한다. 다른호출은기본nil로기존실제ID조회가남고, 원본작업UUID획득은바꾸지않는다. 새로운정적미러테스트없이기존배치SDK검사로검증하며실제지연·실패해결은미확정이다.

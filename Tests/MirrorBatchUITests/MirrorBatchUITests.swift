@@ -597,7 +597,7 @@ final class MirrorBatchUITests: XCTestCase {
         }
         let control = try reachable(app.buttons.matching(identifier: identifier), surface: surface,
                                     missingTowardTop: identifier.hasPrefix("library."), target: target,
-                                    in: app, file: file, line: line)
+                                    knownIdentifier: identifier, in: app, file: file, line: line)
         try assertMobileTarget(control)
         performActivation(control)
     }
@@ -619,7 +619,7 @@ final class MirrorBatchUITests: XCTestCase {
     }
 
     private func reachable(_ query: XCUIElementQuery, surface: Surface, missingTowardTop: Bool = false,
-                           target: ReachableTarget = .unknown, in app: XCUIApplication,
+                           target: ReachableTarget = .unknown, knownIdentifier: String? = nil, in app: XCUIApplication,
                            file: StaticString = #filePath, line: UInt = #line) throws -> XCUIElement {
         let deadline = Date().addingTimeInterval(15)
         if surface == .none {
@@ -640,7 +640,7 @@ final class MirrorBatchUITests: XCTestCase {
                 let element = try unique(query, timeout: 0)
                 let frame = element.frame
                 lastObservation.targetFrame = frame
-                let identifier = element.identifier
+                let identifier = knownIdentifier ?? element.identifier
                 if surface != .none {
                     observedTarget = ScrollTarget(identifier: identifier, type: element.elementType, frame: frame)
                     lastObservation.role = observedTarget?.type
