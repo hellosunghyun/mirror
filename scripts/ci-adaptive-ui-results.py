@@ -996,10 +996,16 @@ def build_state(directory, expected):
             'testBundles': [bundle_record(path, products, expected) for path in bundles]}
 
 
-def verify_receipt(directory, expected):
+def _verified_receipt(directory, expected):
+    safe_directory(directory)
     receipt = read_json(directory / 'build-receipt.json')
-    require(receipt == build_state(directory, expected), 'buildReceiptMismatch')
-    return digest(read_regular(directory / 'build-receipt.json', MAX_JSON))
+    state = build_state(directory, expected)
+    require(receipt == state, 'buildReceiptMismatch')
+    return state['context'], digest(read_regular(directory / 'build-receipt.json', MAX_JSON))
+
+
+def verify_receipt(directory, expected):
+    return _verified_receipt(directory, expected)[1]
 
 
 def native_test_start_record(directory, expected):
@@ -1052,8 +1058,7 @@ def boot(directory, expected):
 
 def _system_type_owner(directory, expected):
     require(expected['platform'] in ('iphone', 'ipad'), 'systemTypeRequiresIOS')
-    context = context_for(directory, expected)
-    receipt = verify_receipt(directory, expected)
+    context, receipt = _verified_receipt(directory, expected)
     udid = context['destination'].split('id=', 1)[1]
     matches = [device for device in runtime_and_devices(private_timeout=15) if device.get('udid') == udid]
     family = 'iPhone' if expected['platform'] == 'iphone' else 'iPad'
@@ -1171,8 +1176,7 @@ def validate_log(log, bundle, expected):
 
 
 def guard(directory, expected):
-    context = context_for(directory, expected)
-    receipt_hash = verify_receipt(directory, expected)
+    context, receipt_hash = _verified_receipt(directory, expected)
     validate_summary(read_json(directory / 'summary.json'), expected['platform'])
     validate_tree(read_json(directory / 'tests.json'), context['bundle'], expected['platform'])
     validate_log(read_regular(directory / 'test.log', MAX_LOG).decode('utf-8', errors='strict'), context['bundle'], expected)

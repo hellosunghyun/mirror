@@ -2,9 +2,11 @@
 
 import importlib.util
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import shlex
 import shutil
 import struct
@@ -62,6 +64,9 @@ def png(*extra, width=1, height=1, raw=b'\0\xff\x00\x00\xff'):
 
 
 class AdaptiveResultGateTests(unittest.TestCase):
+    def system_type_receipt(self, directory, expected):
+        return helper.context_for(directory, expected), 'b' * 64
+
     @contextmanager
     def system_type_fixture(self, platform='iphone'):
         with tempfile.TemporaryDirectory() as temporary:
@@ -77,9 +82,142 @@ class AdaptiveResultGateTests(unittest.TestCase):
             devices = [{'udid': udid, 'name': 'iPad fixture' if platform == 'ipad' else 'iPhone fixture',
                         'state': 'Booted'}]
             with mock.patch.object(helper, 'ROOT', root), mock.patch.object(helper, 'checkout_matches'), \
-                    mock.patch.object(helper, 'verify_receipt', return_value='b' * 64), \
+                    mock.patch.object(helper, '_verified_receipt', side_effect=self.system_type_receipt), \
                     mock.patch.object(helper, 'runtime_and_devices', return_value=devices):
                 yield directory, expected, context, udid, devices
+
+    @contextmanager
+    def verified_build_fixture(self, platform='iphone'):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            directory = root / '.build/ci-adaptive-ui' / (platform + '-system')
+            products = directory / 'DerivedData/Build/Products'
+            configuration = products / ('Debug' if platform == 'macos' else 'Debug-iphonesimulator')
+            expected = {'platform': platform, 'appearance': 'system', 'commitSHA': 'a' * 40,
+                        'buildNumber': '23', 'runID': '34', 'runAttempt': '1'}
+            udid = '11111111-1111-1111-1111-111111111111'
+            context = {**helper.base_context(expected), 'destination':
+                       'platform=macOS' if platform == 'macos' else 'platform=iOS Simulator,id=' + udid}
+            files = {}
+            for name, executable in (('Mirror.app', 'Mirror'), (context['bundle'] + '.xctest', 'UITests')):
+                bundle = configuration / name
+                bundle.mkdir(parents=True)
+                (bundle / 'Info.plist').write_bytes(plistlib.dumps({
+                    'CFBundleExecutable': executable, 'CFBundleVersion': expected['buildNumber']}))
+                (bundle / executable).write_bytes(('fixture-' + executable).encode())
+                files[executable] = bundle / executable
+                files[executable + 'Info'] = bundle / 'Info.plist'
+            files['xctestrun'] = products / 'Fixture.xctestrun'
+            files['xctestrun'].write_bytes(plistlib.dumps({'fixture': 'owned'}))
+            (directory / 'context.json').write_text(json.dumps(context))
+            with mock.patch.object(helper, 'ROOT', root):
+                with mock.patch.object(helper, 'checkout_matches'):
+                    state = helper.build_state(directory, expected)
+                receipt = json.dumps(state).encode()
+                (directory / 'build-receipt.json').write_bytes(receipt)
+                count = 5 if platform == 'macos' else 4
+                (directory / 'summary.json').write_text(json.dumps({
+                    'totalTestCount': count, 'passedTests': count, 'failedTests': 0, 'skippedTests': 0}))
+                (directory / 'tests.json').write_text(json.dumps(tree(platform, context['bundle'])))
+                (directory / 'test.log').write_text(valid_log(expected, context['bundle']))
+                yield directory, expected, context, hashlib.sha256(receipt).hexdigest(), files
+
+    def test_verified_receipt_consumers_share_one_fresh_checkout_and_keep_the_hash_contract(self):
+        for platform in ('iphone', 'ipad', 'macos'):
+            with self.subTest(platform=platform), self.verified_build_fixture(platform) as fixture:
+                directory, expected, context, receipt_hash, _ = fixture
+                actions = ('verify_receipt', 'guard') + (() if platform == 'macos' else ('_system_type_owner',))
+                for action in actions:
+                    devices = [{'udid': context['destination'].split('id=')[-1], 'state': 'Booted',
+                                'name': 'iPad fixture' if platform == 'ipad' else 'iPhone fixture'}]
+                    with self.subTest(action=action), \
+                            mock.patch.object(helper.subprocess, 'check_output', side_effect=['a' * 40, b'']) as output, \
+                            mock.patch.object(helper.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run, \
+                            mock.patch.object(helper, 'context_for', wraps=helper.context_for) as checked_context, \
+                            mock.patch.object(helper, 'runtime_and_devices', return_value=devices):
+                        result = getattr(helper, action)(directory, expected)
+                    self.assertEqual(result, (context, receipt_hash, devices[0]['udid'])
+                                     if action == '_system_type_owner' else receipt_hash)
+                    checked_context.assert_called_once_with(directory, expected)
+                    self.assertEqual(output.call_count, 2)
+                    self.assertEqual(run.call_count, 1)
+                    self.assertTrue(all(call.kwargs['timeout'] == 5 for call in (*output.call_args_list, run.call_args)))
+
+    def test_reused_verified_context_still_rejects_changed_products_receipt_and_checkout_before_side_effects(self):
+        for change in ('context', 'receipt', 'Mirror', 'UITests', 'MirrorInfo', 'UITestsInfo', 'xctestrun',
+                       'head', 'dirty', 'untracked', 'timeout'):
+            with self.subTest(change=change), self.verified_build_fixture() as fixture:
+                directory, expected, context, _, files = fixture
+                if change == 'context':
+                    (directory / 'context.json').write_text(json.dumps({**context, 'commitSHA': 'c' * 40}))
+                elif change == 'receipt':
+                    receipt = json.loads((directory / 'build-receipt.json').read_text())
+                    receipt['context']['destination'] = 'platform=iOS Simulator,id=' + '2' * 36
+                    (directory / 'build-receipt.json').write_text(json.dumps(receipt))
+                elif change in files:
+                    if change.endswith('Info'):
+                        value = plistlib.loads(files[change].read_bytes())
+                        files[change].write_bytes(plistlib.dumps({**value, 'changed': True}))
+                    else:
+                        files[change].write_bytes(b'changed-product')
+                for action in ('system_type_setup', 'system_type_restore', 'guard', 'verify_receipt'):
+                    outputs = ['c' * 40 if change == 'head' else 'a' * 40,
+                               b'new-source' if change == 'untracked' else b'']
+                    with self.subTest(action=action), \
+                            mock.patch.object(helper.subprocess, 'check_output', side_effect=outputs), \
+                            mock.patch.object(helper.subprocess, 'run',
+                                side_effect=subprocess.TimeoutExpired(PRIVATE, 5) if change == 'timeout' else None,
+                                return_value=subprocess.CompletedProcess([], 1 if change == 'dirty' else 0)), \
+                            mock.patch.object(helper, 'runtime_and_devices') as runtime, \
+                            mock.patch.object(helper, '_system_type_command') as command, \
+                            mock.patch.object(helper, 'validate_summary') as summary, \
+                            self.assertRaises((helper.AdaptiveError, subprocess.TimeoutExpired)):
+                        getattr(helper, action)(directory, expected)
+                    runtime.assert_not_called()
+                    command.assert_not_called()
+                    summary.assert_not_called()
+                    self.assertFalse((directory / 'system-type-restore.json').exists())
+
+    def test_reused_verified_context_does_not_cache_later_changes_or_bypass_acceptance(self):
+        for change in ('product', 'summary', 'tree', 'log'):
+            with self.subTest(change=change), self.verified_build_fixture() as fixture:
+                directory, expected, context, receipt_hash, files = fixture
+                with mock.patch.object(helper, 'checkout_matches') as checkout:
+                    self.assertEqual(helper.guard(directory, expected), receipt_hash)
+                    if change == 'product':
+                        files['Mirror'].write_bytes(b'later-product')
+                    elif change == 'summary':
+                        (directory / 'summary.json').write_text(json.dumps({
+                            'totalTestCount': 4, 'passedTests': 3, 'failedTests': 1, 'skippedTests': 0}))
+                    elif change == 'tree':
+                        (directory / 'tests.json').write_text(json.dumps(tree(bundle='ForeignUITests')))
+                    else:
+                        (directory / 'test.log').write_text(valid_log(expected, context['bundle']).replace(
+                            'accessibility5', 'large', 1))
+                    with self.assertRaises(helper.AdaptiveError):
+                        helper.guard(directory, expected)
+                self.assertEqual(checkout.call_count, 2)
+
+    def test_verified_receipt_rejects_ancestor_symlinks_before_reading_receipts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / 'repository'
+            outside = Path(temporary).resolve() / 'outside'
+            root.mkdir()
+            outside.mkdir()
+            (root / '.build').symlink_to(outside, target_is_directory=True)
+            directory = root / '.build/ci-adaptive-ui/iphone-system'
+            directory.mkdir(parents=True)
+            (directory / 'build-receipt.json').write_text(json.dumps({'private': PRIVATE}))
+            for action in ('verify_receipt', 'system_type_setup', 'system_type_restore', 'guard'):
+                with self.subTest(action=action), mock.patch.object(helper, 'ROOT', root), \
+                        mock.patch.object(helper, 'read_json', wraps=helper.read_json) as read, \
+                        mock.patch.object(helper, 'build_state', wraps=helper.build_state) as state, \
+                        mock.patch.object(helper, '_system_type_command') as command, \
+                        self.assertRaisesRegex(helper.AdaptiveError, '^unsafeDirectory$'):
+                    getattr(helper, action)(directory, EXPECTED)
+                read.assert_not_called()
+                state.assert_not_called()
+                command.assert_not_called()
 
     def test_system_type_setup_and_restore_bind_the_original_category_to_context_and_receipt(self):
         for platform in ('iphone', 'ipad'):
@@ -219,9 +357,9 @@ class AdaptiveResultGateTests(unittest.TestCase):
                     elif change == 'context':
                         (directory / 'context.json').write_text(json.dumps({**context, 'commitSHA': 'c' * 40}))
                     with mock.patch.object(helper, '_system_type_command') as command, \
-                            mock.patch.object(helper, 'verify_receipt',
+                            mock.patch.object(helper, '_verified_receipt',
                                               side_effect=helper.AdaptiveError('buildReceiptMismatch')
-                                              if change == 'receipt' else None, return_value='b' * 64), \
+                                              if change == 'receipt' else self.system_type_receipt), \
                             self.assertRaises(helper.AdaptiveError):
                         getattr(helper, action)(directory, expected)
                     command.assert_not_called()
