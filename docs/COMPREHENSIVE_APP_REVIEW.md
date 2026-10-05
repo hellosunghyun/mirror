@@ -467,3 +467,13 @@ activate가정확한identifier로Button쿼리를만들고reachable가실제후�
 - 보존: 15초·12회 제한, 원래 성공/실패 문구, 실제 스크롤 API와 이동량, 두 typed 사례, 원문 보존 검증, iOS와 다른 target 동작은 변경하지 않는다. SDK 조회는 추가하지 않는다.
 - 진단: 기존 마지막 관측 schema1/2와 trace schema1 읽기는 유지한다. Mac의 같은 Twenty/taskRow 실패에서 마지막 12번째 반복이 스크롤 없이 재검사를 선택한 경우만 schema3로 `recheckAfterOwner`와 이미 읽은 post 프레임을 추가한다. Mac trace schema2는 각 반복의 실제 재검사 여부를 명시한다. 재검사는 swipe=false·방향=null·deadline=false와 양수 post/owner 포함 관계를 요구한다. 실제 스크롤이나 측정을 가짜로 기록하지 않는다.
 - 회귀: 새 helper 검사 네 개는 중간 재검사·12회 마지막 재검사, 기하/시간/가짜 swipe 모순, 정확한 원문 source·case·실패 소유, 다른 플랫폼 거부, 기존 실패 notice 보존과 개인 값 차단을 다룬다. 로컬 검증은 Python AST와 diff 형식 확인만 했으며, helper 실행·Swift 빌드·UI 효과는 GitHub Actions 결과로 확인해야 한다. Phone 미관측 행과 iPad 입력 snapshot 실패를 해결했다고 주장하지 않는다.
+
+### Mac의 추가 입력을 펼칠 때 본문 공간 확보
+
+source `2d7e1f2`의 Adaptive59 Mac system/dark 원본에서 날짜·메모·링크를 펼친 입력 시트는 `오늘` 아래 옵션이 본문 뷰포트 밖에 남고, 고정 저장 영역 위의 내용 높이가 짧았다. 두 모드의 `mirror-adaptive-max-capture-plan-1.png`를 직접 확인한 근거다.
+
+`App/MirrorScreens.swift`의 `MirrorCaptureView`에서 macOS의 제안 높이만 `more ? 520 : 340`으로 바꾼다. 추가 입력을 펼쳤을 때만 180pt의 본문 공간을 더 요청하고 접었을 때는 기존 제안 높이를 사용한다. `.presentationSizing(.fitted)`와 플랫폼의 화면 제약에 맡기며 고정 높이나 최대 높이를 추가하지 않는다. 제안 폭460·최소 폭320/높이280·ScrollView·고정 저장 영역·닫기·초안 및 저장 상태는 그대로다.
+
+기존 원본의 시트 외형은 약405px 높이로 보이며 제안 높이340과 차이는 약65px다. 이 외형 차이가 같다면 제안 높이520의 시트는 약585px로 예상되어 현재 앱 창의674px 안에 들어간다. 이는 원본 이미지 기준의 추정이며, SwiftUI가 실제 크기와 위치를 정하는 결과나 더 좁은 화면에서의 동작을 증명하지 않는다. 모든 날짜 옵션이 한눈에 보인다고 보장하지 않고, 기존 스크롤을 유지한다.
+
+로컬 확인은 해당 한 줄의 diff와 공백 검사에 한정했다. 새 구현 복제 테스트는 추가하지 않았고 앱 빌드·SDK·저장소 준비 도구를 로컬에서 실행하지 않았다. 기존 GitHub Actions의 native 및 Adaptive 검증으로 펼침/접힘, 저장·닫기, 좁은 창에서의 실제 크기를 확인해야 한다.
