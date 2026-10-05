@@ -324,6 +324,7 @@ private struct MirrorSheetHeader: View {
     let actionTitle: String
     let actionIdentifier: String
     let isDisabled: Bool
+    let dynamicTypeScope: MirrorDynamicTypeValue.Scope
     let action: @MainActor () -> Void
 
     var body: some View {
@@ -343,6 +344,7 @@ private struct MirrorSheetHeader: View {
             .foregroundStyle(MirrorPalette.accent)
             .disabled(isDisabled)
             .accessibilityIdentifier(actionIdentifier)
+            .modifier(MirrorDynamicTypeValue(scope: dynamicTypeScope))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 4)
@@ -351,49 +353,6 @@ private struct MirrorSheetHeader: View {
     }
 }
 #endif
-
-/// Mac 검사용 환경값은 실제 스크롤 콘텐츠 경계에서 읽는다. 글자 크기를 설정하지 않는다.
-@MainActor
-fileprivate struct MirrorScrollDynamicTypeProbe: ViewModifier {
-    let scope: String
-    #if DEBUG && os(macOS)
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    #endif
-
-    @ViewBuilder func body(content: Content) -> some View {
-        #if DEBUG && os(macOS)
-        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
-           ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
-            content.accessibilityElement(children: .contain)
-                .accessibilityIdentifier("ui.appliedDynamicType." + scope)
-                .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
-                .accessibilityLabel(appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경")
-        } else { content }
-        #else
-        content
-        #endif
-    }
-
-    #if DEBUG && os(macOS)
-    private var appliedTypeName: String? {
-        switch dynamicTypeSize {
-        case .xSmall: "xSmall"
-        case .small: "small"
-        case .medium: "medium"
-        case .large: "large"
-        case .xLarge: "xLarge"
-        case .xxLarge: "xxLarge"
-        case .xxxLarge: "xxxLarge"
-        case .accessibility1: "accessibility1"
-        case .accessibility2: "accessibility2"
-        case .accessibility3: "accessibility3"
-        case .accessibility4: "accessibility4"
-        case .accessibility5: "accessibility5"
-        @unknown default: nil
-        }
-    }
-    #endif
-}
 
 @MainActor
 struct MirrorCaptureView: View {
@@ -493,7 +452,7 @@ struct MirrorCaptureView: View {
             #if os(iOS)
             .safeAreaInset(edge: .top, spacing: 0) {
                 MirrorSheetHeader(title: "일단 넣기", actionTitle: "닫기", actionIdentifier: "capture.close",
-                                  isDisabled: captureBusy, action: closeCapture)
+                                  isDisabled: captureBusy, dynamicTypeScope: .capture, action: closeCapture)
             }
             .toolbarVisibility(.hidden, for: .navigationBar)
             #else
@@ -1166,7 +1125,6 @@ struct MirrorReviewView: View {
                     .frame(maxWidth: 580, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 }
-                .modifier(MirrorScrollDynamicTypeProbe(scope: "review"))
                 .frame(maxHeight: .infinity)
                 reviewFooter
             }
@@ -1383,6 +1341,7 @@ struct MirrorReviewView: View {
             }
             .accessibilityLabel("오늘은 여기까지")
             .accessibilityValue(model.isSaving ? "저장 중, 잠시 기다려 주세요" : "정리를 마치고 오늘 목록 보기")
+            .modifier(MirrorDynamicTypeValue(scope: .review))
             .accessibilityIdentifier("review.finish").disabled(model.isSaving)
         }
         .fixedSize(horizontal: false, vertical: true)
@@ -1513,7 +1472,7 @@ struct MirrorPlanPicker: View {
             .safeAreaInset(edge: .top, spacing: 0) {
                 MirrorSheetHeader(title: request.taskIDs.count > 1 ? "여러 개 날짜 배치" : "미루기",
                                   actionTitle: model.hasUnconfirmedPlanPickerResult(request) ? "닫기" : "취소",
-                                  actionIdentifier: "plan.cancel", isDisabled: model.isSaving) {
+                                  actionIdentifier: "plan.cancel", isDisabled: model.isSaving, dynamicTypeScope: .plan) {
                     model.closePlanPicker(requestID: request.id)
                 }
             }
@@ -1526,6 +1485,7 @@ struct MirrorPlanPicker: View {
                         Text(model.hasUnconfirmedPlanPickerResult(request) ? "닫기" : "취소")
                     }
                     .accessibilityIdentifier("plan.cancel")
+                    .modifier(MirrorDynamicTypeValue(scope: .plan))
                 }
             }
             #endif
@@ -2071,7 +2031,13 @@ struct MirrorTaskDetail: View {
             }
         }
         .navigationTitle("작업 상세")
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("상세 닫기") { requestClose() }.accessibilityIdentifier("detail.close") } }
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("상세 닫기") { requestClose() }
+                    .accessibilityIdentifier("detail.close")
+                    .modifier(MirrorDynamicTypeValue(scope: .detail))
+            }
+        }
         .interactiveDismissDisabled(hasUnsavedChanges || model.isSaving)
         .onChange(of: hasUnsavedChanges, initial: true) { _, dirty in
             if dirty { draftTaskID = task.taskID }

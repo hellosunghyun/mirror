@@ -339,3 +339,10 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 ### 2026-10-05 · 개별 배치 선택 버튼의 경계 여유
 
 9f30 iPhone Batch는 선택 모드 버튼을 통과한 뒤 개별 taskSelection의 높이를43.99999999999994pt로 보고해 기존44pt 이상 검사에서 실패했다. 물리적으로 의미 있는 크기 부족으로 과장하지 않고, 해당 iOS Button label의 최소 영역만48×48pt로 넓힌다. Mac과 바깥44pt, 선택 동작·ID·레이블·값은 유지한다. 원래44pt 검사를 완화하지 않으며 실제 렌더링과 일괄 배치 수용은 다음 Actions에서 확인한다. FR-018/025/030, Q-075/076/079에 연결한다.
+
+
+### 2026-10-05 · 최대 글자 관측에서 진단용 AX 그룹 제거
+
+최대 글자 검사에만 추가하던 contain 그룹을 없애고 루트·입력·정리·날짜·상세의 기존 실제 Button에서 환경값을 관측한다. iOS는 같은 실제 @Environment와 앱 UIKit으로 만든 다섯 필드의 JSON을 value에 전달하며 mode·scope·source·SwiftUI accessibility5·UIKit accessibilityExtraExtraExtraLarge를 모두 검증한다. raw JSON 측정값은 otherString으로 구분한다. Mac의 기존 capture.open/save 값 경로와 실제 A5 환경 확인은 유지하며 물리 글자 확대 증거로 해석하지 않는다.
+
+Release의 label·ID·action·frame과 글자 크기 전달은 유지한다. review.finish의 원래 안내 value는 DEBUG+UI_TESTING+최대 글자 진단에서만 관측값으로 교체한다. 날짜 선택·배치 footer의 생산 AX 그룹은 보존한다. 모든 사례·5scope·15초 대기·전체 접근성 감사와 false handler·결과 게이트는 유지하며, 이는 진단 구조를 실제 앱에 가깝게 하는 수정이지 기존 missingDescription의 원인 증명이나 감사 통과가 아니다. 독립 정적 검토 완료, 실제 SDK·버튼 value 노출·감사 결과는 Actions 미검증이다. FR-025/030, Q-076/079에 연결한다.

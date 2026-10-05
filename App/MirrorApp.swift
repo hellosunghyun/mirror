@@ -72,10 +72,9 @@ private struct MirrorUITestingDynamicType: ViewModifier {
             content.dynamicTypeSize(.accessibility5)
             #else
             if MirrorDynamicTypeFixture.requested == .system {
-                content.modifier(MirrorAppliedDynamicType(fixtureMode: .system))
+                content
             } else {
-                content.modifier(MirrorAppliedDynamicType(fixtureMode: MirrorDynamicTypeFixture.requested))
-                    .dynamicTypeSize(.accessibility5)
+                content.dynamicTypeSize(.accessibility5)
             }
             #endif
         } else { content }
@@ -110,21 +109,13 @@ struct MirrorPresentationDynamicType: ViewModifier {
         if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
            ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
             #if os(macOS)
-            if scope == "capture" || scope == "review" {
-                content.dynamicTypeSize(size)
-            } else {
-                content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope))
-                    .dynamicTypeSize(size)
-            }
+            content.dynamicTypeSize(size)
             #else
             if MirrorDynamicTypeFixture.requested == .system {
                 // 시스템 비교군은 시트에서도 단일 값 override 없이 실제 상속 값을 관측한다.
-                content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope,
-                                                          fixtureMode: .system))
+                content
             } else {
-                content.modifier(MirrorAppliedDynamicType(identifier: "ui.appliedDynamicType." + scope,
-                                                          fixtureMode: MirrorDynamicTypeFixture.requested))
-                    .dynamicTypeSize(size)
+                content.dynamicTypeSize(size)
             }
             #endif
         } else {
@@ -148,25 +139,36 @@ private enum MirrorDynamicTypeFixture: String {
         #endif
     }
 }
+#endif
 
+/// 검사용 그룹을 만들지 않고 실제 버튼에서 읽은 환경값만 기록한다.
 @MainActor
-private struct MirrorAppliedDynamicType: ViewModifier {
+struct MirrorDynamicTypeValue: ViewModifier {
+    enum Scope: String { case root, capture, review, plan, detail }
+    let scope: Scope
+    #if DEBUG
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    var identifier = "ui.appliedDynamicType"
-    var fixtureMode: MirrorDynamicTypeFixture?
+    #endif
+
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.accessibilityElement(children: .contain)
-            .accessibilityIdentifier(identifier)
-            .accessibilityValue(dynamicTypeSize == .accessibility5 ? "accessibility5" : String(describing: dynamicTypeSize))
-            .accessibilityLabel(appliedLabel)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MIRROR_UI_TESTING"] == "1",
+           ProcessInfo.processInfo.environment["MIRROR_UI_DYNAMIC_TYPE"] == "accessibility5" {
+            content.accessibilityValue(appliedValue)
+        } else { content }
+        #else
+        content
+        #endif
     }
-    private var appliedLabel: String {
+
+    #if DEBUG
+    private var appliedValue: String {
         #if os(iOS)
-        if let fixtureMode {
+        if let fixtureMode = MirrorDynamicTypeFixture.requested {
             // 대상 앱의 시스템 값을 읽는다. SwiftUI override와 테스트 runner의 UIKit 값은 사용하지 않는다.
             let fields = ["actualMode": fixtureMode.rawValue,
-                          "scope": identifier == "ui.appliedDynamicType" ? "root"
-                              : String(identifier.dropFirst("ui.appliedDynamicType.".count)),
+                          "scope": scope.rawValue,
                           "swiftUI": appliedTypeName ?? "unavailable", "uiKit": applicationContentSizeName,
                           "uiKitSource": "appSystem"]
             if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) {
@@ -174,7 +176,7 @@ private struct MirrorAppliedDynamicType: ViewModifier {
             }
         }
         #endif
-        return appliedTypeName.map { "글자 크기 환경: " + $0 } ?? "글자 크기 환경"
+        return appliedTypeName ?? "unavailable"
     }
     #if os(iOS)
     private var applicationContentSizeName: String {
@@ -213,8 +215,8 @@ private struct MirrorAppliedDynamicType: ViewModifier {
         @unknown default: nil
         }
     }
+    #endif
 }
-#endif
 
 #if os(macOS)
 @MainActor

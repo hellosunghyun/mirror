@@ -451,19 +451,15 @@ final class MirrorAdaptiveUITests: XCTestCase {
 
     @MainActor
     private func configuration(in app: XCUIApplication, viewport: String, method: String = #function) throws {
-        #if os(macOS)
         // 루트 AX 그룹 없이 기존 실제 버튼에서 읽은 환경값을 확인한다.
         let applied = try unique(app.buttons.matching(identifier: "capture.open"), requestedElement: .appliedDynamicType)
         XCTAssertEqual(applied.elementType, .button)
-        #else
-        let applied = try find("ui.appliedDynamicType", requestedElement: .appliedDynamicType, in: app)
-        #endif
         let appliedValue = applied.value
         let appliedString = appliedValue as? String
         let appliedLabel = applied.label
-        try recordDynamicTypeFixture(label: appliedLabel, value: appliedString, scope: "root")
+        let appliedType = try recordDynamicTypeFixture(value: appliedString, scope: "root")
         configurationMeasurement(method: method, value: appliedValue, string: appliedString, label: appliedLabel)
-        XCTAssertEqual(appliedString, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
+        XCTAssertEqual(appliedType, "accessibility5", "요청값 대신 실제 SwiftUI 환경의 최대 크기를 확인한다.")
         XCTAssertEqual(app.state, .runningForeground)
         #if os(iOS)
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipad" : "iphone"
@@ -1223,32 +1219,27 @@ final class MirrorAdaptiveUITests: XCTestCase {
 
     @MainActor
     private func assertPresentationDynamicType(_ scope: PresentationScope, in app: XCUIApplication) throws {
-        #if os(macOS)
-        let query = scope == .capture
-            ? app.buttons.matching(identifier: "capture.save")
-            : app.descendants(matching: .any).matching(identifier: "ui.appliedDynamicType." + scope.rawValue)
-        #else
-        let query = app.descendants(matching: .any).matching(identifier: "ui.appliedDynamicType." + scope.rawValue)
-        #endif
+        let identifier: String
+        switch scope {
+        case .capture:
+            #if os(macOS)
+            identifier = "capture.save"
+            #else
+            identifier = "capture.close"
+            #endif
+        case .review: identifier = "review.finish"
+        case .plan: identifier = "plan.cancel"
+        case .detail: identifier = "detail.close"
+        }
+        let query = app.buttons.matching(identifier: identifier)
         guard query.firstMatch.waitForExistence(timeout: 15), query.count == 1 else {
             XCTFail("표시한 시트의 실제 글자 크기 환경을 고유한 요소로 확인해야 한다.")
             throw HarnessFailure.configuration
         }
         let probe = query.firstMatch
-        #if os(macOS)
-        let matches: Bool
-        if scope == .capture {
-            // 기존 저장 버튼 자체의 환경값을 읽고 label이나 요청값으로 대신하지 않는다.
-            matches = probe.elementType == .button && (probe.value as? String) == "accessibility5"
-        } else {
-            matches = probe.label == "글자 크기 환경: accessibility5"
-        }
-        #else
         let appliedString = probe.value as? String
-        let appliedLabel = probe.label
-        try recordDynamicTypeFixture(label: appliedLabel, value: appliedString, scope: scope.rawValue)
-        let matches = appliedString == "accessibility5"
-        #endif
+        let appliedType = try recordDynamicTypeFixture(value: appliedString, scope: scope.rawValue)
+        let matches = probe.elementType == .button && appliedType == "accessibility5"
         emitMeasurement("UI adaptive presentation configuration:", fields: [
             "scope": scope.rawValue, "maximumTypeApplied": matches,
         ])
@@ -1261,26 +1252,27 @@ final class MirrorAdaptiveUITests: XCTestCase {
     private enum PresentationScope: String { case capture, review, plan, detail }
 
     @MainActor
-    private func recordDynamicTypeFixture(label: String, value: String?, scope: String) throws {
+    private func recordDynamicTypeFixture(value: String?, scope: String) throws -> String? {
         #if os(iOS)
         guard let mode = dynamicTypeFixtureMode else {
             XCTFail("iOS 최대 글자 수용에는 실제 시스템 fixture 모드가 필요하다.")
             throw HarnessFailure.configuration
         }
         #else
-        guard let mode = dynamicTypeFixtureMode else { return }
+        guard let mode = dynamicTypeFixtureMode else { return value }
         #endif
         guard let diagnosticCase,
               [DiagnosticCase.captureValidation, .reviewWeek, .searchDetailUndo, .plannedCapture].contains(diagnosticCase),
               scope == "root" || PresentationScope(rawValue: scope) != nil,
               mode != .pinned || (diagnosticCase == .captureValidation && (scope == "root" || scope == "capture")),
-              let fields = (try? JSONSerialization.jsonObject(with: Data(label.utf8))) as? [String: String],
+              let value,
+              let fields = (try? JSONSerialization.jsonObject(with: Data(value.utf8))) as? [String: String],
               Set(fields.keys) == ["actualMode", "scope", "swiftUI", "uiKit", "uiKitSource"],
               let actualMode = fields["actualMode"], DynamicTypeFixtureMode(rawValue: actualMode) != nil,
               fields["scope"] == scope, fields["uiKitSource"] == "appSystem",
               let swiftUI = fields["swiftUI"], Self.fontEnvironmentNames.contains(swiftUI),
               let uiKit = fields["uiKit"], Self.applicationContentSizeNames.contains(uiKit) else {
-            // 대상 앱의 원문 label은 실패 메시지나 로그에 포함하지 않는다.
+            // 대상 앱의 원문 value는 실패 메시지나 로그에 포함하지 않는다.
             XCTFail("대상 앱의 글자 크기 진단 관측은 고정 schema와 enum을 사용해야 한다.")
             throw HarnessFailure.configuration
         }
@@ -1291,10 +1283,11 @@ final class MirrorAdaptiveUITests: XCTestCase {
             ])
         }
         guard actualMode == mode.rawValue, uiKit == "accessibilityExtraExtraExtraLarge",
-              swiftUI == "accessibility5", value == "accessibility5" else {
+              swiftUI == "accessibility5" else {
             XCTFail("대상 앱에 요청한 모드와 UIKit·SwiftUI의 실제 최대 글자 크기가 적용되어야 한다.")
             throw HarnessFailure.configuration
         }
+        return swiftUI
     }
 
     @MainActor
