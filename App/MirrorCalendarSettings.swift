@@ -860,10 +860,10 @@ struct MirrorSettingsView: View {
     private var archiveSection: some View {
         Section {
             workspaceChangeNotice
-            Button("JSON 내보내기") {
+            Button("백업 내보내기") {
                 Task { await model.exportArchive(); exporting = model.archiveData != nil }
             }
-            Button("JSON 복원 파일 선택") {
+            Button("백업 파일 선택") {
                 guard let selectionID = model.beginImportSelection() else { return }
                 importFileSelectionID = selectionID
                 accountImportConfirmationID = nil
@@ -909,7 +909,7 @@ struct MirrorSettingsView: View {
             workspaceChangeNotice
             Button("이 기기에서만 지우기", role: .destructive) { model.showDeleteConfirmation = true }
                 .disabled(!model.canChangeWorkspace)
-            Button("iCloud 포함 전체 삭제 지원 상태 확인") { Task { await model.inspectCloudDeletion() } }
+            Button("iCloud 데이터 삭제 안내") { Task { await model.inspectCloudDeletion() } }
         } header: {
             Label("데이터 삭제", systemImage: "trash")
         } footer: {
