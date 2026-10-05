@@ -459,3 +459,11 @@ activate가정확한identifier로Button쿼리를만들고reachable가실제후�
 다음 실행부터 restore 뒤 각 arm의1분 보조 단계가 기존 captureValidation 사례가 이미 기록한 첫 max-capture 앱 PNG 한 장만 진단용으로 보존한다. 현재 source·run·attempt·build context와 fresh build receipt, native 실패 또는 timeout, 실제 failed 사례, 정확한 mode·최대 probe·연속 progress와 recordComplete, export manifest·유일한 안전 경로·PNG CRC와 픽셀 구조를 확인한다. Adaptive의 기존 검증 함수를 재사용하며 새 스크린샷이나 새로운 UI 사례는 만들지 않는다. 부가 PNG 메타데이터와 SDK 원문을 제거한 이미지, 고정 manifest와 SHA256SUMS만 원자적으로 public에 옮긴다. 소유 불일치·누락·중복·손상·receipt 변경 때는 diagnosticUnavailable로 남기고 원래 실패 결과를 바꾸지 않는다.
 
 회귀는 실제 임시 PNG·manifest 파일로 두 mode의 한 장 보존과 원문 제거, native timeout의 failed 사례 요구, source/run/attempt/build·mode·progress·probe 소유 거부, 추가 화면·잘못된 manifest·CRC·symlink·중간 receipt 변경의 부분 게시 방지를 검사한다. 기존 native420초·전체35분·두 arm·전체 .all 감사·restore·cleanup과 수용 게이트를 유지하며 continue-on-error는 이 두 실패 이미지 보조 단계에만 허용한다. 로컬은 AST와 diff 검토만 수행했고 회귀 실행 및 실제 PNG 수집은 후속 GitHub Actions에서 확인한다.
+
+### 실제 Mac 대량 작업 탐색에서 이미 보이는 행의 재스크롤 방지
+
+- 근거: bb8ea9d / Batch 50 / run 37256734343 / attempt 1 / macOS job 111595306797. 두 작업 사례는 통과했고, 스무 작업 사례는 20개 저장 뒤 `libraryStarted` 64에서 실패했다. 세 번째 탐색의 첫 행 프레임은 `[208,-1,722,52]`였지만 소유 관계 확인 후 프레임은 `[208,111,722,52]`로 owner `[200,83,824,584]` 내부였다. 기존 분기는 이 상태에도 아래 방향 스크롤을 실행했고, 다음 관측은 y=-69, 16.231초 경과였다. 반복 1·2에서는 양수 pre 프레임 뒤 post 프레임이 0면적으로 바뀌어 탐색 패턴을 선택했다. 이는 같은 시각의 원자적 snapshot이 아니다.
+- 수정: Mac의 `library/taskRow`에서만 양수 post 프레임이 owner 내부면 추가 스크롤 없이 다음 반복에서 원래 성공 조건을 모두 다시 평가한다. post 프레임이 없거나 무효일 때에는 이번 반복에서 이미 읽은 양수 pre 프레임으로 방향을 정한다. 둘 다 없으면 기존 탐색 패턴을 유지한다. 성공을 바로 반환하거나 hit·window·역할·소유·전체 포함 검사를 생략하지 않는다.
+- 보존: 15초·12회 제한, 원래 성공/실패 문구, 실제 스크롤 API와 이동량, 두 typed 사례, 원문 보존 검증, iOS와 다른 target 동작은 변경하지 않는다. SDK 조회는 추가하지 않는다.
+- 진단: 기존 마지막 관측 schema1/2와 trace schema1 읽기는 유지한다. Mac의 같은 Twenty/taskRow 실패에서 마지막 12번째 반복이 스크롤 없이 재검사를 선택한 경우만 schema3로 `recheckAfterOwner`와 이미 읽은 post 프레임을 추가한다. Mac trace schema2는 각 반복의 실제 재검사 여부를 명시한다. 재검사는 swipe=false·방향=null·deadline=false와 양수 post/owner 포함 관계를 요구한다. 실제 스크롤이나 측정을 가짜로 기록하지 않는다.
+- 회귀: 새 helper 검사 네 개는 중간 재검사·12회 마지막 재검사, 기하/시간/가짜 swipe 모순, 정확한 원문 source·case·실패 소유, 다른 플랫폼 거부, 기존 실패 notice 보존과 개인 값 차단을 다룬다. 로컬 검증은 Python AST와 diff 형식 확인만 했으며, helper 실행·Swift 빌드·UI 효과는 GitHub Actions 결과로 확인해야 한다. Phone 미관측 행과 iPad 입력 snapshot 실패를 해결했다고 주장하지 않는다.

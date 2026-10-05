@@ -652,8 +652,17 @@ def _planner_frame_valid(frame):
                      for number in frame) and frame[2] >= 0 and frame[3] >= 0))
 
 
-def planner_reachability_observation_valid(value, *, _terminal=True):
-    """캐시 필드의 범위와 단축 평가 순서만 검증하며 기하를 재계산하지 않는다."""
+def _planner_recheck_geometry_valid(value):
+    owner, target = value['ownerFrame'], value['postOwnerTargetFrame']
+    return (all(type(frame) is list and _planner_frame_valid(frame) and frame[2] > 0 and frame[3] > 0
+                for frame in (owner, target))
+            and owner[0] <= target[0] and owner[1] <= target[1]
+            and target[0] + target[2] <= owner[0] + owner[2]
+            and target[1] + target[3] <= owner[1] + owner[3])
+
+
+def planner_reachability_observation_valid(value, *, _terminal=True, _recheck=False):
+    """캐시의 단축 평가 순서를 유지하고 명시한 재검사 상태의 포함 관계만 확인한다."""
 
     if (type(value['iteration']) is not int or not 1 <= value['iteration'] <= 12
             or type(value['exists']) is not bool
@@ -664,15 +673,18 @@ def planner_reachability_observation_valid(value, *, _terminal=True):
                    for item in (value['hittable'], value['enabled'], value['insideOwner']))
             or type(value['deadlineExceededAtLastGuard']) is not bool or type(value['swipePerformed']) is not bool):
         return False
+    if _recheck and (value.get('recheckAfterOwner') is not True or value['swipePerformed']
+                     or value['deadlineExceededAtLastGuard'] or not _planner_recheck_geometry_valid(value)):
+        return False
     if not _terminal:
-        if value['deadlineExceededAtLastGuard'] or not value['swipePerformed']:
+        if value['deadlineExceededAtLastGuard'] or not (value['swipePerformed'] or _recheck):
             return False
     elif value['deadlineExceededAtLastGuard']:
         if value['swipePerformed']:
             return False
-    elif value['iteration'] != 12 or not value['swipePerformed']:
+    elif value['iteration'] != 12 or not (value['swipePerformed'] or _recheck):
         return False
-    if (value['insideOwner'] is not None or value['swipePerformed']) and value['ownerFrame'] is None:
+    if (value['insideOwner'] is not None or value['swipePerformed'] or _recheck) and value['ownerFrame'] is None:
         return False
     if not value['exists']:
         return all(value[key] is None for key in
@@ -735,17 +747,21 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
         contracts[schema] = (method, phase, target, caller_line)
     if not contracts:
         return []
+    if platform == 'macos' and 2 in contracts:
+        contracts[3] = contracts[2]
     fields = {'schemaVersion', 'method', 'phase', 'progressSequence', 'callerLine', 'target', 'observationTiming',
               'iteration', 'exists', 'role', 'targetFrame', 'ownerFrame', 'windowCount', 'hittable', 'enabled',
               'insideOwner', 'deadlineExceededAtLastGuard', 'swipePerformed'}
     reports, active, progress, observation, location = [], None, None, None, None
-    matching_failures = {schema: 0 for schema in contracts}
+    matching_failures = {schema: 0 for schema in contracts if schema != 3}
     for line in log.splitlines():
         failure = SUPPORT.UI_FAILURE_SOURCE.fullmatch(line)
         owned_schema, found = None, None
         if failure is not None:
             case = SUPPORT.UI_FAILURE_CASE.fullmatch(failure[4])
             for schema, (method, _, target, caller_line) in contracts.items():
+                if schema == 3:
+                    continue  # 같은 실제 실패를 schema2/3 두 번 세지 않는다.
                 payload = 'failed - batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=' + target
                 if (case is not None and case[1] == bundle + '.' + CLASS and case[2] == method
                         and case[3] == payload and int(failure[2]) == caller_line):
@@ -764,8 +780,12 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
                 value = SUPPORT.strict_json(line[len(PLANNER_REACHABILITY_MARKER):])
             except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
                 return []
-            if (not isinstance(value, dict) or set(value) != fields
-                    or type(value['schemaVersion']) is not int or value['schemaVersion'] not in contracts):
+            if (not isinstance(value, dict) or type(value.get('schemaVersion')) is not int
+                    or value['schemaVersion'] not in contracts):
+                return []
+            recheck = value['schemaVersion'] == 3
+            expected_fields = fields | {'recheckAfterOwner', 'postOwnerTargetFrame'} if recheck else fields
+            if set(value) != expected_fields:
                 return []
             method, phase, target, caller_line = contracts[value['schemaVersion']]
             if (active != method or progress['phase'] != phase
@@ -775,7 +795,7 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
                     or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= 100_000
                     or value['callerLine'] != caller_line or value['target'] != target
                     or value['observationTiming'] != 'cachedLastIteration'
-                    or not planner_reachability_observation_valid(value)):
+                    or not planner_reachability_observation_valid(value, _recheck=recheck)):
                 return []
             observation = value
         elif line.startswith(PROGRESS_MARKER):
@@ -793,10 +813,11 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
                                     **location, 'terminal': 'failed'})
                 active, progress, observation, location = None, None, None, None
         elif observation is not None and failure is not None:
-            if owned_schema != observation['schemaVersion'] or location is not None:
+            if owned_schema != (2 if observation['schemaVersion'] == 3 else observation['schemaVersion']) or location is not None:
                 return []
             location = {'line': found['line'], **({'column': found['column']} if failure[3] else {})}
-    return reports if observation is None and all(matching_failures[item['schemaVersion']] == 1 for item in reports) else []
+    return reports if observation is None and all(
+        matching_failures[2 if item['schemaVersion'] == 3 else item['schemaVersion']] == 1 for item in reports) else []
 
 
 def planner_reachability_trace_diagnostics(log, bundle, platform, source_root=ROOT):
@@ -806,7 +827,7 @@ def planner_reachability_trace_diagnostics(log, bundle, platform, source_root=RO
             or log.count(marker.rstrip()) != 1):
         return []
     last_reports = [report for report in planner_reachability_diagnostics(log, bundle, platform, source_root)
-                    if report['schemaVersion'] == 2]
+                    if report['schemaVersion'] in (2, 3)]
     if len(last_reports) != 1:
         return []
     last = last_reports[0]
@@ -826,7 +847,9 @@ def planner_reachability_trace_diagnostics(log, bundle, platform, source_root=RO
             except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
                 return []
             if (not isinstance(value, dict) or set(value) != fields
-                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
+                    or type(value['schemaVersion']) is not int or value['schemaVersion'] not in (1, 2)
+                    or (value['schemaVersion'] == 2 and platform != 'macos')
+                    or (last['schemaVersion'] == 3 and value['schemaVersion'] != 2)
                     or type(value['progressSequence']) is not int or value['progressSequence'] != 64
                     or type(value['callerLine']) is not int
                     or value['observationTiming'] != 'cachedIterationsAtFailure'
@@ -835,11 +858,15 @@ def planner_reachability_trace_diagnostics(log, bundle, platform, source_root=RO
                     or type(value['observations']) is not list or not 1 <= len(value['observations']) <= 12):
                 return []
             previous_elapsed = 0
+            expected_entry_fields = entry_fields | {'recheckAfterOwner'} if value['schemaVersion'] == 2 else entry_fields
             for index, observation in enumerate(value['observations'], 1):
-                if (not isinstance(observation, dict) or set(observation) != entry_fields
-                        or observation['iteration'] != index
+                if (not isinstance(observation, dict) or set(observation) != expected_entry_fields
+                        or (value['schemaVersion'] == 2 and type(observation['recheckAfterOwner']) is not bool)):
+                    return []
+                recheck = value['schemaVersion'] == 2 and observation['recheckAfterOwner']
+                if (observation['iteration'] != index
                         or not planner_reachability_observation_valid(
-                            observation, _terminal=index == len(value['observations']))
+                            observation, _terminal=index == len(value['observations']), _recheck=recheck)
                         or not _planner_frame_valid(observation['postOwnerTargetFrame'])):
                     return []
                 elapsed = observation['guardElapsedMilliseconds']
@@ -847,17 +874,24 @@ def planner_reachability_trace_diagnostics(log, bundle, platform, source_root=RO
                         or not math.isfinite(elapsed) or elapsed < previous_elapsed
                         or observation['deadlineExceededAtLastGuard'] != (elapsed >= 15_000)):
                     return []
-                if observation['swipePerformed']:
+                if recheck:
+                    if observation['scrollDirection'] is not None:
+                        return []
+                elif observation['swipePerformed']:
                     if observation['scrollDirection'] not in ('up', 'down'):
                         return []
                 elif observation['postOwnerTargetFrame'] is not None or observation['scrollDirection'] is not None:
                     return []
                 previous_elapsed = elapsed
-            if any(value['observations'][-1][key] != last[key] for key in cached_fields):
+            final = value['observations'][-1]
+            if (any(final[key] != last[key] for key in cached_fields)
+                    or (last['schemaVersion'] == 3 and any(final[key] != last[key] for key in
+                        ('recheckAfterOwner', 'postOwnerTargetFrame')))
+                    or (last['schemaVersion'] == 2 and final.get('recheckAfterOwner', False))):
                 return []
             trace = value
         elif line.startswith(PLANNER_REACHABILITY_MARKER) and active == CASES[1]:
-            # 마지막 schema2의 현재 source/case/progress/실패 소유는 위 파서가 이미 검증했다.
+            # 마지막 schema2/3의 현재 source/case/progress/실패 소유는 위 파서가 이미 검증했다.
             last_seen = True
         elif event := SUPPORT.UI_CASE_EVENT.match(line):
             active = event[2] if event[3] == 'started' else None

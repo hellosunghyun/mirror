@@ -34,6 +34,7 @@ final class MirrorBatchUITests: XCTestCase {
         var insideOwner: Bool?
         var deadlineExceededAtLastGuard: Bool?
         var swipePerformed = false
+        var recheckAfterOwner = false
         var postOwnerTargetFrame: CGRect?
         var scrollDirection: String?
         var guardElapsedMilliseconds: Double?
@@ -665,8 +666,24 @@ final class MirrorBatchUITests: XCTestCase {
             let towardTop: Bool
             let directionFrame: CGRect? = query.firstMatch.exists ? query.firstMatch.frame : nil
             lastObservation.postOwnerTargetFrame = directionFrame
-            if let directionFrame, hasArea(directionFrame) {
-                towardTop = directionFrame.minY < owner.frame.minY
+            #if os(macOS)
+            var usableDirectionFrame = directionFrame
+            if surface == .library, target == .taskRow {
+                if let directionFrame, hasArea(directionFrame), owner.frame.contains(directionFrame) {
+                    // 소유 관계 확인 중 보이게 된 행은 다음 반복에서 원래 성공 조건을 모두 다시 검사한다.
+                    lastObservation.recheckAfterOwner = true
+                    continue
+                }
+                if directionFrame.map({ !hasArea($0) }) ?? true,
+                   let previousFrame = lastObservation.targetFrame, hasArea(previousFrame) {
+                    usableDirectionFrame = previousFrame
+                }
+            }
+            #else
+            let usableDirectionFrame = directionFrame
+            #endif
+            if let usableDirectionFrame, hasArea(usableDirectionFrame) {
+                towardTop = usableDirectionFrame.minY < owner.frame.minY
             } else if surface == .library, !missingTowardTop, target == .taskRow || target == .taskSelection {
                 // 입력 순서와 목록 순서는 다를 수 있다. 미관측 행을 아래에 있다고 가정하지 않는다.
                 // 기존 방향 1회, 반대 2회, 원래 방향 4회 순으로 탐색하며 실제 기하가 있으면 위 분기를 쓴다.
@@ -700,7 +717,12 @@ final class MirrorBatchUITests: XCTestCase {
         let method: ProgressCase
         let phase: ProgressPhase
         if progressCase == .twenty, progressPhase == .libraryStarted, target == .taskRow {
-            schemaVersion = 2; method = .twenty; phase = .libraryStarted
+            #if os(macOS)
+            schemaVersion = observation.recheckAfterOwner ? 3 : 2
+            #else
+            schemaVersion = 2
+            #endif
+            method = .twenty; phase = .libraryStarted
         } else {
         #if os(iOS)
             guard UIDevice.current.userInterfaceIdiom == .pad, progressCase == .two,
@@ -728,7 +750,7 @@ final class MirrorBatchUITests: XCTestCase {
         case .none: role = NSNull()
         }
         // 같은 반복의 순차 평가값이다. 마지막 swipe 뒤의 상태나 atomic snapshot으로 간주하지 않는다.
-        let fields: [String: Any] = [
+        var fields: [String: Any] = [
             "schemaVersion": schemaVersion, "method": method.rawValue, "phase": phase.rawValue,
             "progressSequence": progressSequence, "callerLine": callerLine, "target": target.rawValue,
             "observationTiming": "cachedLastIteration", "iteration": observation.iteration,
@@ -740,6 +762,10 @@ final class MirrorBatchUITests: XCTestCase {
             "insideOwner": observation.insideOwner.map { $0 as Any } ?? NSNull(),
             "deadlineExceededAtLastGuard": deadlineExceeded, "swipePerformed": observation.swipePerformed,
         ]
+        if schemaVersion == 3 {
+            fields["recheckAfterOwner"] = observation.recheckAfterOwner
+            fields["postOwnerTargetFrame"] = frameValue(observation.postOwnerTargetFrame)
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]) else { return }
         let line = Data(("Batch UI planner reachability diagnostic: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
         guard line.count <= 1_024 else { return }
@@ -757,6 +783,11 @@ final class MirrorBatchUITests: XCTestCase {
                   values[2] >= 0, values[3] >= 0 else { return "invalid" }
             return values
         }
+        #if os(macOS)
+        let schemaVersion = 2
+        #else
+        let schemaVersion = 1
+        #endif
         var entries: [[String: Any]] = []
         for (index, observation) in observations.enumerated() {
             guard observation.iteration == index + 1,
@@ -772,7 +803,7 @@ final class MirrorBatchUITests: XCTestCase {
             case .none: role = NSNull()
             }
             // 이미 읽은 반복별 순차 값만 보존한다. 각 swipe 뒤의 상태를 다시 조회하지 않는다.
-            entries.append([
+            var entry: [String: Any] = [
                 "iteration": observation.iteration, "exists": observation.exists, "role": role,
                 "targetFrame": frameValue(observation.targetFrame), "ownerFrame": frameValue(observation.ownerFrame),
                 "windowCount": observation.windowCount.map { $0 as Any } ?? NSNull(),
@@ -783,10 +814,12 @@ final class MirrorBatchUITests: XCTestCase {
                 "postOwnerTargetFrame": frameValue(observation.postOwnerTargetFrame),
                 "scrollDirection": observation.scrollDirection.map { $0 as Any } ?? NSNull(),
                 "guardElapsedMilliseconds": elapsed,
-            ])
+            ]
+            if schemaVersion == 2 { entry["recheckAfterOwner"] = observation.recheckAfterOwner }
+            entries.append(entry)
         }
         let fields: [String: Any] = [
-            "schemaVersion": 1, "method": ProgressCase.twenty.rawValue, "phase": ProgressPhase.libraryStarted.rawValue,
+            "schemaVersion": schemaVersion, "method": ProgressCase.twenty.rawValue, "phase": ProgressPhase.libraryStarted.rawValue,
             "progressSequence": progressSequence, "callerLine": callerLine, "target": target.rawValue,
             "observationTiming": "cachedIterationsAtFailure", "observations": entries,
         ]

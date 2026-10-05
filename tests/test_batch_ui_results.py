@@ -1732,6 +1732,156 @@ class BatchResultGateTests(unittest.TestCase):
                         self.assertNotIn('SYNTHETIC_PRIVATE_VALUE', '\n'.join(messages))
                         self.assertNotIn(str(ROOT), '\n'.join(messages))
 
+    def mac_recheck_trace_fixture(self, source_root, observations=None, **changes):
+        if observations is None:
+            observations = [
+                {'iteration': 1, 'exists': True, 'role': 'button', 'targetFrame': [208, -1, 722, 52],
+                 'ownerFrame': [200, 83, 824, 584], 'windowCount': 0, 'hittable': None,
+                 'enabled': None, 'insideOwner': None, 'deadlineExceededAtLastGuard': False,
+                 'swipePerformed': False, 'postOwnerTargetFrame': [208, 111, 722, 52],
+                 'scrollDirection': None, 'guardElapsedMilliseconds': 11_052.9, 'recheckAfterOwner': True},
+                {'iteration': 2, 'exists': True, 'role': 'button', 'targetFrame': [208, -69, 722, 52],
+                 'ownerFrame': None, 'windowCount': 0, 'hittable': None,
+                 'enabled': None, 'insideOwner': None, 'deadlineExceededAtLastGuard': True,
+                 'swipePerformed': False, 'postOwnerTargetFrame': None,
+                 'scrollDirection': None, 'guardElapsedMilliseconds': 16_231.3, 'recheckAfterOwner': False},
+            ]
+        ordinary = [{key: value for key, value in entry.items() if key != 'recheckAfterOwner'}
+                    for entry in observations]
+        lines = self.planner_trace_log_fixture(source_root, 'MirrorMacBatchUITests', ordinary, **changes)
+        last = json.loads(lines[-4][len(helper.PLANNER_REACHABILITY_MARKER):])
+        if observations[-1]['recheckAfterOwner']:
+            last.update(schemaVersion=3, recheckAfterOwner=True,
+                        postOwnerTargetFrame=observations[-1]['postOwnerTargetFrame'])
+        lines[-4] = helper.PLANNER_REACHABILITY_MARKER + json.dumps(last)
+        trace = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+        trace.update(schemaVersion=2, observations=observations)
+        lines[-3] = helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(trace)
+        return lines
+
+    def test_mac_recheck_trace_keeps_real_non_swipes_and_twelve_check_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            self.task_row_source_fixture(root)
+            normal = self.mac_recheck_trace_fixture(root)
+            entries = json.loads(normal[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])['observations']
+            twelve = [{**entries[0], 'iteration': index, 'guardElapsedMilliseconds': index * 1_000}
+                      for index in range(1, 13)]
+            absent_before_owner = {**entries[0], 'exists': False, 'role': None,
+                                   'targetFrame': None, 'windowCount': None}
+            for observations in (entries, [absent_before_owner, entries[-1]], twelve):
+                lines = self.mac_recheck_trace_fixture(root, observations)
+                log = '\n'.join(lines)
+                last = helper.planner_reachability_diagnostics(log, 'MirrorMacBatchUITests', 'macos', root)
+                trace = helper.planner_reachability_trace_diagnostics(log, 'MirrorMacBatchUITests', 'macos', root)
+                self.assertEqual(len(last), 1)
+                self.assertEqual(len(trace), 1)
+                self.assertEqual(last[0]['schemaVersion'], 3 if len(observations) == 12 else 2)
+                self.assertEqual(trace[0]['observations'], observations)
+                self.assertTrue(all(not item['swipePerformed'] for item in trace[0]['observations']))
+                self.assertEqual(last, helper.planner_reachability_diagnostics(
+                    '\n'.join(lines[:-3] + lines[-2:]), 'MirrorMacBatchUITests', 'macos', root))
+                with self.assertRaises(helper.BatchError):
+                    helper.validate_log(log, 'MirrorMacBatchUITests')
+                with self.assertRaises(helper.BatchError):
+                    helper.validate_outcome({**EXPECTED, **trace[0]}, EXPECTED)
+            # schema2와 trace1은 새 recheck 필드 없이 그대로 읽는다.
+            old = '\n'.join(self.planner_trace_log_fixture(root, 'MirrorMacBatchUITests'))
+            self.assertEqual(len(helper.planner_reachability_trace_diagnostics(old, 'MirrorMacBatchUITests', 'macos', root)), 1)
+
+    def test_mac_recheck_trace_rejects_geometry_timing_and_fabricated_swipes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            self.task_row_source_fixture(root)
+            lines = self.mac_recheck_trace_fixture(root)
+            trace = json.loads(lines[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+            changes = [{'recheckAfterOwner': value} for value in (False, 1, None, 'true')]
+            changes += [{'postOwnerTargetFrame': value} for value in
+                        (None, 'invalid', [0, 0, 0, 0], [208, 70, 722, 52], [208, 640, 722, 52],
+                         [199, 111, 722, 52], [310, 111, 722, 52], [True, 111, 722, 52])]
+            changes += [{'ownerFrame': value} for value in (None, 'invalid', [0, 0, 0, 0])]
+            changes += [{'swipePerformed': True}, {'scrollDirection': 'down'},
+                        {'deadlineExceededAtLastGuard': True}, {'guardElapsedMilliseconds': 15_000},
+                        {'insideOwner': True}, {'private': 'SYNTHETIC_PRIVATE_VALUE'}]
+            for change in changes:
+                with self.subTest(change=change):
+                    value = copy.deepcopy(trace)
+                    value['observations'][0].update(change)
+                    log = '\n'.join(lines[:-3] + [helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value)] + lines[-2:])
+                    self.assertEqual(helper.planner_reachability_trace_diagnostics(log, 'MirrorMacBatchUITests', 'macos', root), [])
+                    self.assertEqual(len(helper.planner_reachability_diagnostics(log, 'MirrorMacBatchUITests', 'macos', root)), 1)
+
+    def test_mac_recheck_schema3_requires_twelfth_check_exact_source_and_failed_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = self.task_row_source_fixture(root)
+            first = json.loads(self.mac_recheck_trace_fixture(root)[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])['observations'][0]
+            observations = [{**first, 'iteration': index, 'guardElapsedMilliseconds': index * 1_000}
+                            for index in range(1, 13)]
+            lines = self.mac_recheck_trace_fixture(root, observations)
+            fields = json.loads(lines[-4][len(helper.PLANNER_REACHABILITY_MARKER):])
+            changes = [{'iteration': 11}, {'recheckAfterOwner': False}, {'recheckAfterOwner': 1},
+                       {'swipePerformed': True}, {'deadlineExceededAtLastGuard': True},
+                       {'postOwnerTargetFrame': [208, -1, 722, 52]}, {'schemaVersion': 2},
+                       {'method': helper.CASES[0]}, {'phase': 'pickerStarted'}, {'target': 'planTask'},
+                       {'callerLine': 4}, {'progressSequence': 63}, {'private': 'SYNTHETIC_PRIVATE_VALUE'}]
+            for change in changes:
+                log = '\n'.join(lines[:-4] + [helper.PLANNER_REACHABILITY_MARKER + json.dumps({**fields, **change})] + lines[-3:])
+                self.assertEqual(helper.planner_reachability_diagnostics(log, 'MirrorMacBatchUITests', 'macos', root), [])
+                self.assertEqual(helper.planner_reachability_trace_diagnostics(log, 'MirrorMacBatchUITests', 'macos', root), [])
+            before, last, trace, failure, terminal = lines[:-4], *lines[-4:]
+            for wrong in (before + [last, trace, failure, failure, terminal], before + [last, trace, terminal],
+                          before + [trace, last, failure, terminal], before + [last, trace, failure],
+                          before + [last, trace, failure, terminal.replace('failed.', 'passed.')]):
+                self.assertEqual(helper.planner_reachability_trace_diagnostics('\n'.join(wrong), 'MirrorMacBatchUITests', 'macos', root), [])
+            # 순차 캐시 값이 같은 schema3 마지막 기록과 다르면 연결하지 않는다.
+            value = json.loads(trace[len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+            value['observations'][-1]['postOwnerTargetFrame'] = [208, 112, 722, 52]
+            wrong = '\n'.join(before + [last, helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value), failure, terminal])
+            self.assertEqual(helper.planner_reachability_trace_diagnostics(wrong, 'MirrorMacBatchUITests', 'macos', root), [])
+            source.write_text(source.read_text().replace('"task.row.", title', '"task.row.", other'))
+            self.assertEqual(helper.planner_reachability_diagnostics('\n'.join(lines), 'MirrorMacBatchUITests', 'macos', root), [])
+
+    def test_mac_recheck_versions_reject_other_platforms_and_preserve_original_notices(self):
+        source = (ROOT / helper.SOURCE).read_text().splitlines()
+        line = next(index for index, text in enumerate(source, 1) if text.strip() ==
+                    'let row = try reachable(query, surface: .library, target: .taskRow, in: app)')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary).resolve()
+            lines = self.mac_recheck_trace_fixture(ROOT, callerLine=line)
+            log = '\n'.join(lines)
+            for platform in ('iphone', 'ipad'):
+                mobile = log.replace('MirrorMacBatchUITests', BUNDLE)
+                self.assertEqual(helper.planner_reachability_trace_diagnostics(mobile, BUNDLE, platform), [])
+                # 기존 schema2 마지막 실패는 새 Mac trace가 거부되어도 보존한다.
+                self.assertEqual(len(helper.planner_reachability_diagnostics(mobile, BUNDLE, platform)), 1)
+                value = json.loads(lines[-4][len(helper.PLANNER_REACHABILITY_MARKER):])
+                value.update(schemaVersion=3, iteration=12, deadlineExceededAtLastGuard=False,
+                             recheckAfterOwner=True, ownerFrame=[200, 83, 824, 584],
+                             postOwnerTargetFrame=[208, 111, 722, 52])
+                mobile_last = '\n'.join(lines[:-4] + [helper.PLANNER_REACHABILITY_MARKER + json.dumps(value)] + lines[-2:])
+                self.assertEqual(helper.planner_reachability_diagnostics(
+                    mobile_last.replace('MirrorMacBatchUITests', BUNDLE), BUNDLE, platform), [])
+            for valid in (True, False):
+                current = list(lines)
+                if not valid:
+                    value = json.loads(current[-3][len(helper.PLANNER_REACHABILITY_TRACE_MARKER):])
+                    value['observations'][0]['rawValue'] = 'SYNTHETIC_PRIVATE_VALUE'
+                    current[-3] = helper.PLANNER_REACHABILITY_TRACE_MARKER + json.dumps(value)
+                (directory / 'test.log').write_text('\n'.join(current))
+                with mock.patch.object(helper, 'context_for', return_value={'bundle': 'MirrorMacBatchUITests'}), \
+                        mock.patch.object(helper.SUPPORT, 'write_json') as write, mock.patch('builtins.print') as printed:
+                    helper.diagnostics(directory, {**EXPECTED, 'platform': 'macos'}, 'test', partial_failure=True)
+                messages = [call.args[0] for call in printed.call_args_list]
+                self.assertEqual(sum(message.startswith('::notice::Batch UI planner reachability trace diagnostics: ')
+                                     for message in messages), int(valid))
+                self.assertTrue(any(message.startswith('::notice::Batch UI reachable failure diagnostics: ') for message in messages))
+                self.assertTrue(any(message.startswith('::notice::Batch UI planner reachability diagnostics: ') for message in messages))
+                self.assertNotIn('SYNTHETIC_PRIVATE_VALUE', '\n'.join(messages))
+                self.assertNotIn(str(ROOT), '\n'.join(messages))
+                write.assert_not_called()
+                self.assertFalse((directory / 'safe-outcome.json').exists())
+
     def test_mobile_target_notice_bounds_deduplicates_and_preserves_other_notices_without_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             source_root = Path(temporary).resolve()
