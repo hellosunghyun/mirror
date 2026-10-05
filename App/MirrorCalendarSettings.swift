@@ -271,9 +271,9 @@ struct MirrorCalendarView: View {
                 }
             }
             Label("할 일 \(tasks.count)개", systemImage: "checklist")
-                .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                .font(.caption.weight(.medium)).foregroundStyle(MirrorPalette.supportingText)
             if tasks.isEmpty {
-                Text("이 날짜에 정한 일이 없어요.").font(.callout).foregroundStyle(.secondary)
+                Text("이 날짜에 정한 일이 없어요.").font(.callout).foregroundStyle(MirrorPalette.supportingText)
             }
             taskRows(tasks)
             if !deadlines.isEmpty {
