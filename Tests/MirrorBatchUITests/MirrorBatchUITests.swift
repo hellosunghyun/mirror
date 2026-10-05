@@ -432,7 +432,7 @@ final class MirrorBatchUITests: XCTestCase {
         try waitPlannerDisclosureState("펼쳐짐", element: disclosure)
         for task in selected {
             let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\(task.uuid)"), surface: .planner, target: .planTask, in: app)
-            XCTAssertEqual(title.label, task.title)
+            XCTAssertEqual(displayedText(of: title), task.title)
         }
         let folded = try plannerDisclosure(in: app)
         try assertReachable(folded, in: app)
