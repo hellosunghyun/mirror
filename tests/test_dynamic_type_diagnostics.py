@@ -1,5 +1,6 @@
 """진단만의 SDK 계약·사례 소유·실제 관측·원문 비공개 경계. Actions에서 실행한다."""
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -7,10 +8,12 @@ import os
 from pathlib import Path
 import re
 import signal
+import struct
 import subprocess
 import tempfile
 import unittest
 from unittest import mock
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('dynamic_type_diagnostics', ROOT / 'scripts/ci-dynamic-type-diagnostics.py')
@@ -70,6 +73,239 @@ def public_help(listing=None):
 
 
 class DynamicTypeDiagnosticsTests(unittest.TestCase):
+    @contextlib.contextmanager
+    def failure_images_fixture(self, mode='system'):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            def owned_context(expected):
+                return ({**expected, 'destination': 'platform=iOS Simulator,id=owned-udid',
+                         'scheme': 'MirrorIOS', 'sdk': 'iphonesimulator'}, 'owned-udid')
+            ctx, _ = owned_context(EXPECTED)
+            (root / 'contract.json').write_text(json.dumps({'supported': True}))
+            (root / 'restore.json').write_text(json.dumps({'context': ctx, 'before': 'large', 'receipt': 'b' * 64}))
+            (root / (mode + '-exit.json')).write_text(json.dumps({'nativeExitCode': 65, 'timedOut': False}))
+            (root / (mode + '.xcresult')).mkdir()
+            lines = [event('started'), helper.A.CONFIG_MARKER + json.dumps(helper.A.configuration(EXPECTED, helper.CASE))]
+            for sequence, (phase, step) in enumerate(helper.A.PROGRESS_PROTOCOL[helper.CASE][:9], 1):
+                lines.append(helper.A.PROGRESS_MARKER + json.dumps(
+                    {'method': helper.CASE + '()', 'phase': phase, 'sequence': sequence, 'step': step}))
+                if phase in ('started', 'recordStarted'):
+                    lines.append(helper.PROBE + json.dumps(probe('root' if phase == 'started' else 'capture', mode)))
+            lines.extend(observed_log(mode, failed=True).splitlines()[3:])
+            (root / (mode + '.stdout')).write_text('\n'.join(lines))
+            (root / (mode + '.stderr')).write_text(PRIVATE)
+            original = (helper.A.SIGNATURE
+                + helper.A.chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0))
+                + helper.A.chunk(b'tEXt', b'Comment\0' + PRIVATE.encode())
+                + helper.A.chunk(b'IDAT', zlib.compress(b'\0\xff\0\0\xff'))
+                + helper.A.chunk(b'IEND', b''))
+            attachment = {'suggestedHumanReadableName': 'mirror-adaptive-max-capture-1',
+                          'exportedFileName': PRIVATE + '.png', 'uniformTypeIdentifier': 'public.png'}
+            data = {'png': original, 'manifest': [{'testName': PRIVATE, 'attachments': [attachment,
+                {'name': PRIVATE, 'exportedFileName': 'system-private.txt'}]}], 'code': 0, 'symlink': False}
+            def export(args, name, timeout):
+                self.assertEqual(args, ['xcrun', 'xcresulttool', 'export', 'attachments', '--path',
+                    str(root / (mode + '.xcresult')), '--output-path', str(root / (mode + '-failure-attachments'))])
+                self.assertEqual((name, timeout), (mode + '-failure-images-export', 15))
+                destination = root / (mode + '-failure-attachments')
+                destination.mkdir()
+                (destination / 'manifest.json').write_text(json.dumps(data['manifest']))
+                image = destination / (PRIVATE + '.png')
+                if data['symlink']:
+                    (root / 'outside.png').write_bytes(data['png'])
+                    image.symlink_to(root / 'outside.png')
+                else:
+                    image.write_bytes(data['png'])
+                (destination / 'system-private.txt').write_text(PRIVATE)
+                return data['code']
+            with mock.patch.object(helper, 'DIRECTORY', root), \
+                    mock.patch.object(helper, 'context', side_effect=owned_context), \
+                    mock.patch.object(helper.A, 'verify_receipt', return_value='b' * 64) as receipt, \
+                    mock.patch.object(helper, 'native', side_effect=export) as native:
+                yield root, data, native, receipt
+
+    def test_failure_images_publish_one_clean_owned_png_per_mode_and_keep_original_diagnostic_meaning(self):
+        for mode in ('pinned', 'system'):
+            with self.subTest(mode=mode), self.failure_images_fixture(mode) as (root, data, native, receipt):
+                original_status = (root / (mode + '-exit.json')).read_bytes()
+                original_log = (root / (mode + '.stdout')).read_bytes()
+                (root / 'public').mkdir(mode=0o700)
+                failure_summary = root / 'public' / ('run-' + mode + '.json')
+                failure_summary.write_text(json.dumps({'status': 'nativeTestFailed', 'nativeExitCode': 65,
+                                                       'timedOut': False, 'scope': 'diagnosticOnly'}))
+                original_summary = failure_summary.read_bytes()
+                report = {}
+                helper.execute('failure-images', mode, EXPECTED, report)
+                destination = root / 'public' / (mode + '-failure-images')
+                self.assertEqual({path.name for path in destination.iterdir()}, {'capture.png', 'manifest.json', 'SHA256SUMS'})
+                image = (destination / 'capture.png').read_bytes()
+                self.assertNotIn(PRIVATE.encode(), image)
+                self.assertNotIn(b'tEXt', image)
+                self.assertIn(helper.A.chunk(b'IDAT', zlib.compress(b'\0\xff\0\0\xff')), image)
+                manifest = json.loads((destination / 'manifest.json').read_text())
+                self.assertEqual(manifest, {**EXPECTED, 'formatVersion': 1, 'kind': 'dynamic-type-failure-images',
+                    'scope': 'recordedFixtureAppImagesOnly', 'semantics': 'diagnosticOnlyNotAcceptanceOrAuditCause',
+                    'mode': mode, 'buildReceiptSHA256': 'b' * 64, 'screenshots': [{
+                        'case': helper.CASE, 'stage': 'max-capture', 'sequence': 1, 'file': 'capture.png',
+                        'sha256': hashlib.sha256(image).hexdigest(),
+                        'exportSHA256': hashlib.sha256(data['png']).hexdigest(),
+                        'bytes': len(image), 'width': 1, 'height': 1}]})
+                sums = dict(line.split('  ', 1)[::-1] for line in (destination / 'SHA256SUMS').read_text().splitlines())
+                self.assertEqual(sums, {name: hashlib.sha256((destination / name).read_bytes()).hexdigest()
+                                       for name in ('capture.png', 'manifest.json')})
+                self.assertTrue(all(path.stat().st_mode & 0o777 == 0o600 for path in destination.iterdir()))
+                self.assertEqual(destination.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(report['screenshotCount'], 1)
+                self.assertEqual(report['buildReceiptSHA256'], 'b' * 64)
+                for private in (PRIVATE, str(root), 'passedTests', 'maximumProbesVerified', 'caseResult'):
+                    self.assertNotIn(private, json.dumps(manifest) + json.dumps(report))
+                self.assertEqual(receipt.call_args_list, [mock.call(helper.BUILD, EXPECTED)] * 2)
+                native.assert_called_once()
+                self.assertEqual((root / (mode + '-exit.json')).read_bytes(), original_status)
+                self.assertEqual((root / (mode + '.stdout')).read_bytes(), original_log)
+                self.assertEqual(failure_summary.read_bytes(), original_summary)
+                helper.execute('cleanup', None, EXPECTED, {})
+                self.assertEqual({path.name for path in root.iterdir()}, {'public'})
+                self.assertTrue((destination / 'capture.png').is_file())
+                self.assertEqual(failure_summary.read_bytes(), original_summary)
+
+    def test_failure_images_allow_native_timeout_only_with_a_recorded_owned_failed_case(self):
+        for mode in helper.MODES:
+            with self.subTest(mode=mode), self.failure_images_fixture(mode) as (root, data, native, receipt):
+                status_path = root / (mode + '-exit.json')
+                status_path.write_text(json.dumps({'nativeExitCode': None, 'timedOut': True}))
+                original_status = status_path.read_bytes()
+                report = {}
+                helper.execute('failure-images', mode, EXPECTED, report)
+                self.assertEqual(report['screenshotCount'], 1)
+                self.assertTrue((root / 'public' / (mode + '-failure-images/capture.png')).is_file())
+                self.assertEqual(status_path.read_bytes(), original_status)
+                native.assert_called_once()
+
+    def test_failure_images_reject_foreign_context_receipt_and_stale_paths_before_export(self):
+        for changed in ({'commitSHA': 'c' * 40}, {'runID': '11'}, {'runAttempt': '2'}, {'buildNumber': '2'}):
+            with self.subTest(changed=changed), self.failure_images_fixture() as (root, data, native, receipt):
+                with self.assertRaises(helper.Failure):
+                    helper.execute('failure-images', 'system', {**EXPECTED, **changed}, {})
+                native.assert_not_called()
+                self.assertFalse((root / 'public/system-failure-images').exists())
+        for scenario in ('receipt', 'exportExists', 'bundleSymlink', 'outputExists', 'outputSymlink'):
+            with self.subTest(scenario=scenario), self.failure_images_fixture() as (root, data, native, receipt):
+                if scenario == 'receipt':
+                    receipt.return_value = 'c' * 64
+                elif scenario == 'exportExists':
+                    (root / 'system-failure-attachments').mkdir()
+                elif scenario == 'bundleSymlink':
+                    (root / 'system.xcresult').rmdir()
+                    (root / 'foreign.xcresult').mkdir()
+                    (root / 'system.xcresult').symlink_to(root / 'foreign.xcresult', target_is_directory=True)
+                else:
+                    (root / 'public').mkdir()
+                    if scenario == 'outputExists':
+                        (root / 'public/system-failure-images').mkdir()
+                    else:
+                        (root / 'foreign-review').mkdir()
+                        (root / 'public/system-failure-images').symlink_to(root / 'foreign-review', target_is_directory=True)
+                with self.assertRaises((helper.Failure, helper.A.AdaptiveError, OSError)):
+                    helper.execute('failure-images', 'system', EXPECTED, {})
+                if scenario in ('receipt', 'exportExists', 'bundleSymlink'):
+                    native.assert_not_called()
+                self.assertFalse((root / 'public/system-failure-images/capture.png').exists())
+
+    def test_failure_images_require_failed_owned_case_matching_probes_and_recorded_first_capture(self):
+        for scenario in ('passed', 'interrupted', 'foreignCase', 'wrongMode', 'wrongActualMode', 'wrongMaximum',
+                         'missingRecord', 'duplicateRecord', 'reorderedProgress', 'unownedRecord',
+                         'missingProbe', 'duplicateProbe', 'privateProbe', 'nativeSuccess', 'badTimeout',
+                         'extraExitField'):
+            with self.subTest(scenario=scenario), self.failure_images_fixture() as (root, data, native, receipt):
+                path = root / 'system.stdout'
+                text = path.read_text()
+                if scenario == 'passed': text = text.replace(event('failed'), event('passed'))
+                elif scenario == 'interrupted': text = text.replace(event('failed'), '')
+                elif scenario == 'foreignCase': text = text.replace(helper.CASE, 'testForeign')
+                elif scenario == 'wrongMode': text = text.replace('"requestedMode": "system"', '"requestedMode": "pinned"')
+                elif scenario == 'wrongActualMode': text = text.replace('"actualMode": "system"', '"actualMode": "pinned"')
+                elif scenario == 'wrongMaximum': text = text.replace('"swiftUI": "accessibility5"', '"swiftUI": "large"')
+                elif scenario == 'missingRecord': text = '\n'.join(line for line in text.splitlines()
+                    if '"phase": "recordComplete"' not in line)
+                elif scenario in ('duplicateRecord', 'reorderedProgress', 'unownedRecord'):
+                    rows = text.splitlines()
+                    index = next(i for i, line in enumerate(rows) if '"phase": "recordComplete"' in line)
+                    if scenario == 'duplicateRecord': rows.insert(index, rows[index])
+                    elif scenario == 'reorderedProgress': rows[index], rows[index + 1] = rows[index + 1], rows[index]
+                    else: rows.append(rows.pop(index))
+                    text = '\n'.join(rows)
+                elif scenario == 'missingProbe': text = '\n'.join(line for line in text.splitlines()
+                    if '"scope": "capture"' not in line)
+                elif scenario == 'duplicateProbe':
+                    line = next(line for line in text.splitlines() if '"scope": "capture"' in line)
+                    text = text.replace(line, line + '\n' + line)
+                elif scenario == 'privateProbe': text = text.replace('"scope": "capture"', '"scope": "' + PRIVATE + '"')
+                else:
+                    status = {'nativeExitCode': 0 if scenario == 'nativeSuccess' else 65, 'timedOut': scenario == 'badTimeout'}
+                    if scenario == 'extraExitField': status['private'] = PRIVATE
+                    (root / 'system-exit.json').write_text(json.dumps(status))
+                path.write_text(text)
+                report = {}
+                with self.assertRaises((helper.Failure, helper.A.AdaptiveError)):
+                    helper.execute('failure-images', 'system', EXPECTED, report)
+                native.assert_not_called()
+                self.assertFalse((root / 'public/system-failure-images').exists())
+                self.assertNotIn(PRIVATE, json.dumps(report))
+
+    def test_failure_images_reject_unrecognized_source_and_later_recorded_images(self):
+        with self.failure_images_fixture() as (root, data, native, receipt), \
+                mock.patch.object(helper.A, 'source_method_entries', return_value=None):
+            with self.assertRaises(helper.A.AdaptiveError):
+                helper.execute('failure-images', 'system', EXPECTED, {})
+            native.assert_not_called()
+            self.assertFalse((root / 'public/system-failure-images').exists())
+        with self.failure_images_fixture() as (root, data, native, receipt):
+            path = root / 'system.stdout'
+            rows = path.read_text().splitlines()
+            following = [helper.A.PROGRESS_MARKER + json.dumps(
+                {'method': helper.CASE + '()', 'phase': phase, 'sequence': sequence, 'step': step})
+                for sequence, (phase, step) in enumerate(helper.A.PROGRESS_PROTOCOL[helper.CASE][9:16], 10)]
+            rows[-1:-1] = following
+            path.write_text('\n'.join(rows))
+            with self.assertRaises(helper.Failure):
+                helper.execute('failure-images', 'system', EXPECTED, {})
+            native.assert_not_called()
+            self.assertFalse((root / 'public/system-failure-images').exists())
+
+    def test_failure_images_reject_export_manifest_png_and_changed_receipt_without_partial_publication(self):
+        for scenario in ('exportFailure', 'manifestMissingShot', 'manifestDuplicate', 'unsafeName', 'wrongType',
+                         'pngCRC', 'pngSymlink', 'changedReceipt'):
+            with self.subTest(scenario=scenario), self.failure_images_fixture() as (root, data, native, receipt):
+                attachment = data['manifest'][0]['attachments'][0]
+                if scenario == 'exportFailure': data['code'] = 64
+                elif scenario == 'manifestMissingShot': attachment['suggestedHumanReadableName'] = 'mirror-adaptive-max-review-1'
+                elif scenario == 'manifestDuplicate': data['manifest'][0]['attachments'].append(dict(attachment))
+                elif scenario == 'unsafeName': attachment['exportedFileName'] = '../' + PRIVATE + '.png'
+                elif scenario == 'wrongType': attachment['uniformTypeIdentifier'] = 'public.jpeg'
+                elif scenario == 'pngCRC': data['png'] = data['png'][:-1] + bytes([data['png'][-1] ^ 1])
+                elif scenario == 'pngSymlink': data['symlink'] = True
+                elif scenario == 'changedReceipt': receipt.side_effect = ['b' * 64, 'c' * 64]
+                report = {}
+                with self.assertRaises((helper.Failure, helper.A.AdaptiveError, OSError)):
+                    helper.execute('failure-images', 'system', EXPECTED, report)
+                self.assertFalse((root / 'public/system-failure-images').exists())
+                self.assertNotIn(PRIVATE, json.dumps(report))
+                native.assert_called_once()
+
+    def test_failure_image_cli_exception_keeps_fixed_stage_and_hides_export_errors(self):
+        with self.failure_images_fixture('pinned') as (root, data, native, receipt), \
+                mock.patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'RUNNER_OS': 'macOS',
+                                             'GITHUB_REPOSITORY': 'hellosunghyun/mirror'}), \
+                mock.patch.object(helper.A, 'identity', return_value=EXPECTED), \
+                mock.patch.object(helper.A, 'checkout_matches'), mock.patch('builtins.print') as printed:
+            native.side_effect = RuntimeError(PRIVATE)
+            self.assertEqual(helper.main(['failure-images', 'pinned']), 2)
+            summary = json.loads((root / 'public/failure-images-pinned.json').read_text())
+            self.assertEqual((summary['status'], summary['failureStage']), ('diagnosticUnavailable', 'export'))
+            self.assertFalse((root / 'public/pinned-failure-images').exists())
+            self.assertNotIn(PRIVATE, json.dumps(summary) + repr(printed.call_args_list))
+
     def test_public_help_requires_usage_standalone_operation_and_every_exact_category(self):
         text = public_help()
         self.assertTrue(helper.supports_ui(text))
@@ -1168,7 +1404,26 @@ class DynamicTypeDiagnosticsTests(unittest.TestCase):
             self.assertEqual(workflow.count('ci-dynamic-type-diagnostics.py run ' + mode), 1)
         self.assertIn("always() && steps.build.outputs.adaptive_build_ready == 'true'", workflow)
         self.assertNotIn('adaptive_evidence_ready', workflow)
-        self.assertNotIn('continue-on-error', workflow)
+        steps = re.split(r'^      - ', workflow, flags=re.MULTILINE)
+        image_steps = [step for step in steps if re.search(r'run: python3 scripts/ci-dynamic-type-diagnostics.py failure-images ', step)]
+        self.assertEqual(len(image_steps), 2)
+        self.assertIn('    timeout-minutes: 35\n', workflow)
+        restore = workflow.index('run: python3 scripts/ci-dynamic-type-diagnostics.py restore')
+        upload = workflow.index('uses: actions/upload-artifact@')
+        cleanup = workflow.index('run: python3 scripts/ci-dynamic-type-diagnostics.py cleanup')
+        self.assertLess(upload, cleanup)
+        for mode in helper.MODES:
+            matches = [step for step in image_steps if 'failure-images ' + mode in step]
+            self.assertEqual(len(matches), 1)
+            step = matches[0]
+            self.assertIn("if: ${{ always() && steps.setup.outcome == 'success' && steps." + mode + ".outcome == 'failure' }}", step)
+            self.assertIn('        continue-on-error: true\n', step)
+            self.assertIn('        timeout-minutes: 1\n', step)
+            self.assertLess(restore, workflow.index(step))
+            self.assertLess(workflow.index(step), upload)
+        for step in steps:
+            if step not in image_steps:
+                self.assertNotIn('continue-on-error', step)
         self.assertEqual(workflow.count("MIRROR_DYNAMIC_TYPE_PREBOOT: '1'"), 1)
 
 

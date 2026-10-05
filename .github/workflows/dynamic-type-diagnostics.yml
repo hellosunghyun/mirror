@@ -68,7 +68,17 @@ jobs:
         if: ${{ always() && steps.build.outputs.adaptive_build_ready == 'true' }}
         timeout-minutes: 1
         run: python3 scripts/ci-dynamic-type-diagnostics.py restore
-      - name: 진단 전용 고정 요약만 보존
+      - name: 실패한 pinned 사례의 기존 첫 앱 PNG 진단
+        if: ${{ always() && steps.setup.outcome == 'success' && steps.pinned.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py failure-images pinned
+      - name: 실패한 system 사례의 기존 첫 앱 PNG 진단
+        if: ${{ always() && steps.setup.outcome == 'success' && steps.system.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        run: python3 scripts/ci-dynamic-type-diagnostics.py failure-images system
+      - name: 진단 전용 고정 요약과 검증된 앱 PNG만 보존
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

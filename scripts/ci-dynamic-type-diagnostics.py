@@ -10,6 +10,7 @@ import signal
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('adaptive', ROOT / 'scripts/ci-adaptive-ui-results.py')
@@ -538,6 +539,78 @@ def failed_native_observations(mode, expected, receipt):
     return result
 
 
+def failure_images(mode, expected, receipt, report):
+    """이미 실패한 한 사례가 기록한 첫 앱 PNG만 보존한다. 수용 결과는 변경하지 않는다."""
+    report['failureStage'] = 'ownership'
+    require(mode in MODES and isinstance(receipt, str) and re.fullmatch(r'[0-9a-f]{64}', receipt)
+            and A.verify_receipt(BUILD, expected) == receipt, 'invalidImageOwner')
+    status = A.read_json(DIRECTORY / (mode + '-exit.json'))
+    require(isinstance(status, dict) and set(status) == {'nativeExitCode', 'timedOut'}
+            and ((status['nativeExitCode'] is None and status['timedOut'] is True)
+                 or (type(status['nativeExitCode']) is int and 1 <= status['nativeExitCode'] <= 255
+                     and status['timedOut'] is False)), 'notFailedImageOwner')
+    report['failureStage'] = 'record'
+    log = output(mode)
+    observed = failed_stdout_observations(log, mode)
+    require(observed['caseStarted'] is True and observed['caseTerminal'] == 'failed'
+            and all(probe['status'] == 'observed' and not probe['modeMismatch'] and not probe['maximumMismatch']
+                    for probe in observed['probes'].values()), 'unownedImageObservation')
+    entries = A.source_method_entries(A.read_regular(ROOT / A.UI_FAILURE_SOURCE_FILE, A.MAX_JSON).decode('utf-8'),
+                                      expected['platform'])
+    selected = A.failure_recorded_screenshots(log, expected, entries, require_failure_or_interruption=True)
+    require(selected == {'mirror-adaptive-max-capture-1': CASE}, 'notOneCaptureImage')
+    report['failureStage'] = 'export'
+    bundle, exported = DIRECTORY / (mode + '.xcresult'), DIRECTORY / (mode + '-failure-attachments')
+    require(bundle.is_dir() and not bundle.is_symlink() and not exported.exists() and not exported.is_symlink(),
+            'unsafeImageExport')
+    code = native(['xcrun', 'xcresulttool', 'export', 'attachments', '--path', str(bundle),
+                   '--output-path', str(exported)], mode + '-failure-images-export', 15)
+    require(code == 0, 'imageExportUnavailable')
+    report['failureStage'] = 'manifest'
+    files = A.directory_files(exported)
+    manifests = [path for path in files if path.name == 'manifest.json']
+    require(len(manifests) == 1, 'missingImageManifest')
+    attachments = A.failure_export_entries(A.read_json(manifests[0]), selected)
+    require(len(attachments) == 1, 'notOneExportedImage')
+    candidates = [path for path in files if path.name == attachments[0][2]]
+    require(len(candidates) == 1, 'missingImageFile')
+    report['failureStage'] = 'png'
+    original = A.read_regular(candidates[0], A.MAX_PNG)
+    cleaned, width, height = A.clean_png(original)
+    manifest = {**expected, 'formatVersion': 1, 'kind': 'dynamic-type-failure-images',
+                'scope': 'recordedFixtureAppImagesOnly', 'semantics': 'diagnosticOnlyNotAcceptanceOrAuditCause',
+                'mode': mode, 'buildReceiptSHA256': receipt, 'screenshots': [
+                    {'case': CASE, 'stage': 'max-capture', 'sequence': 1, 'file': 'capture.png',
+                     'sha256': A.digest(cleaned), 'exportSHA256': A.digest(original), 'bytes': len(cleaned),
+                     'width': width, 'height': height}]}
+    report['failureStage'] = 'receipt'
+    require(A.verify_receipt(BUILD, expected) == receipt, 'changedImageReceipt')
+    report['failureStage'] = 'publish'
+    public = DIRECTORY / 'public'
+    require(not public.is_symlink(), 'unsafeImagePublicDirectory')
+    public.mkdir(mode=0o700, exist_ok=True)
+    destination = public / (mode + '-failure-images')
+    require(not destination.exists() and not destination.is_symlink(), 'staleImageReview')
+    temporary = Path(tempfile.mkdtemp(prefix='.failure-images-', dir=DIRECTORY))
+    try:
+        with (temporary / 'capture.png').open('xb') as stream:
+            os.chmod(temporary / 'capture.png', 0o600)
+            stream.write(cleaned)
+        A.write_json(temporary / 'manifest.json', manifest, exclusive=True)
+        checksums = {'capture.png': A.digest(cleaned),
+                     'manifest.json': A.digest(A.read_regular(temporary / 'manifest.json', A.MAX_JSON))}
+        with (temporary / 'SHA256SUMS').open('x', encoding='ascii') as stream:
+            os.chmod(temporary / 'SHA256SUMS', 0o600)
+            stream.write(''.join(value + '  ' + name + '\n' for name, value in sorted(checksums.items())))
+        require(not destination.exists() and not destination.is_symlink(), 'staleImageReview')
+        temporary.rename(destination)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+    report.pop('failureStage', None)
+    report.update(buildReceiptSHA256=receipt, screenshotCount=1)
+
+
 def execute(action, mode, expected, report):
     if action == 'cleanup':
         for path in DIRECTORY.iterdir():
@@ -612,6 +685,9 @@ def execute(action, mode, expected, report):
         checkpoint(report, 'restoreReadbackVerified')
         report['systemRestored'] = True
         return
+    if action == 'failure-images':
+        failure_images(mode, expected, saved.get('receipt'), report)
+        return
     require(A.verify_receipt(BUILD, expected) == saved['receipt'], 'buildChanged')
     report['buildReceiptSHA256'] = saved['receipt']
     if action == 'run':
@@ -653,8 +729,8 @@ def main(argv=None):
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_OS') == 'macOS'
                 and os.environ.get('GITHUB_REPOSITORY') == 'hellosunghyun/mirror', 'runnerMismatch')
-        require(len(args) in (1, 2) and args[0] in ('help', 'preboot', 'setup', 'run', 'collect', 'restore', 'cleanup')
-                and (len(args) == 2 and args[1] in MODES if args[0] in ('run', 'collect') else len(args) == 1), 'invalidAction')
+        require(len(args) in (1, 2) and args[0] in ('help', 'preboot', 'setup', 'run', 'collect', 'failure-images', 'restore', 'cleanup')
+                and (len(args) == 2 and args[1] in MODES if args[0] in ('run', 'collect', 'failure-images') else len(args) == 1), 'invalidAction')
         expected = A.identity('ipad', 'system')
         mode = args[1] if len(args) == 2 else None
         report.update(expected, action=args[0], mode=mode)
@@ -667,7 +743,7 @@ def main(argv=None):
         execute(args[0], mode, expected, report)
         report['status'] = 'observed'
     except Failure as error:
-        report['status'], code = error.code, 2
+        report['status'], code = ('diagnosticUnavailable' if report.get('action') == 'failure-images' else error.code), 2
     except Exception:
         report['status'], code = 'diagnosticUnavailable', 2
     # SDK 출력을 포함한 예외 문자열과 simulator 경로/UDID는 내보내지 않는다.
@@ -680,7 +756,8 @@ def main(argv=None):
             require(not path.is_symlink(), 'unsafeSummary')
             A.write_json(path, report)
     except Exception:
-        report['status'], code = 'summaryUnavailable', 2
+        report['status'], code = ('diagnosticUnavailable' if report.get('action') == 'failure-images'
+                                 else 'summaryUnavailable'), 2
     print('::notice::Dynamic Type diagnostic: ' + json.dumps(report, sort_keys=True))
     return code
 

@@ -451,3 +451,11 @@ activate가정확한identifier로Button쿼리를만들고reachable가실제후�
 5d9 Mac Native Tomorrow 사례는 접기 클릭 뒤 펼치기 버튼의 기존15초 대기에 실패했다. 실패 후 두 진단의 고정 payload는 같았다. 상세 스크롤 소유자1개의 frame은(684,83,340,502)이고, 접기 버튼은(939,585,44,44)로 viewport 하단585부터 시작했지만 exists·enabled·hittable이 모두true였다. 펼치기 count는0, 접기 count는1이었다. 클릭 직전 기하는 미관측이므로 앱 접힘 상태 결함이나 당시 클릭이 무효였다는 인과는 확정하지 않는다.
 
 기존 interact는 일반 버튼에 스크롤 표시 영역을 요구하지 않아 이 관측 상태도 클릭 대상으로 받아들일 수 있었다. Mac 상세 제목의 펼치기·접기에만 고유한 detail.close 창, 같은 창의 고유한 실제 Button·제목 후손, 양수·유한 기하를 가진 고유 ScrollView와 가로 소유 범위를 검증한다. 기존8회 실제 스크롤과 위·아래 방향 판정을 재사용하며 마지막에는 버튼 전체가 표시 영역 안에 있고 enabled·hittable일 때만 클릭한다. 다른 플랫폼·메모/링크 입력·일반 버튼·앱 상태·사례 본문·기존15초 존재 대기와3초 준비 대기·원래 실패 진단을 유지한다. 정적 검토만 수행했으며 실제 스크롤과 접힘 성공은 후속 Actions에서 확인한다.
+
+### 2026-10-05 · 최대 글자 실패 사례의 기존 앱 화면 보존
+
+2d7e Dynamic 진단의 pinned·system 양쪽에서 실제 루트와 입력 화면의 SwiftUI accessibility5 및 UIKit 최대 크기를 확인했다. 각 사례는 첫 감사에서 실패했으며 pinned는 dynamicType, system은 missingDescription의 고정 관측을 남겼다. 두 native 명령은 원래420초 제한에 도달했고 감사 복귀는 미관측이었다. 시스템 글자 크기는 별도 restore의 readback으로 복구를 확인했다. 이 결과를 최대 글자 접근성 통과나 특정 앱 요소의 원인 확정으로 해석하지 않는다.
+
+다음 실행부터 restore 뒤 각 arm의1분 보조 단계가 기존 captureValidation 사례가 이미 기록한 첫 max-capture 앱 PNG 한 장만 진단용으로 보존한다. 현재 source·run·attempt·build context와 fresh build receipt, native 실패 또는 timeout, 실제 failed 사례, 정확한 mode·최대 probe·연속 progress와 recordComplete, export manifest·유일한 안전 경로·PNG CRC와 픽셀 구조를 확인한다. Adaptive의 기존 검증 함수를 재사용하며 새 스크린샷이나 새로운 UI 사례는 만들지 않는다. 부가 PNG 메타데이터와 SDK 원문을 제거한 이미지, 고정 manifest와 SHA256SUMS만 원자적으로 public에 옮긴다. 소유 불일치·누락·중복·손상·receipt 변경 때는 diagnosticUnavailable로 남기고 원래 실패 결과를 바꾸지 않는다.
+
+회귀는 실제 임시 PNG·manifest 파일로 두 mode의 한 장 보존과 원문 제거, native timeout의 failed 사례 요구, source/run/attempt/build·mode·progress·probe 소유 거부, 추가 화면·잘못된 manifest·CRC·symlink·중간 receipt 변경의 부분 게시 방지를 검사한다. 기존 native420초·전체35분·두 arm·전체 .all 감사·restore·cleanup과 수용 게이트를 유지하며 continue-on-error는 이 두 실패 이미지 보조 단계에만 허용한다. 로컬은 AST와 diff 검토만 수행했고 회귀 실행 및 실제 PNG 수집은 후속 GitHub Actions에서 확인한다.
