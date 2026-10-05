@@ -975,7 +975,7 @@ struct MirrorLibraryView: View {
                             } label: {
                                 Image(systemName: selectedTaskIDs.contains(task.taskID) ? "checkmark.square" : "square")
                                     #if os(iOS)
-                                    .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                    .frame(minWidth: 48, minHeight: 48).contentShape(Rectangle())
                                     #endif
                             }
                                 .buttonStyle(.plain).frame(minWidth: 44, minHeight: 44)

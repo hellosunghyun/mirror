@@ -334,3 +334,8 @@ Undo는 같은 창에서 얻은 실제 버튼을 원래 interact 경로로 조�
 ### Batch 스크롤 소유 실패의 두 경계 구분
 
 8b91 Mac Twenty의 taskRow ownerMissing은 소유 창이 고유하지 않은 경우와 유효한 스크롤 후보가 없는 경우가 같은 고정 실패 문구를 사용해 구분되지 않았다. 두 기존 XCTFail의 reason만 각각 batchActualScrollOwnerWindowNotUnique와 batchActualScrollOwnerCandidateMissing으로 나누고, 파서는 이전 batchActualScrollOwnerMissing도 계속 허용한다. 추가 AX·시각·기하 조회나 원문·개수 출력 없이 기존 분기만 구분하며, 15초·12회 탐색·고유 소유 검증·실패·두 사례의 typed 수용 게이트는 유지한다. 기존 enum 수용과 원문·접미사·이상값 거절 회귀를 확장했으며 실행은 Actions에서 확인한다. 이 변경은 실제 실패 원인이나 해결을 확정하지 않는다.
+
+
+### 2026-10-05 · 개별 배치 선택 버튼의 경계 여유
+
+9f30 iPhone Batch는 선택 모드 버튼을 통과한 뒤 개별 taskSelection의 높이를43.99999999999994pt로 보고해 기존44pt 이상 검사에서 실패했다. 물리적으로 의미 있는 크기 부족으로 과장하지 않고, 해당 iOS Button label의 최소 영역만48×48pt로 넓힌다. Mac과 바깥44pt, 선택 동작·ID·레이블·값은 유지한다. 원래44pt 검사를 완화하지 않으며 실제 렌더링과 일괄 배치 수용은 다음 Actions에서 확인한다. FR-018/025/030, Q-075/076/079에 연결한다.
