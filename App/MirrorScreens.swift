@@ -101,7 +101,7 @@ struct MirrorTodayView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     if let context = model.context {
                         Text(AppDate.label(context.planningDay))
-                            .font(.subheadline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+                            .font(.subheadline).foregroundStyle(MirrorPalette.supportingText).accessibilityAddTraits(.isHeader)
                     }
                     MirrorActionGroup {
                         if model.tasks.isEmpty {
@@ -150,7 +150,7 @@ struct MirrorTodayView: View {
                 }
                 .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
-            Section("오늘에 남긴 일") {
+            Section {
                 if model.todayTasks.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "sun.max")
@@ -177,6 +177,8 @@ struct MirrorTodayView: View {
                 ForEach(model.todayTasks, id: \.taskID) {
                     MirrorTaskRow(task: $0).listRowSeparator(.hidden).listRowBackground(Color.clear)
                 }
+            } header: {
+                Text("오늘에 남긴 일").foregroundStyle(MirrorPalette.supportingText)
             }
             .listRowSeparator(.hidden).listRowBackground(Color.clear)
             if let summary = model.reviewSummary {
@@ -957,6 +959,7 @@ struct MirrorLibraryView: View {
                 }
             } header: {
                 Text(search.isEmpty ? filter.label : "검색 결과")
+                    .foregroundStyle(MirrorPalette.supportingText)
                     .accessibilityIdentifier("library.resultsTitle")
             }
             .listRowSeparator(.hidden).listRowBackground(Color.clear)
@@ -1430,13 +1433,15 @@ struct MirrorPlanPicker: View {
                         .foregroundStyle(MirrorPalette.supportingText)
                 }
                 if let week = request.week {
-                    Section(weekLabel(week)) {
+                    Section {
                         weekDateGrid(week)
                         Button { choose(.week(startDate: week.startDate, endExclusiveDate: week.endExclusiveDate)) } label: {
                             Text("요일은 나중에 정하기").frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                         }
                             .buttonStyle(.borderless)
                             .accessibilityIdentifier("plan.weekOnly")
+                    } header: {
+                        Text(weekLabel(week)).foregroundStyle(MirrorPalette.supportingText)
                     }
                     .disabled(planChoicesDisabled)
                 } else {
