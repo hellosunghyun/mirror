@@ -2166,9 +2166,13 @@ final class MirrorUITests: XCTestCase {
         let requiresCaptureViewport = identifier == "capture.note" || identifier == "capture.url"
         let captureSurface = requiresCaptureViewport
             ? try macCaptureFieldScrollContainer(containing: element, identifier: identifier, in: app, file: file, line: line) : nil
-        let viewportSurface = rowSurface ?? captureSurface
+        let requiresDetailTitleViewport = identifier == "expandableText.expand" || identifier == "expandableText.collapse"
+        let detailTitleSurface = requiresDetailTitleViewport
+            ? try macDetailTitleScrollContainer(containing: element, identifier: identifier, in: app, file: file, line: line) : nil
+        let requiresFullViewport = requiresCaptureViewport || requiresDetailTitleViewport
+        let viewportSurface = rowSurface ?? captureSurface ?? detailTitleSurface
         #else
-        let requiresCaptureViewport = false
+        let requiresFullViewport = false
         let viewportSurface = rowSurface
         #endif
         // Form 아래쪽의 완료/Undo도 실제 스크롤로 도달한다. 숨겨진 요소의 좌표를 강제로 누르지 않는다.
@@ -2176,7 +2180,7 @@ final class MirrorUITests: XCTestCase {
             // 같은 반복의 중심·방향 판정만 공유한다. 다음 반복과 마지막 조작 검사는 새 경계를 읽는다.
             let rowGeometry = viewportSurface.map { (frame: element.frame, viewport: $0.frame) }
             let rowNeedsScroll = rowGeometry.map {
-                requiresCaptureViewport ? !$0.viewport.contains($0.frame) : !rowCenterIsVisible($0.frame, in: $0.viewport)
+                requiresFullViewport ? !$0.viewport.contains($0.frame) : !rowCenterIsVisible($0.frame, in: $0.viewport)
             } ?? false
             guard !element.isHittable || rowNeedsScroll else { break }
             // 다중 열에서 보관함을 스크롤하며 오른쪽 상세 버튼을 찾지 않도록 소유 컨테이너를 선택한다.
@@ -2190,7 +2194,7 @@ final class MirrorUITests: XCTestCase {
             }
             let isAboveViewport: Bool
             if let rowGeometry {
-                isAboveViewport = requiresCaptureViewport
+                isAboveViewport = requiresFullViewport
                     ? rowGeometry.frame.minY < rowGeometry.viewport.minY
                     : rowGeometry.frame.midY < rowGeometry.viewport.minY
             }
@@ -2203,7 +2207,7 @@ final class MirrorUITests: XCTestCase {
             #endif
         }
         let rowCenterIsInside = viewportSurface.map {
-            requiresCaptureViewport
+            requiresFullViewport
                 ? app.state == .runningForeground && $0.exists && $0.frame.contains(element.frame)
                 : rowCenterIsVisible(element, in: $0)
         } ?? true
@@ -2336,6 +2340,46 @@ final class MirrorUITests: XCTestCase {
               windowFrame.contains(ownerFrame), ownerFrame.contains(viewport),
               viewport.minX <= fieldFrame.minX, fieldFrame.maxX <= viewport.maxX else { try fail() }
         // 25a 실패 후 메모 frame은 ScrollView 아래에 있었다. 기존 8회 루프에서 실제 표시 영역을 확인한다.
+        return surface
+    }
+
+    @MainActor
+    private func macDetailTitleScrollContainer(containing button: XCUIElement, identifier: String,
+                                               in app: XCUIApplication, file: StaticString, line: UInt) throws -> XCUIElement {
+        func fail() throws -> Never {
+            XCTFail("macDetailTitleControlOwnerMismatch", file: file, line: line)
+            throw UIHarnessError.unhittable(identifier)
+        }
+        func hasArea(_ frame: CGRect) -> Bool {
+            [frame.minX, frame.minY, frame.maxX, frame.maxY, frame.width, frame.height].allSatisfy { $0.isFinite }
+                && frame.width > 0 && frame.height > 0
+        }
+        guard identifier == "expandableText.expand" || identifier == "expandableText.collapse",
+              app.state == .runningForeground, button.exists, button.elementType == .button,
+              button.identifier == identifier,
+              app.buttons.matching(identifier: identifier).count == 1 else { try fail() }
+        let windows = app.windows.containing(.button, identifier: "detail.close")
+            .containing(NSPredicate(format: "identifier == %@", "detail.contentTitle"))
+        guard windows.count == 1 else { try fail() }
+        let window = windows.element(boundBy: 0)
+        let close = window.buttons.matching(identifier: "detail.close")
+        let titles = window.descendants(matching: .any).matching(identifier: "detail.contentTitle")
+        guard window.exists, close.count == 1, close.element(boundBy: 0).exists,
+              titles.count == 1, titles.element(boundBy: 0).exists,
+              window.buttons.matching(identifier: identifier).count == 1 else { try fail() }
+        let surfaces = window.scrollViews.containing(.button, identifier: identifier)
+            .containing(NSPredicate(format: "identifier == %@", "detail.contentTitle"))
+        guard surfaces.count == 1 else { try fail() }
+        let surface = surfaces.element(boundBy: 0)
+        guard surface.exists, surface.elementType == .scrollView,
+              surface.buttons.matching(identifier: identifier).count == 1,
+              surface.descendants(matching: .any).matching(identifier: "detail.contentTitle").count == 1 else { try fail() }
+        let windowFrame = window.frame, viewport = surface.frame, buttonFrame = button.frame
+        guard hasArea(windowFrame), hasArea(viewport), hasArea(buttonFrame),
+              windowFrame.contains(viewport),
+              viewport.minX <= buttonFrame.minX, buttonFrame.maxX <= viewport.maxX else { try fail() }
+        // 5d9 Mac 실패 뒤 접기 버튼은 hittable=true여도 상세 viewport 아래에 있었다.
+        // 기존 8회 루프에서 실제 스크롤한 뒤 버튼 전체가 표시 영역 안에 있을 때만 클릭한다.
         return surface
     }
 
