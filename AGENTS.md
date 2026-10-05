@@ -8,16 +8,18 @@
 - 앱 이름은 `미러`로 표기한다. 이름의 의미를 설명해야 할 때만 **‘미뤄’를 표현한 이름**이라고 설명한다.
 - 개발 및 최소 배포 대상: **iOS 27.0 / iPadOS 27.0 / macOS 27.0**.
 - UI는 SwiftUI와 사용자 지정 **[SwiftPieces](https://github.com/Saivion/SwiftPieces)**를 사용한다. 채택을 다시 확인할 필요 없이 아래 적용 원칙을 따른다.
-- 저장소: `hellosunghyun/mirror`, **private**. 공개 범위를 임의로 변경하지 않는다.
-- 현재는 개발 명세와 준비 검증 코드가 있는 단계다. 앱 코드, Xcode 프로젝트, 앱 빌드·테스트 명령은 아직 없다.
+- 저장소: `hellosunghyun/mirror`, **public**. 사용자 승인에 따른 공개 전환을 GitHub에서 확인했다. 실제 원격 공개 범위와 [개발 기준](development-baseline.json)을 일치시키고 공개 범위를 임의로 변경하지 않는다.
+- SwiftUI 앱·원본 저장·명령/reducer·전체 화면·Widget/Share·App Intents·선택 CloudKit의 첫 구현을 통합했다. 공유 scheme은 `MirrorIOS`/`MirrorMac`, UI scheme은 `MirrorIOSUI`/`MirrorMacUI`다. 새 구현의 원격 검증과 실제 서명·두 기기 검증 상태를 구별한다. 구성과 검증 범위는 [Swift 개발 안내](docs/SWIFT_DEVELOPMENT.md)를 따른다.
 - 원본의 `Postpone` 작업명과 이전 최소 OS 권고보다 [README](README.md)와 [개발 기준](development-baseline.json)의 확정값이 우선한다.
-- 식별자 접두사는 사용자 지정 `com.baserize`다. 전체 Bundle ID·App Group은 [README의 후보](README.md#식별자-후보)이며 Apple 등록이나 실제 설정 완료를 뜻하지 않는다. 플랫폼별 ID 구성, iCloud container, 서명 Team은 아직 미정이다. 원본 가칭을 확정값으로 복사하지 않는다.
+- 식별자 접두사는 사용자 지정 `com.baserize`다. 전체 Bundle ID·App Group은 [README의 후보](README.md#식별자-후보)이며 Apple 등록이나 실제 설정 완료를 뜻하지 않는다. 플랫폼별 ID 구성과 iCloud container는 아직 미정이다. Ad Hoc 서명 Team은 사용자 제공 프로파일에서 비공개로 확인하고 실제 인증서와 일치를 검증한다. 원본 가칭을 확정값으로 복사하지 않는다.
+- 사용자는 제공한 Ad Hoc 프로파일 적용과 각 push의 GitHub Release 게시, macOS 배포를 승인했다. [iOS 배포 안내](docs/ADHOC_RELEASE.md)의 세 Actions Secret과 [macOS 배포 안내](docs/MACOS_RELEASE.md)의 네 Secret 및 검증 게이트를 사용한다. 실제 IPA·DMG 게시 결과는 해당 실행과 공개 자산으로 확인하며 프로파일·인증서·개인키·서명·공증 로그를 Git에 넣지 않는다.
 
 ## 작업 전 확인
 
 1. Git 상태와 저장소 구조를 확인하고 사용자가 변경 중인 파일을 파악한다.
 2. README, 개발 기준, 해당 작업의 원본 명세와 [테스트 전략](TESTING.md)을 읽는다.
-3. package 설정, 기존 코드 스타일과 테스트·빌드 명령을 확인한다. 현재 Python 의존성은 [requirements-dev.txt](requirements-dev.txt)에 있다. Swift / Xcode 설정은 실제 파일이 생긴 뒤 확인한다.
+   전체 제작은 [구현 계획](docs/IMPLEMENTATION_PLAN.md)과 [요구사항 추적표](docs/REQUIREMENTS_TRACEABILITY.md)의 모든 단계·FR·QA·게이트를 유지하며 진행한다. 코드 구현과 서명·실기기·사용자 검증의 완료를 구분한다.
+3. [Package.swift](Package.swift), `Mirror.xcodeproj`, 기존 코드 스타일과 테스트·빌드 명령을 확인한다. Python 준비 도구의 의존성은 [requirements-dev.txt](requirements-dev.txt)에 있다. Swift 언어 모드·strict concurrency·default isolation은 실제 설정을 읽는다.
 4. 기존 방식이 있으면 따르고, 요청에 필요한 가장 명확한 변경을 수행한다.
 
 저장소 루트에 `.codegraph/`가 있으면 코드 검색이나 읽기 전에 `codegraph_explore` 또는 `codegraph explore`를 사용한다. 현재처럼 없으면 건너뛰며 인덱스를 임의로 만들지 않는다. 일반 검색은 `rg`를 우선한다.
@@ -85,7 +87,9 @@
 - 실패한 테스트를 삭제·skip·약화해 통과시키지 않는다. 테스트 편의를 위한 새 의존성이나 저장 구조 변경도 먼저 확인한다.
 - 실제 선택한 저장소의 통합 테스트와 필요한 Simulator / 실기기 시나리오를 실행한다. mock 결과만으로 복구나 동기화 성공을 판정하지 않는다.
 
-현재 저장소 루트에서 실행할 준비 검사:
+사용자 지정에 따라 테스트는 **GitHub Actions 러너**에서 실행한다. 로컬 클라우드에서는 기본 테스트·앱 빌드를 실행하지 않는다. [.github/workflows/swift.yml](.github/workflows/swift.yml)의 SwiftPM·macOS·iPhone·iPad 검사와 기존 문서 검증을 추적하고 실제 원격 commit SHA·실행 수·결과를 확인한다.
+
+CI가 실행하는 기존 준비 검사:
 
 ```bash
 .venv/bin/python scripts/check.py
@@ -94,7 +98,7 @@
 
 Python 3.10 이상과 기존 `jsonschema` 4 계열 의존성을 사용한다. 환경 생성은 README의 명령을 따른다. `scripts/check.py`는 원본 무결성을 확인하고 임시 복사본에서 문서 검증을 실행한다. 원본 `validate_bundle.py`는 보고서를 덮어쓰므로 보존본에서 직접 실행하지 않는다.
 
-GitHub Actions는 같은 두 검사를 실행한다. 앱 코드가 생기면 실제 타깃에 맞는 빌드·도메인·통합·UI 명령을 README와 CI에 추가한다. 아직 없는 Xcode scheme이나 빌드 성공을 가정하지 않는다.
+GitHub Actions는 같은 두 준비 검사와 실제 타깃의 빌드·Swift 도메인 테스트를 실행한다. 구현이 추가되면 필요한 저장·명령·통합·UI 검증을 확장한다. SDK·앱 빌드·도메인 테스트·UI·실기기 결과를 구분하고 0-test나 skip 결과를 통과로 보고하지 않는다.
 
 ## 커밋과 푸시
 
@@ -103,7 +107,7 @@ GitHub Actions는 같은 두 검사를 실행한다. 앱 코드가 생기면 실
 - 커밋 메시지는 기존 로그의 한국어 문체와 `docs:`, `chore:` 등 변경에 맞는 접두사를 따른다. 각 커밋에는 해당 변경을 검증하는 데 필요한 코드·문서·테스트를 함께 포함한다.
 - 관련 커밋이 쌓여 하나의 작업 단계가 완료되면 푸시한다. 커밋 수만 맞추려고 변경을 쪼개지 않으며, 작업 종료·인계 시에는 완료된 커밋을 원격에 반영한다. 사용자가 푸시를 명시적으로 요청하면 현재 준비된 커밋을 바로 푸시한다.
 - 커밋 전 작업 트리 상태와 staged diff를 확인하고 이번 작업 변경만 명시적으로 stage한다. 사용자나 다른 에이전트의 변경을 임의로 포함하거나 되돌리지 않는다. 푸시 전 대상 remote·branch와 원격과의 차이를 확인하고, 명시적 승인 없이 강제 푸시·이력 재작성·amend를 하지 않는다.
-- 푸시 후 원격 브랜치의 커밋과 private 공개 범위를 확인한다. CI가 있으면 결과를 확인하고 실패를 해결하거나 미해결 사유를 보고한다. 검증 실패·미실행 사항을 숨기지 않으며, 완료 보고에는 반영된 커밋과 남은 미푸시 변경이 있으면 함께 적는다.
+- 푸시 후 원격 브랜치의 커밋, 사용자 요청 공개 목표와 실제 공개 범위를 확인한다. CI가 있으면 결과를 확인하고 실패를 해결하거나 미해결 사유를 보고한다. 검증 실패·미실행 사항을 숨기지 않으며, 완료 보고에는 반영된 커밋과 남은 미푸시 변경이 있으면 함께 적는다.
 
 ## 검증과 완료 보고
 
@@ -111,7 +115,7 @@ GitHub Actions는 같은 두 검사를 실행한다. 앱 코드가 생기면 실
 - 변경 파일, 구현한 FR / QA, 실행 명령과 결과, 알려진 제한과 다음 의존성을 보고한다. 준비 검사에는 해당 준비 시나리오를 기록한다.
 - 문서 정합성 검사, Swift 앱 테스트, 앱 빌드, Simulator 사용, 실기기 위젯 / Siri, 실제 두 기기 동기화를 구분한다. 읽지 않은 코드나 미실행 결과를 사실로 보고하지 않는다.
 - SDK 설치를 앱 호환성 통과로, Python 문서 검사를 Swift 구현 검증으로, 로컬 저장을 iCloud 동기화 완료로 기록하지 않는다.
-- GitHub 반영 시 요청된 private 범위와 업로드한 커밋을 확인한다. 앱 릴리스·배포는 해당 작업의 승인 범위에 따라 진행한다.
+- GitHub 반영 시 사용자 요청 공개 목표와 실제 공개 범위, 업로드한 커밋을 확인한다. 앱 릴리스·배포는 해당 작업의 승인 범위에 따라 진행한다.
 
 ## 최종 응답의 후속 작업
 

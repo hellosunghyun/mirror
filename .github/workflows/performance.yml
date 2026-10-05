@@ -1,0 +1,40 @@
+name: 생산 저장소 성능 baseline
+
+on:
+  push:
+    paths:
+      - 'Tests/Support/MirrorStoreProbe/**'
+      - 'Package.swift'
+      - 'scripts/ci-performance.sh'
+      - '.github/workflows/performance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: 실제 SQLite · 10000 작업 · 100000 기록
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+    steps:
+      - name: 저장소 가져오기
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Release helper와 생산 API baseline 실행
+        shell: bash
+        run: bash scripts/ci-performance.sh
+      - name: 원시 표본과 환경 및 빌드 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: production-performance-baseline
+          path: |
+            .build/ci-performance/report.json
+            .build/ci-performance/environment.json
+            .build/ci-performance/build.log
+            .build/ci-performance/run.log
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

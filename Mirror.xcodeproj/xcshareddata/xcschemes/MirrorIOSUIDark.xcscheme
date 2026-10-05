@@ -1,0 +1,38 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<Scheme LastUpgradeVersion="2700" version="1.3">
+   <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+      <BuildActionEntries>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="6D966BF1135AC5B72C078FD9" BuildableName="Mirror.app" BlueprintName="MirrorIOS" ReferencedContainer="container:Mirror.xcodeproj" />
+         </BuildActionEntry>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E8D78EE972D7C897E4D223F0" BuildableName="MirrorIOSUITests.xctest" BlueprintName="MirrorIOSUITests" ReferencedContainer="container:Mirror.xcodeproj" />
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO" codeCoverageEnabled="YES">
+      <Testables>
+         <TestableReference skipped="NO" parallelizable="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="E8D78EE972D7C897E4D223F0" BuildableName="MirrorIOSUITests.xctest" BlueprintName="MirrorIOSUITests" ReferencedContainer="container:Mirror.xcodeproj" />
+         </TestableReference>
+      </Testables>
+      <MacroExpansion>
+         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="6D966BF1135AC5B72C078FD9" BuildableName="Mirror.app" BlueprintName="MirrorIOS" ReferencedContainer="container:Mirror.xcodeproj" />
+      </MacroExpansion>
+      <EnvironmentVariables>
+         <EnvironmentVariable key="MIRROR_UI_APPEARANCE" value="dark" isEnabled="YES" />
+      </EnvironmentVariables>
+   </TestAction>
+   <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
+      <BuildableProductRunnable runnableDebuggingMode="0">
+         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="6D966BF1135AC5B72C078FD9" BuildableName="Mirror.app" BlueprintName="MirrorIOS" ReferencedContainer="container:Mirror.xcodeproj" />
+      </BuildableProductRunnable>
+   </LaunchAction>
+   <ProfileAction buildConfiguration="Release" shouldUseLaunchSchemeArgsEnv="YES" savedToolIdentifier="" useCustomWorkingDirectory="NO" debugDocumentVersioning="YES">
+      <BuildableProductRunnable runnableDebuggingMode="0">
+         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="6D966BF1135AC5B72C078FD9" BuildableName="Mirror.app" BlueprintName="MirrorIOS" ReferencedContainer="container:Mirror.xcodeproj" />
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction buildConfiguration="Debug" />
+   <ArchiveAction buildConfiguration="Release" revealArchiveInOrganizer="YES" />
+</Scheme>

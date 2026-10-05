@@ -1,0 +1,355 @@
+name: Swift 앱 빌드와 도메인 테스트
+
+on:
+  push:
+    paths:
+      - 'App/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'Package.swift'
+      - 'scripts/ci*'
+      - 'scripts/generate-xcode-project.py'
+      - '.github/workflows/swift.yml'
+      - 'development-baseline.json'
+      - 'postpone-app-docs/fixtures/domain-cases.json'
+  pull_request:
+    paths:
+      - 'App/**'
+      - 'Extensions/**'
+      - 'Configuration/**'
+      - 'Resources/**'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'Mirror.xcodeproj/**'
+      - 'Package.swift'
+      - 'scripts/ci*'
+      - 'scripts/generate-xcode-project.py'
+      - '.github/workflows/swift.yml'
+      - 'development-baseline.json'
+      - 'postpone-app-docs/fixtures/domain-cases.json'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      preserve_run:
+        description: Ad Hoc 배포 검증에서 각 push의 실행을 보존한다.
+        type: boolean
+        required: false
+        default: false
+      ui_appearance:
+        description: 기존 시스템 모드 또는 별도 다크 UI scheme을 선택한다.
+        type: string
+        required: false
+        default: system
+
+permissions:
+  contents: read
+
+concurrency:
+  group: swift-${{ github.workflow }}-${{ inputs.preserve_run && github.run_id || github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+  MIRROR_UI_APPEARANCE: ${{ inputs.ui_appearance || 'system' }}
+
+jobs:
+  domain:
+    name: SwiftPM 도메인
+    runs-on: xcode-27
+    timeout-minutes: 30
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Swift 도메인 테스트
+        id: test
+        run: bash scripts/ci-swift-package.sh
+      - name: 현재 실행의 로그 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: swiftpm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-swift/test.log
+          include-hidden-files: true
+          retention-days: 7
+
+  macos:
+    name: macOS 앱 빌드와 테스트
+    runs-on: xcode-27
+    timeout-minutes: 45
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+      unit_tests: ${{ steps.test.outputs.unit_tests }}
+      ui_tests: ${{ steps.test.outputs.ui_tests }}
+      ui_evidence_ready: ${{ steps.test.outputs.ui_evidence_ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Mac 앱·확장 빌드와 단위·통합·구성 검사
+        id: unit
+        timeout-minutes: 20
+        run: bash scripts/ci-apple-platform.sh macos unit
+      - name: Mac UI 앱과 runner 빌드 준비
+        id: ui_build
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        timeout-minutes: 10
+        run: bash scripts/ci-apple-platform.sh macos ui-build
+      - name: Mac 실제 UI 테스트
+        id: test
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
+        timeout-minutes: 15
+        env:
+          MIRROR_CI_LIVE_SAMPLE: ${{ (inputs.ui_appearance || 'system') == 'system' && '1' || '0' }}
+        run: bash scripts/ci-apple-platform.sh macos ui
+      - name: 중단 포함 실패 로그 진단
+        if: ${{ failure() }}
+        run: |
+          printf '%s\n' '::notice::UI diagnostic origin=workflowFailure' || true
+          for log in .build/ci-macos/test.log .build/ci-macos/ui-build.log .build/ci-macos/ui.log; do
+            if test -f "$log"; then
+              python3 scripts/ci_results.py diagnostics "$log"
+            fi
+          done
+          if test -d .build/ci-macos/UI.xcresult; then
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"attempted"}' || true
+            if xcrun xcresulttool get test-results tests --path .build/ci-macos/UI.xcresult > .build/ci-macos/ui-tests.json; then
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"succeeded"}' || true
+              python3 scripts/ci_results.py ui-tree .build/ci-macos/ui-tests.json || true
+            else
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"failed"}' || true
+            fi
+          else
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"notAttemptedNoBundleDirectory"}' || true
+          fi
+          python3 scripts/ci-crash.py macos .build/ci-macos || true
+      - name: 현재 실행의 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-macos/test.log
+            .build/ci-macos/summary.json
+            .build/ci-macos/tests.json
+            .build/ci-macos/unit-context.json
+            .build/ci-macos/ui-build.log
+            .build/ci-macos/ui-build-receipt.json
+            .build/ci-macos/ui-summary.json
+            .build/ci-macos/ui-tests.json
+            .build/ci-macos/crash-summary.json
+            .build/ci-macos/ui.log
+            .build/ci-macos/ui-xcodebuild-help.txt
+            .build/ci-macos/ui-attachments-help.txt
+            .build/ci-macos/Tests.xcresult
+            .build/ci-macos/UI.xcresult
+          include-hidden-files: true
+          retention-days: 7
+
+      - name: 명명된 Mac 앱샷과 안전한 검토 manifest 보존
+        if: ${{ always() && steps.test.outputs.ui_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ui-screenshots-mac-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-macos/ui-screenshots
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+      - name: Mac 실패 지점의 명명된 창 진단 보존
+        if: ${{ always() && steps.test.outputs.ui_private_diagnostics_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: native-failure-diagnostics-mac-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-macos/ui-private-diagnostics
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  iphone:
+    name: iPhone 앱 빌드와 테스트
+    runs-on: xcode-27
+    timeout-minutes: 45
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+      unit_tests: ${{ steps.test.outputs.unit_tests }}
+      ui_tests: ${{ steps.test.outputs.ui_tests }}
+      ui_evidence_ready: ${{ steps.test.outputs.ui_evidence_ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: iPhone 앱·확장 빌드와 단위·통합·구성 검사
+        id: unit
+        timeout-minutes: 20
+        run: bash scripts/ci-apple-platform.sh iphone unit
+      - name: iPhone UI 앱과 runner 빌드 준비
+        id: ui_build
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        timeout-minutes: 10
+        run: bash scripts/ci-apple-platform.sh iphone ui-build
+      - name: iPhone 실제 UI 테스트
+        id: test
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
+        timeout-minutes: 20
+        run: bash scripts/ci-apple-platform.sh iphone ui
+      - name: 중단 포함 실패 로그 진단
+        if: ${{ failure() }}
+        run: |
+          printf '%s\n' '::notice::UI diagnostic origin=workflowFailure' || true
+          for log in .build/ci-iphone/test.log .build/ci-iphone/ui-build.log .build/ci-iphone/ui.log; do
+            if test -f "$log"; then
+              python3 scripts/ci_results.py diagnostics "$log"
+            fi
+          done
+          if test -d .build/ci-iphone/UI.xcresult; then
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"attempted"}' || true
+            if xcrun xcresulttool get test-results tests --path .build/ci-iphone/UI.xcresult > .build/ci-iphone/ui-tests.json; then
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"succeeded"}' || true
+              python3 scripts/ci_results.py ui-tree .build/ci-iphone/ui-tests.json || true
+            else
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"failed"}' || true
+            fi
+          else
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"notAttemptedNoBundleDirectory"}' || true
+          fi
+          python3 scripts/ci-crash.py iphone .build/ci-iphone || true
+      - name: 현재 실행의 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-iphone/test.log
+            .build/ci-iphone/summary.json
+            .build/ci-iphone/tests.json
+            .build/ci-iphone/unit-context.json
+            .build/ci-iphone/ui-build.log
+            .build/ci-iphone/ui-build-receipt.json
+            .build/ci-iphone/ui-summary.json
+            .build/ci-iphone/ui-tests.json
+            .build/ci-iphone/crash-summary.json
+            .build/ci-iphone/ui.log
+            .build/ci-iphone/ui-xcodebuild-help.txt
+            .build/ci-iphone/ui-attachments-help.txt
+            .build/ci-iphone/Tests.xcresult
+            .build/ci-iphone/UI.xcresult
+          include-hidden-files: true
+          retention-days: 7
+
+      - name: 명명된 iPhone 앱샷과 안전한 검토 manifest 보존
+        if: ${{ always() && steps.test.outputs.ui_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ui-screenshots-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-iphone/ui-screenshots
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  ipad:
+    name: iPad 앱 빌드와 테스트
+    runs-on: xcode-27
+    timeout-minutes: 45
+    outputs:
+      tests: ${{ steps.test.outputs.tests }}
+      unit_tests: ${{ steps.test.outputs.unit_tests }}
+      ui_tests: ${{ steps.test.outputs.ui_tests }}
+      ui_evidence_ready: ${{ steps.test.outputs.ui_evidence_ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: iPad 앱·확장 빌드와 단위·통합·구성 검사
+        id: unit
+        timeout-minutes: 20
+        run: bash scripts/ci-apple-platform.sh ipad unit
+      - name: iPad UI 앱과 runner 빌드 준비
+        id: ui_build
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' }}
+        timeout-minutes: 10
+        run: bash scripts/ci-apple-platform.sh ipad ui-build
+      - name: iPad 실제 UI 테스트
+        id: test
+        if: ${{ always() && steps.unit.outputs.unit_ready == 'true' && steps.ui_build.outputs.ui_build_ready == 'true' }}
+        timeout-minutes: 20
+        run: bash scripts/ci-apple-platform.sh ipad ui
+      - name: 중단 포함 실패 로그 진단
+        if: ${{ failure() }}
+        run: |
+          printf '%s\n' '::notice::UI diagnostic origin=workflowFailure' || true
+          for log in .build/ci-ipad/test.log .build/ci-ipad/ui-build.log .build/ci-ipad/ui.log; do
+            if test -f "$log"; then
+              python3 scripts/ci_results.py diagnostics "$log"
+            fi
+          done
+          if test -d .build/ci-ipad/UI.xcresult; then
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"attempted"}' || true
+            if xcrun xcresulttool get test-results tests --path .build/ci-ipad/UI.xcresult > .build/ci-ipad/ui-tests.json; then
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"succeeded"}' || true
+              python3 scripts/ci_results.py ui-tree .build/ci-ipad/ui-tests.json || true
+            else
+              printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"failed"}' || true
+            fi
+          else
+            printf '%s\n' '::notice::UI xcresult extraction: {"origin":"workflowFailure","kind":"tests","state":"notAttemptedNoBundleDirectory"}' || true
+          fi
+          python3 scripts/ci-crash.py ipad .build/ci-ipad || true
+      - name: 현재 실행의 결과 보존
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .build/ci-ipad/test.log
+            .build/ci-ipad/summary.json
+            .build/ci-ipad/tests.json
+            .build/ci-ipad/unit-context.json
+            .build/ci-ipad/ui-build.log
+            .build/ci-ipad/ui-build-receipt.json
+            .build/ci-ipad/ui-summary.json
+            .build/ci-ipad/ui-tests.json
+            .build/ci-ipad/crash-summary.json
+            .build/ci-ipad/ui.log
+            .build/ci-ipad/ui-xcodebuild-help.txt
+            .build/ci-ipad/ui-attachments-help.txt
+            .build/ci-ipad/Tests.xcresult
+            .build/ci-ipad/UI.xcresult
+          include-hidden-files: true
+          retention-days: 7
+
+      - name: 명명된 iPad 앱샷과 안전한 검토 manifest 보존
+        if: ${{ always() && steps.test.outputs.ui_evidence_ready == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ui-screenshots-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .build/ci-ipad/ui-screenshots
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  results:
+    name: '실행 결과 · SwiftPM ${{ needs.domain.outputs.tests }} / Mac ${{ needs.macos.outputs.unit_tests }}+UI${{ needs.macos.outputs.ui_tests }} / iPhone ${{ needs.iphone.outputs.unit_tests }}+UI${{ needs.iphone.outputs.ui_tests }} / iPad ${{ needs.ipad.outputs.unit_tests }}+UI${{ needs.ipad.outputs.ui_tests }}'
+    needs: [domain, macos, iphone, ipad]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 실제 테스트 실행과 완료 확인
+        env:
+          RUN_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          values = json.loads(os.environ['RUN_RESULTS'])
+          for name, result in values.items():
+              if result['result'] != 'success' or int(result['outputs'].get('tests', 0)) <= 0:
+                  raise SystemExit(f"{name}: 테스트 실행 또는 결과 확인 실패")
+              if name != 'domain' and any(int(result['outputs'].get(key, 0)) <= 0 for key in ['unit_tests', 'ui_tests']):
+                  raise SystemExit(f"{name}: 필수 단위·통합 또는 UI 테스트 실행 수가 없습니다.")
+              if name != 'domain' and result['outputs'].get('ui_evidence_ready') != 'true':
+                  raise SystemExit(f"{name}: 현재 실행의 필수 UI 앱샷 증거가 없습니다.")
+          print('모든 플랫폼의 실제 테스트 실행과 완료를 확인했습니다.')
+          PY

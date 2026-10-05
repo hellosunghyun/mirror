@@ -1,0 +1,235 @@
+name: iOS IPA·macOS DMG와 GitHub Release
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 각 push는 독립 빌드다. 재실행은 같은 run ID의 Release를 갱신한다.
+concurrency:
+  group: adhoc-release-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  signing-inputs:
+    name: 서명 Secret 준비 확인
+    if: ${{ github.event.deleted != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 필요한 서명 자료 확인
+        env:
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_ADHOC_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROFILE_BASE64 }}
+          IOS_ADHOC_APP_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_APP_PROFILE_BASE64 }}
+          IOS_ADHOC_WIDGET_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_WIDGET_PROFILE_BASE64 }}
+          IOS_ADHOC_SHARE_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_SHARE_PROFILE_BASE64 }}
+        run: python3 scripts/ci-adhoc-profile.py check-inputs
+
+  preparation:
+    name: 원본과 배포 도구 회귀 검증
+    needs: signing-inputs
+    uses: ./.github/workflows/validation.yml
+
+  verification:
+    name: 네 경로 실제 검증
+    needs: signing-inputs
+    uses: ./.github/workflows/swift.yml
+    with:
+      preserve_run: true
+
+  ui-evidence:
+    name: 검증한 세 플랫폼 UI 앱샷 별도 게시
+    needs: [preparation, verification]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ui-screenshots-iphone-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-ui-input/iphone
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ui-screenshots-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-ui-input/ipad
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: ui-screenshots-mac-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mirror-ui-input/mac
+      - name: SHA·build·run과 모든 화면 증거를 다시 검증
+        run: >-
+          python3 scripts/ci-ui-evidence.py aggregate
+          --input-root "$RUNNER_TEMP/mirror-ui-input"
+          --output "$RUNNER_TEMP/mirror-ui-public"
+          --sha "$GITHUB_SHA" --build-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+      - name: 합성 UI 앱샷 전용 prerelease 게시
+        env:
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/ci-ui-evidence.py publish
+          --publish-dir "$RUNNER_TEMP/mirror-ui-public"
+          --sha "$GITHUB_SHA" --build-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+
+  signing-materials:
+    name: 인증서·개인 키·프로파일 사전 검사
+    needs: signing-inputs
+    runs-on: xcode-27
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+      IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+      IOS_ADHOC_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROFILE_BASE64 }}
+      IOS_ADHOC_APP_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_APP_PROFILE_BASE64 }}
+      IOS_ADHOC_WIDGET_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_WIDGET_PROFILE_BASE64 }}
+      IOS_ADHOC_SHARE_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_SHARE_PROFILE_BASE64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 비공개 서명 자료 일치와 유효성 검사
+        run: bash scripts/ci-adhoc-archive.sh "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$GITHUB_RUN_ID" --preflight
+
+  mac-signing-inputs:
+    name: macOS 서명·공증 Secret 준비 확인
+    if: ${{ github.event.deleted != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mac 배포 입력 확인
+        env:
+          MAC_DEVELOPER_ID_P12_BASE64: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+          MAC_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+          MAC_NOTARY_APPLE_ID: ${{ secrets.MAC_NOTARY_APPLE_ID }}
+          MAC_NOTARY_APP_PASSWORD: ${{ secrets.MAC_NOTARY_APP_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import os
+          names = ('MAC_DEVELOPER_ID_P12_BASE64', 'MAC_DEVELOPER_ID_P12_PASSWORD',
+                   'MAC_NOTARY_APPLE_ID', 'MAC_NOTARY_APP_PASSWORD')
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              print('::error::Mac Actions Secret 등록이 필요합니다: ' + ', '.join(missing))
+              raise SystemExit(1)
+          print('Mac 서명·공증 Secret 네 개의 존재를 확인했습니다. 실제 인증서·공증 권한은 다음 단계에서 검사합니다.')
+          PY
+
+  mac-signing-materials:
+    name: Developer ID 인증서·개인 키 사전 검사
+    needs: mac-signing-inputs
+    runs-on: xcode-27
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      MAC_DEVELOPER_ID_P12_BASE64: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+      MAC_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Mac 배포 인증서와 개인 키 확인
+        run: bash scripts/ci-macos-archive.sh "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$GITHUB_RUN_ID" --preflight
+
+  mac-archive:
+    name: macOS 서명·공증과 DMG 생성
+    needs: [preparation, verification, mac-signing-materials]
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      MAC_DEVELOPER_ID_P12_BASE64: ${{ secrets.MAC_DEVELOPER_ID_P12_BASE64 }}
+      MAC_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.MAC_DEVELOPER_ID_P12_PASSWORD }}
+      MAC_NOTARY_APPLE_ID: ${{ secrets.MAC_NOTARY_APPLE_ID }}
+      MAC_NOTARY_APP_PASSWORD: ${{ secrets.MAC_NOTARY_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 실제 Mac archive·서명·공증·Gatekeeper 검증
+        id: build
+        run: bash scripts/ci-macos-archive.sh "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: 게시할 DMG와 공개 검증 정보만 보존
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: macos-${{ github.run_id }}
+          path: ${{ steps.build.outputs.publish_dir }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  archive:
+    name: Ad Hoc 서명과 IPA 내보내기
+    needs: [preparation, verification, signing-materials]
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+      IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+      IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+      IOS_ADHOC_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_PROFILE_BASE64 }}
+      IOS_ADHOC_APP_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_APP_PROFILE_BASE64 }}
+      IOS_ADHOC_WIDGET_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_WIDGET_PROFILE_BASE64 }}
+      IOS_ADHOC_SHARE_PROFILE_BASE64: ${{ secrets.IOS_ADHOC_SHARE_PROFILE_BASE64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: 실제 archive·export·서명 검증
+        id: build
+        run: bash scripts/ci-adhoc-archive.sh "$GITHUB_RUN_NUMBER" "$GITHUB_SHA" "$GITHUB_RUN_ID"
+      - name: 게시할 IPA와 검증 정보만 보존
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: adhoc-${{ github.run_id }}
+          path: ${{ steps.build.outputs.publish_dir }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  publish:
+    name: GitHub Release 게시
+    needs: archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: adhoc-${{ github.run_id }}
+          path: ${{ runner.temp }}/mirror-adhoc-release
+      - name: 검증된 IPA를 해당 push의 Release에 게시
+        env:
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/ci-publish-adhoc.py
+          --publish-dir "$RUNNER_TEMP/mirror-adhoc-release"
+          --commit-sha "$GITHUB_SHA"
+          --run-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID"
+
+  mac-publish:
+    name: 같은 GitHub Release에 macOS 추가
+    needs: [mac-archive, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: macos-${{ github.run_id }}
+          path: ${{ runner.temp }}/mirror-macos-release
+      - name: 검증한 DMG를 해당 push의 Release에 추가
+        env:
+          GITHUB_TOKEN: ${{ secrets.MIRROR_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/ci-macos-release.py
+          --publish-dir "$RUNNER_TEMP/mirror-macos-release"
+          --commit-sha "$GITHUB_SHA"
+          --run-number "$GITHUB_RUN_NUMBER"
+          --run-id "$GITHUB_RUN_ID"
