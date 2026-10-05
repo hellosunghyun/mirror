@@ -623,6 +623,7 @@ final class MirrorBatchUITests: XCTestCase {
             _ = try unique(query, timeout: max(0, deadline.timeIntervalSinceNow))
         }
         var lastObservation = PlannerReachabilityObservation(iteration: 0)
+        var missingSearchAttempt = 0
         for attempt in 0..<12 {
             XCTAssertEqual(app.state, .runningForeground, file: file, line: line)
             lastObservation = PlannerReachabilityObservation(iteration: attempt + 1)
@@ -656,6 +657,16 @@ final class MirrorBatchUITests: XCTestCase {
             let towardTop: Bool
             if query.firstMatch.exists, hasArea(query.firstMatch.frame) {
                 towardTop = query.firstMatch.frame.minY < owner.frame.minY
+            } else if surface == .library, !missingTowardTop, target == .taskRow || target == .taskSelection {
+                // 입력 순서와 목록 순서는 다를 수 있다. 미관측 행을 아래에 있다고 가정하지 않는다.
+                // 기존 방향 1회, 반대 2회, 원래 방향 4회 순으로 탐색하며 실제 기하가 있으면 위 분기를 쓴다.
+                missingSearchAttempt += 1
+                switch missingSearchAttempt {
+                case 1: towardTop = false
+                case 2...3: towardTop = true
+                case 4...7: towardTop = false
+                default: towardTop = true
+                }
             } else { towardTop = missingTowardTop }
             #if os(macOS)
             owner.element.scroll(byDeltaX: 0, deltaY: towardTop ? 180 : -180)
