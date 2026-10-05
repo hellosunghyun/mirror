@@ -481,3 +481,15 @@ source `2d7e1f2`의 Adaptive59 Mac system/dark 원본에서 날짜·메모·링�
 ### 데이터 관리 버튼의 목적을 쉬운 표현으로 안내
 
 설정의 내보내기·파일 선택 버튼을 `백업 내보내기`와 `백업 파일 선택`으로 표시해 파일 형식보다 사용 목적을 먼저 알린다. 기존 평문 UTF-8 JSON 및 암호화되지 않은 파일이라는 설명, 파일 선택 후 검사와 계정·공간 복원 동의, 저장 중 비활성화는 유지한다. iCloud 전체 삭제는 아직 구현되지 않았으므로 해당 버튼은 `iCloud 데이터 삭제 안내`로 표시해 실제 정보 조회와 일치시킨다. 기존 준비 중 안내와 데이터가 삭제되지 않았다는 결과 문구도 유지한다. 세 표시 문자열만 변경했으며 독립 소스 검토와 diff 확인을 마쳤다. 저영향 문구를 복제하는 새 검사는 추가하지 않았고 실제 화면은 기존 Actions 검증 대상이다. FR-025/026/030에 연결한다.
+
+### Mac 검색 지우기 지연의 단일 live sample
+
+bb8ea9d / Swift 308 / run 37256736753 / attempt 1 / Mac job 111598270751의 보존된 고정 요약을 근거로 한다. 첫 Capture 사례에서 library.clearSearch Click은 173.79초, event 합성은 173.86초, application idle 대기는 179.40초에 기록됐고 239.42초에 event loop not idle이 나왔다. 빈 값 predicate는 그 뒤 시작돼 실패했다. 실제 검색 값·클릭 기하·callback 도달과 SDK 원인은 여전히 미관측이다. 이 관측을 데이터 저장 실패나 검색 바인딩 결함으로 판정하지 않는다.
+
+기존 settingsClose 최초 query marker는 그대로 출력한다. 한 번만 수행하는 private sampler의 대상만 첫 Capture 사례에서 연속 입력 후 보관함으로 돌아와 수행하는 첫 library.clearSearch activate로 옮긴다. 새 marker는 `UI native action pending/complete: libraryClearSearch`다. activate 전체에는 요소 조회·준비 확인·필요한 기존 스크롤·클릭과 SDK가 반환하기까지의 대기가 포함된다. pending이 실제 클릭 또는 앱 callback 도달을 증명하지 않으며 complete도 성공 선언이 아니라 do/defer 구간의 반환 또는 예외 해제다.
+
+새 prefix만 watcher의 arm/종료에 관여한다. 기존 settings query pair는 새 관측을 시작하거나 종료하지 않는다. 두 지점을 모두 지원하는 상태 기계를 추가하지 않아 이 실행에서 settings 조회만 지연되면 sample하지 않는다. 같은 Mac bundle·Capture 사례의 단일 pending에 대해 watcher가 완전한 marker 행을 읽은 뒤 기존 15초가 지나야 준비한다. 중복·순서 오류·unknown action·다른 사례·terminal은 계속 gate를 닫는다. process 선택 중이나 sample 중 action이 끝나도 기존 재검증으로 frame 공개를 거부한다.
+
+원래 build receipt·run/attempt/source/build·unsigned binary hash, 현재 UID·native 시작 뒤 태어난 고유 PID/실행 경로, sample 전후 동일 owner와 binary 재검증을 유지한다. sample 한 번의 3초 관측/8초 상한, watcher 정리, native/UI 전체 시간 제한과 기존 assertion·empty-value 15초 대기는 바꾸지 않는다. 새 AX/SDK getter·동작·앱 변경·타깃·의존성은 없다. private raw sample과 native command 출력은 기존 0700/0600 디렉터리에서만 처리 후 삭제하고 fixed summary만 남긴다. 기존 summary status의 queryEndedBeforeSample/queryEndedDuringSample 문자열은 하위 계약을 보존하며 이번 소스에서는 위 activate 관측 구간의 종료를 뜻한다.
+
+회귀는 기존 owned case·15초 경계·중복/unknown/complete/terminal·receipt/PID/hash·전후 변경·단일 sample·원문 제거 검사를 새 action marker로 유지한다. 별도 상태 회귀는 settings pair가 새 action을 arm/종료/재활성화하지 못함을 검사한다. 실제 임시 파일을 사용하는 기존 watch fixture도 settings pair→새 action 순서를 지나 한 번만 sample하도록 확장했다. 로컬은 Python AST·diff 형식 확인만 수행하며 helper import·실행, SDK와 테스트 실행은 GitHub Actions 전용이다.

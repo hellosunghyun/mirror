@@ -18,8 +18,9 @@ SPEC = importlib.util.spec_from_file_location(
 helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
 CASE = 'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday'
-PENDING = 'UI native query pending: settingsClose'
-COMPLETE = 'UI native query complete: settingsClose'
+PENDING = 'UI native action pending: libraryClearSearch'
+COMPLETE = 'UI native action complete: libraryClearSearch'
+SETTINGS_MARKERS = ('UI native query pending: settingsClose', 'UI native query complete: settingsClose')
 PRIVATE = 'SYNTHETIC_PRIVATE_SAMPLE_PATH_TITLE'
 ERRORS = (ValueError, KeyError, TypeError, OSError)
 
@@ -94,15 +95,37 @@ class LiveSampleMarkerTests(unittest.TestCase):
         for rows in ([PENDING], [event(owner='ForeignTests.MirrorUITests'), PENDING],
                      [event(owner='MirrorMacUITests.ForeignTests'), event(), PENDING],
                      [event('testOtherCase'), PENDING],
-                     [event(), 'UI native query pending: ' + PRIVATE],
+                     [event(), 'UI native action pending: ' + PRIVATE],
                      [event(), PENDING + ' ' + PRIVATE],
                      [event(), COMPLETE],
-                     [event(), PENDING, 'UI native query complete: ' + PRIVATE]):
+                     [event(), PENDING, 'UI native action complete: ' + PRIVATE]):
             with self.subTest(boundary=len(rows)):
                 state = helper.MarkerState()
                 for offset, row in enumerate(rows):
                     state.feed(row, float(offset))
                 self.assertFalse(state.ready(100.0))
+
+    def test_settings_query_pair_neither_arms_nor_ends_the_owned_action(self):
+        state = helper.MarkerState()
+        state.feed(event(), 1.0)
+        for offset, marker in enumerate(SETTINGS_MARKERS, 2):
+            state.feed(marker, float(offset))
+            self.assertIsNone(state.pending_at)
+            self.assertFalse(state.done)
+            self.assertFalse(state.ready(100.0))
+        state.feed(PENDING, 10.0)
+        self.assertFalse(state.ready(24.999))
+        self.assertTrue(state.ready(25.0))
+        for offset, marker in enumerate(SETTINGS_MARKERS, 26):
+            state.feed(marker, float(offset))
+            self.assertEqual(state.pending_at, 10.0)
+            self.assertFalse(state.done)
+            self.assertTrue(state.ready(float(offset)))
+        state.feed(COMPLETE, 28.0)
+        for marker in (*SETTINGS_MARKERS, PENDING):
+            state.feed(marker, 30.0)
+            self.assertTrue(state.done)
+            self.assertFalse(state.ready(100.0))
 
 
 class LiveSampleOwnershipTests(unittest.TestCase):
@@ -369,7 +392,7 @@ class LiveSampleWatchTests(unittest.TestCase):
         marker, log = root / 'ui-start.marker', root / 'ui.log'
         marker.touch()
         os.utime(marker, (100.0, 100.0))
-        log.write_text(event() + '\n' + PENDING + '\n')
+        log.write_text('\n'.join((event(), *SETTINGS_MARKERS, PENDING)) + '\n')
         os.utime(log, (200.0, 200.0))
         directories = []
         def sample(pid, private, stopped):
@@ -411,7 +434,7 @@ class LiveSampleWatchTests(unittest.TestCase):
                 mock.patch.object(helper.os, 'getppid', return_value=42), \
                 mock.patch.object(helper.os, 'getuid', return_value=501,
                                   side_effect=[501, PermissionError(PRIVATE)] if mode == 'postUIDRaises' else None), \
-                mock.patch.object(helper.time, 'monotonic', side_effect=[0.0, 0.0, 15.0, 15.0, 15.0, 15.0]), \
+                mock.patch.object(helper.time, 'monotonic', side_effect=[0.0, 0.0, 0.0, 0.0, 15.0, 15.0, 15.0, 15.0]), \
                 mock.patch.object(helper.time, 'sleep') as sleep, \
                 mock.patch.object(helper, 'process_rows', side_effect=rows), \
                 mock.patch.object(helper, 'process_path_reader', return_value=lambda _: executable), \

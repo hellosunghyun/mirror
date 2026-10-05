@@ -147,7 +147,16 @@ final class MirrorUITests: XCTestCase {
 
         try showLibrary(in: app)
         let continuousSearch = try requireElement("library.search", in: app)
+        #if os(macOS)
+        do {
+            // 조회·준비·클릭을 포함한 첫 activate의 진입과 반환/해제만 관측한다.
+            print("UI native action pending: libraryClearSearch")
+            defer { print("UI native action complete: libraryClearSearch") }
+            try activate("library.clearSearch", in: app)
+        }
+        #else
         try activate("library.clearSearch", in: app)
+        #endif
         try waitForValue("", element: continuousSearch)
         let firstSplitRow = try requireRow(firstSplitTitle, in: app)
         let secondSplitRow = try requireRow(secondSplitTitle, in: app)

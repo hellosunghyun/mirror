@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""현재 unsigned Mac UI query 중 단일 private sample. UI 성공 판정에는 관여하지 않는다."""
+"""현재 unsigned Mac 검색 지우기 activate 중 단일 private sample. 성공 판정에는 관여하지 않는다."""
 import ctypes
 import datetime
 import hashlib
@@ -14,8 +14,8 @@ import tempfile
 import time
 
 CASE = 'testCaptureRemainsUnassignedUntilReviewExplicitlyChoosesToday'
-PENDING = 'UI native query pending: settingsClose'
-COMPLETE = 'UI native query complete: settingsClose'
+PENDING = 'UI native action pending: libraryClearSearch'
+COMPLETE = 'UI native action complete: libraryClearSearch'
 EVENT = re.compile(r"Test Case '[-+]\[([A-Za-z0-9_.]+) (test[A-Za-z0-9_]+)\]' (started|passed|failed|skipped)(?=[\s.]|$)")
 STAGES = frozenset(('arguments', 'watchSetup', 'logRead', 'receiptBefore', 'processPathReader',
                     'processListBefore', 'processOwnerBefore', 'queryBefore', 'temporaryDirectory',
@@ -77,7 +77,8 @@ class MarkerState:
             else:
                 self.started = True
         value = line.strip()
-        if value.startswith('UI native query '):
+        # settingsClose의 별도 query marker는 이 activate를 시작하거나 끝내지 않는다.
+        if value.startswith('UI native action '):
             if value == PENDING and self.started and self.pending_at is None:
                 self.pending_at = now
             else:
