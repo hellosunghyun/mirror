@@ -689,8 +689,10 @@ def planner_reachability_observation_valid(value):
 
 
 def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
-    """iPad Two 사례의 마지막 캐시 관측을 같은 실제 planTask 실패에만 연결한다."""
-    if (platform != 'ipad' or bundle != 'MirrorIOSBatchUITests' or not isinstance(log, str)
+    """마지막 캐시 관측을 허용한 두 호출부의 실제 실패에만 연결한다."""
+    if (platform not in ('iphone', 'ipad', 'macos')
+            or bundle != ('MirrorMacBatchUITests' if platform == 'macos' else 'MirrorIOSBatchUITests')
+            or not isinstance(log, str)
             or len(log.encode('utf-8')) > MAX_LOG or PLANNER_REACHABILITY_MARKER.rstrip() not in log
             or partial_progress(log, bundle).get('status') != 'partial'):
         return []
@@ -698,42 +700,58 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
         source = SUPPORT.read_regular(source_root / SOURCE, SUPPORT.MAX_JSON).decode('utf-8').splitlines()
     except (OSError, UnicodeError, SUPPORT.AdaptiveError):
         return []
-    declaration = '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {'
-    if source.count(declaration) != 1:
+    contracts = {}
+    candidates = (
+        (1, CASES[0], 'pickerStarted', 'planTask',
+         '    private func verifyPicker(_ selected: [OriginalTask], in app: XCUIApplication) throws {',
+         'let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\\(task.uuid)"), '
+         'surface: .planner, target: .planTask, in: app)', 'progress(.pickerStarted)'),
+        (2, CASES[1], 'libraryStarted', 'taskRow',
+         '    private func originalTasks(_ titles: [String], in app: XCUIApplication) throws -> [OriginalTask] {',
+         'let row = try reachable(query, surface: .library, target: .taskRow, in: app)',
+         'let tasks = try titles.map { title in'),
+    )
+    for schema, method, phase, target, declaration, call, preceding in candidates:
+        if (schema == 1 and platform != 'ipad') or source.count(declaration) != 1:
+            continue
+        start = source.index(declaration)
+        end = next((index for index in range(start + 1, len(source))
+                    if source[index].startswith('    private func ')), len(source))
+        matching = [index + 1 for index, line in enumerate(source) if line.strip() == call]
+        if (len(matching) != 1 or not start < matching[0] - 1 < end
+                or preceding not in [line.strip() for line in source[start:matching[0] - 1]]):
+            continue
+        caller_line = matching[0]
+        if schema == 2 and source[caller_line - 2].strip() != (
+                'let query = app.buttons.matching(NSPredicate(format: '
+                '"identifier BEGINSWITH %@ AND label == %@", "task.row.", title))'):
+            continue
+        contracts[schema] = (method, phase, target, caller_line)
+    if not contracts:
         return []
-    start = source.index(declaration)
-    end = next((index for index in range(start + 1, len(source))
-                if source[index].startswith('    private func ')), len(source))
-    call = ('let title = try reachable(app.staticTexts.matching(identifier: "plan.task.\\(task.uuid)"), '
-            'surface: .planner, target: .planTask, in: app)')
-    matching = [index + 1 for index, line in enumerate(source) if line.strip() == call]
-    if (len(matching) != 1 or not start < matching[0] - 1 < end
-            or 'progress(.pickerStarted)' not in [line.strip() for line in source[start:matching[0] - 1]]):
-        return []
-    caller_line = matching[0]
     fields = {'schemaVersion', 'method', 'phase', 'progressSequence', 'callerLine', 'target', 'observationTiming',
               'iteration', 'exists', 'role', 'targetFrame', 'ownerFrame', 'windowCount', 'hittable', 'enabled',
               'insideOwner', 'deadlineExceededAtLastGuard', 'swipePerformed'}
-    payload = 'failed - batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=planTask'
     reports, active, progress, observation, location = [], None, None, None, None
-    matching_failures = 0
+    matching_failures = {schema: 0 for schema in contracts}
     for line in log.splitlines():
         failure = SUPPORT.UI_FAILURE_SOURCE.fullmatch(line)
-        owned_failure, found = False, None
+        owned_schema, found = None, None
         if failure is not None:
             case = SUPPORT.UI_FAILURE_CASE.fullmatch(failure[4])
-            if (case is not None and case[1] == bundle + '.' + CLASS and case[2] == CASES[0]
-                    and case[3] == payload and int(failure[2]) == caller_line):
-                found = SUPPORT.source_location(failure[1], int(failure[2]),
-                                                int(failure[3]) if failure[3] else 1, source_root)
-                owned_failure = found is not None and found['file'] == SOURCE
-                if owned_failure:
-                    matching_failures += 1
-                    if matching_failures > 1:
-                        return []
+            for schema, (method, _, target, caller_line) in contracts.items():
+                payload = 'failed - batchTargetIsNotReachableWithin15SecondsAnd12Scrolls target=' + target
+                if (case is not None and case[1] == bundle + '.' + CLASS and case[2] == method
+                        and case[3] == payload and int(failure[2]) == caller_line):
+                    found = SUPPORT.source_location(failure[1], int(failure[2]),
+                                                    int(failure[3]) if failure[3] else 1, source_root)
+                    if found is not None and found['file'] == SOURCE:
+                        owned_schema = schema
+                        matching_failures[schema] += 1
+                        if matching_failures[schema] > 1:
+                            return []
         if PLANNER_REACHABILITY_MARKER.rstrip() in line:
-            if (active != CASES[0] or progress is None or progress['phase'] != 'pickerStarted'
-                    or observation is not None or not line.startswith(PLANNER_REACHABILITY_MARKER)
+            if (progress is None or observation is not None or not line.startswith(PLANNER_REACHABILITY_MARKER)
                     or len(line.encode('utf-8')) + 1 > 1024):
                 return []
             try:
@@ -741,12 +759,15 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
             except (SUPPORT.AdaptiveError, ValueError, TypeError, RecursionError):
                 return []
             if (not isinstance(value, dict) or set(value) != fields
-                    or type(value['schemaVersion']) is not int or value['schemaVersion'] != 1
-                    or value['method'] != active or value['phase'] != 'pickerStarted'
+                    or type(value['schemaVersion']) is not int or value['schemaVersion'] not in contracts):
+                return []
+            method, phase, target, caller_line = contracts[value['schemaVersion']]
+            if (active != method or progress['phase'] != phase
+                    or value['method'] != active or value['phase'] != phase
                     or type(value['progressSequence']) is not int or not 1 <= value['progressSequence'] <= 96
                     or value['progressSequence'] != progress['sequence']
                     or type(value['callerLine']) is not int or not 1 <= value['callerLine'] <= 100_000
-                    or value['callerLine'] != caller_line or value['target'] != 'planTask'
+                    or value['callerLine'] != caller_line or value['target'] != target
                     or value['observationTiming'] != 'cachedLastIteration'
                     or not planner_reachability_observation_valid(value)):
                 return []
@@ -766,10 +787,10 @@ def planner_reachability_diagnostics(log, bundle, platform, source_root=ROOT):
                                     **location, 'terminal': 'failed'})
                 active, progress, observation, location = None, None, None, None
         elif observation is not None and failure is not None:
-            if not owned_failure or location is not None:
+            if owned_schema != observation['schemaVersion'] or location is not None:
                 return []
             location = {'line': found['line'], **({'column': found['column']} if failure[3] else {})}
-    return reports if observation is None and matching_failures == 1 else []
+    return reports if observation is None and all(matching_failures[item['schemaVersion']] == 1 for item in reports) else []
 
 
 def diagnostics(directory, expected, phase, partial_failure=False):
@@ -806,12 +827,11 @@ def diagnostics(directory, expected, phase, partial_failure=False):
             validate_source(SUPPORT.read_regular(ROOT / SOURCE, SUPPORT.MAX_JSON).decode('utf-8'))
             print('::notice::Batch UI partial progress diagnostics: ' + json.dumps(
                 {**expected, 'scope': 'partialFailureOnly', **partial_progress(log, context['bundle'])}, sort_keys=True))
-            if expected['platform'] == 'ipad':
-                planner_reports = planner_reachability_diagnostics(log, context['bundle'], expected['platform'])
-                if planner_reports:
-                    print('::notice::Batch UI planner reachability diagnostics: ' + json.dumps(
-                        {**expected, 'scope': 'partialFailureOnly', 'locations': planner_reports,
-                         'locationCount': len(planner_reports)}, sort_keys=True))
+            planner_reports = planner_reachability_diagnostics(log, context['bundle'], expected['platform'])
+            if planner_reports:
+                print('::notice::Batch UI planner reachability diagnostics: ' + json.dumps(
+                    {**expected, 'scope': 'partialFailureOnly', 'locations': planner_reports,
+                     'locationCount': len(planner_reports)}, sort_keys=True))
             if expected['platform'] == 'macos':
                 disclosure_reports = disclosure_failure_diagnostics(log, context['bundle'])
                 if disclosure_reports:

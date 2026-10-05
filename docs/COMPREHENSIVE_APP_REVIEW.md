@@ -374,3 +374,9 @@ Release의 label·ID·action·frame과 글자 크기 전달은 유지한다. rev
 9625 Mac Batch의 Two는 새 전체헤더의 접힘·펼침 값 검사를 통과했고, 같은 작업 UUID의 실제 StaticText를 소유 창·목록·기하·hittable 조건으로 찾았다. 이후 전체 제목의 label 비교에서 실패했다. 해당 label/value 원문은 미관측이므로 빈 label을 원인으로 단정하지 않는다.
 
 기존 Mac SDK에서 확인한 StaticText 표시 계약과 같은 Batch displayedText helper를 이 한 비교에도 적용한다. 비어 있지 않은 label을 우선하고 빈 경우에만 문자열 value를 읽어 기대한 전체 제목과 정확 비교한다. 오답 label을 value로 숨기지 않으며 nil·비문자열 value도 성공으로 수용하지 않는다. typed 역할·UUID·펼침/접힘·소유·조작·시간 제한과 모든 상태 검사를 유지한다. 독립 정적 검토 완료, 실제 수용은 후속 Actions 대상이다.
+
+### 2026-10-05 · 배치 작업 탐색 실패의 기존 관측값 연결
+
+9625 Mac의 Twenty는 스무 개를 저장한 뒤 보관함 작업 탐색에서 다시 실패했다. 실패한 행의 순서와 화면 상태는 미관측이므로 탐색 방향이나 앱 목록을 원인으로 확정하지 않는다. 기존 마지막 반복의 캐시만 schema2로 출력하고 세 플랫폼의 Twenty/libraryStarted/taskRow 호출에만 연결한다. iPad Two/pickerStarted/planTask의 schema1은 유지한다.
+
+파서는 실제 originalTasks의 map, 바로 앞 typed Button query, 고유 reachable 호출부와 해당 사례·진행 순서·고정 실패 한 번·failed terminal을 모두 확인한다. 두 사례의 기록은 각각 귀속하며 nullable 관측값·범위·개인정보 배제 조건을 유지한다. 추가 AX 조회·시계 조회·스크롤과 수용 조건 변경은 없다. 기존 15초·12회 예산과 ownerMissing 선행 실패 경계도 유지한다. 새 schema의 세 플랫폼 수용, 잘못된 소유·순서·null·중복·개인정보 거부, partial-only 출력 회귀 네 개를 추가했다. 독립 정적 검토와 Python AST·diffcheck 완료, 테스트 실행은 GitHub Actions에서 확인한다.

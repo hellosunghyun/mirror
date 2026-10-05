@@ -683,10 +683,21 @@ final class MirrorBatchUITests: XCTestCase {
 
     private func recordPlannerReachabilityFailure(_ observation: PlannerReachabilityObservation,
                                                   target: ReachableTarget, callerLine: Int) {
+        let schemaVersion: Int
+        let method: ProgressCase
+        let phase: ProgressPhase
+        if progressCase == .twenty, progressPhase == .libraryStarted, target == .taskRow {
+            schemaVersion = 2; method = .twenty; phase = .libraryStarted
+        } else {
         #if os(iOS)
-        guard UIDevice.current.userInterfaceIdiom == .pad, progressCase == .two,
-              progressPhase == .pickerStarted, target == .planTask,
-              (1...12).contains(observation.iteration),
+            guard UIDevice.current.userInterfaceIdiom == .pad, progressCase == .two,
+                  progressPhase == .pickerStarted, target == .planTask else { return }
+            schemaVersion = 1; method = .two; phase = .pickerStarted
+        #else
+            return
+        #endif
+        }
+        guard (1...12).contains(observation.iteration),
               let deadlineExceeded = observation.deadlineExceededAtLastGuard,
               observation.windowCount.map({ (0...10_000).contains($0) }) ?? true else { return }
         func frameValue(_ frame: CGRect?) -> Any {
@@ -705,8 +716,8 @@ final class MirrorBatchUITests: XCTestCase {
         }
         // 같은 반복의 순차 평가값이다. 마지막 swipe 뒤의 상태나 atomic snapshot으로 간주하지 않는다.
         let fields: [String: Any] = [
-            "schemaVersion": 1, "method": ProgressCase.two.rawValue, "phase": "pickerStarted",
-            "progressSequence": progressSequence, "callerLine": callerLine, "target": "planTask",
+            "schemaVersion": schemaVersion, "method": method.rawValue, "phase": phase.rawValue,
+            "progressSequence": progressSequence, "callerLine": callerLine, "target": target.rawValue,
             "observationTiming": "cachedLastIteration", "iteration": observation.iteration,
             "exists": observation.exists, "role": role,
             "targetFrame": frameValue(observation.targetFrame), "ownerFrame": frameValue(observation.ownerFrame),
@@ -720,7 +731,6 @@ final class MirrorBatchUITests: XCTestCase {
         let line = Data(("Batch UI planner reachability diagnostic: " + String(decoding: data, as: UTF8.self) + "\n").utf8)
         guard line.count <= 1_024 else { return }
         try? FileHandle.standardOutput.write(contentsOf: line)
-        #endif
     }
 
     private func scrollOwner(_ surface: Surface, in app: XCUIApplication, target: ReachableTarget,
