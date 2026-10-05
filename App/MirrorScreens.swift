@@ -856,7 +856,8 @@ struct MirrorLibraryView: View {
                         TextField(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색", text: $search,
                                   prompt: Text(filter == .inbox ? "미래·완료·보관까지 검색" : "\(filter.label)에서 검색")
                                     .foregroundColor(MirrorPalette.inputPrompt))
-                            .textFieldStyle(.plain).focused($searchFocused).accessibilityIdentifier("library.search")
+                            .textFieldStyle(.plain).frame(minHeight: 44)
+                            .focused($searchFocused).accessibilityIdentifier("library.search")
                             .onSubmit { searchFocused = false; model.setTextEditing(false, ownerID: textEditingOwnerID) }
                         if !search.isEmpty {
                             Button { search = "" } label: {
